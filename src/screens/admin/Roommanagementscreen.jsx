@@ -24,15 +24,20 @@ import { colors, spacing, radius, fonts } from '../../utils/theme';
  *
  * The property has a FIXED room count (7 rooms, 2 types) — this screen
  * still has no "Add Room" / "Add Room Type" / "Delete" anywhere. The
- * first time this screen loads with an empty Firestore, it shows a
- * one-time "Seed Sample Rooms" button (calls seedInitialRooms() in
- * Roomsservice.js) that creates the fixed inventory. After that, room
- * number/type/floor aren't intended to change through the app UI. The
- * one thing that legitimately changes minute-to-minute is STATUS, so
- * that's the one field admins can edit here, via updateRoomStatus() —
- * every change writes to Firestore immediately and is reflected live to
- * every other screen subscribed to the same collections (including,
- * once wired up, the guest reservation flow).
+ * first time this screen loads with an empty "rooms" collection, it
+ * shows a one-time "Seed Sample Rooms" button (calls seedInitialRooms()
+ * in Roomsservice.js) that creates the fixed inventory. That button is
+ * keyed off `rooms` being empty specifically (not roomTypes too) —
+ * roomTypes can already have manually-entered documents (e.g. edited
+ * directly in the Firebase console) while `rooms` is still completely
+ * unpopulated, and the button needs to show in that case so the physical
+ * room inventory can still be seeded. After seeding, room number/type/
+ * floor aren't intended to change through the app UI. The one thing that
+ * legitimately changes minute-to-minute is STATUS, so that's the one
+ * field admins can edit here, via updateRoomStatus() — every change
+ * writes to Firestore immediately and is reflected live to every other
+ * screen subscribed to the same collections (including the guest
+ * reservation flow).
  *
  * Navigation lives ONLY in the sidebar — this screen has no internal
  * tabs. Which section renders is controlled by the `section` prop
@@ -57,6 +62,22 @@ const notifyUser = (title, message) => {
     window.alert(message ? `${title}\n\n${message}` : title);
   } else {
     Alert.alert(title, message);
+  }
+};
+
+// Cross-platform confirm dialog — Alert.alert has no UI on React Native
+// Web, so on web we fall back to window.confirm; on native we use the
+// real Alert with a destructive-style confirm button.
+const confirmAction = (title, message, confirmLabel, onConfirm) => {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) {
+      onConfirm();
+    }
+  } else {
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: confirmLabel, style: 'destructive', onPress: onConfirm },
+    ]);
   }
 };
 
@@ -90,7 +111,10 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
   );
 
   const loading = loadingTypes || loadingRooms;
-  const isEmpty = !loading && roomTypes.length === 0 && rooms.length === 0;
+  // Keyed off `rooms` specifically — roomTypes may already have manually
+  // entered documents while `rooms` is still empty, and seeding still
+  // needs to happen in that case (see note above the component).
+  const isEmpty = !loading && rooms.length === 0;
 
   const handleLogout = () => onLogout();
 
@@ -111,7 +135,7 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
     setSeeding(true);
     try {
       await seedInitialRooms();
-      notifyUser('Done', 'Seeded 2 room types and 7 rooms into Firestore.');
+      notifyUser('Done', 'Seeded 3 room types and 8 rooms into Firestore.');
       // No manual state update needed — the live subscriptions above will
       // pick up the new documents automatically via onSnapshot.
     } catch (err) {
@@ -120,6 +144,22 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
     } finally {
       setSeeding(false);
     }
+  };
+
+  // Wraps handleSeed with a confirmation step — used by the permanent
+  // header button (as opposed to the one-time empty-state button above,
+  // which doesn't need a confirm since there's nothing to overwrite yet).
+  // This is a developer utility for pushing SEED_ROOM_TYPES/SEED_ROOMS
+  // from Roomsservice.js into Firestore whenever that code changes — not
+  // a general admin feature, since room types/inventory are meant to be
+  // fixed and defined in code, not created through this UI.
+  const handleSeedWithConfirm = () => {
+    confirmAction(
+      'Reseed room data?',
+      'This overwrites roomTypes/RM101, roomTypes/RM102, roomTypes/RM103, and rooms/101–108 with whatever is currently defined in Roomsservice.js. Any manual edits made directly in the Firebase console will be lost.',
+      'Reseed',
+      handleSeed
+    );
   };
 
   return (
@@ -131,20 +171,33 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
             {roomTypes.length} room type{roomTypes.length !== 1 ? 's' : ''} · {rooms.length} room{rooms.length !== 1 ? 's' : ''}
           </Text>
         </View>
-        <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-          <Text style={styles.logoutText}>Log Out</Text>
-        </TouchableOpacity>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity
+            onPress={handleSeedWithConfirm}
+            style={styles.reseedButton}
+            disabled={seeding}
+          >
+            {seeding
+              ? <ActivityIndicator color={colors.primary} size="small" />
+              : <Text style={styles.reseedText}>↻ Reseed Data (Dev)</Text>
+            }
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+            <Text style={styles.logoutText}>Log Out</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {loading ? (
         <View style={styles.centerWrap}><ActivityIndicator color={colors.primary} size="large" /></View>
       ) : isEmpty ? (
         <View style={styles.centerWrap}>
-          <Text style={styles.emptyStateTitle}>No room data yet</Text>
+          <Text style={styles.emptyStateTitle}>No rooms seeded yet</Text>
           <Text style={styles.emptyStateText}>
-            The roomTypes and rooms collections don't exist in Firestore yet.{'\n'}
-            Tap below to create them with this property's fixed inventory:{'\n'}
-            2 room types (Twin, King) and 7 rooms (101–107).
+            The "rooms" collection doesn't exist in Firestore yet.{'\n'}
+            Tap below to create this property's fixed inventory:{'\n'}
+            3 room types (Twin, King, Single Room) and 8 rooms (101–108).{'\n'}
+            {roomTypes.length > 0 ? 'This will overwrite any existing roomTypes documents with the correct seed data.' : ''}
           </Text>
           <TouchableOpacity
             style={[styles.seedBtn, seeding && styles.seedBtnDisabled]}
@@ -479,6 +532,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primaryTint,
   },
   logoutText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.primary },
+  headerButtons: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  reseedButton: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  reseedText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
 
   centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   emptyStateTitle: { fontSize: 16, fontFamily: fonts.headingBold, color: colors.text, marginBottom: spacing.sm },

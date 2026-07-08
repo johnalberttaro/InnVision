@@ -58,7 +58,6 @@ const MENU_SECTIONS = [
     label: 'Guest Management',
     subItems: [
       { key: 'guests:profiles', label: 'Guest Profiles' },
-      { key: 'guests:history', label: 'Guest History' },
       { key: 'guests:records', label: 'Guest Records' },
       { key: 'guests:requests', label: 'Special Requests' },
     ],

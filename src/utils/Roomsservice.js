@@ -17,9 +17,10 @@ import { getPlaceholderImages } from './Roomimageplaceholders';
  * Two collections, matching the fixed-inventory model discussed for this
  * property:
  *
- *   roomTypes/{roomTypeId}   — the 2 room categories (Twin, King). Rarely
- *                              changes; holds pricing, amenities, images.
- *   rooms/{roomNumber}       — the 7 physical rooms. Each references a
+ *   roomTypes/{roomTypeId}   — the 3 room categories (Twin, King, Single
+ *                              Room). Rarely changes; holds pricing,
+ *                              amenities, images.
+ *   rooms/{roomNumber}       — the 8 physical rooms. Each references a
  *                              roomTypeId. This is where day-to-day state
  *                              (status) lives and changes constantly.
  *
@@ -31,10 +32,10 @@ import { getPlaceholderImages } from './Roomimageplaceholders';
  * floor are set once via seedInitialRooms() (see bottom of this file) and
  * are not intended to change through the regular app UI afterwards.
  *
- * Every screen — admin Room Management AND, once wired up, the guest
- * reservation flow — should read through subscribeToRoomTypes /
- * subscribeToRooms rather than importing static data, so both sides of
- * the app always see the same live state.
+ * Every screen — admin Room Management AND the guest reservation flow —
+ * reads through subscribeToRoomTypes / subscribeToRooms rather than
+ * importing static data, so both sides of the app always see the same
+ * live state.
  */
 
 export const ROOM_STATUS = {
@@ -94,23 +95,40 @@ export function subscribeToRooms(onData, onError) {
 
 /* ── Join helper ──────────────────────────────────────────────────────── */
 
-// Merges physical rooms with their room type's display info (name, price,
-// description, amenities, images) so every screen gets "complete" room
-// data without that data being duplicated in Firestore itself. Pure
-// function — safe to call with whatever the two subscriptions currently
-// hold, on every render.
+// Merges physical rooms with their room type's full display info (name,
+// price, description, size/bed/occupancy, notes, amenities, images) so
+// every screen — admin Room Management AND the guest-facing per-room
+// cards — gets "complete" room data without that data being duplicated
+// in Firestore itself. Pure function — safe to call with whatever the two
+// subscriptions currently hold, on every render.
+//
+// `id` on the returned object is the physical room's doc ID (roomNumber),
+// not the room type's ID — each physical room needs a unique key/id of
+// its own when rendered as an individual card.
 export function joinRoomsWithTypes(rooms, roomTypes) {
   const typesById = {};
   roomTypes.forEach((rt) => { typesById[rt.id] = rt; });
 
   return rooms.map((room) => {
-    const type = typesById[room.roomTypeId];
+    const type = typesById[room.roomTypeId] || null;
     return {
-      ...room,
+      id: room.roomNumber,
+      roomNumber: room.roomNumber,
+      roomTypeId: room.roomTypeId,
+      floor: room.floor,
+      status: room.status,
+      maintenanceNote: room.maintenanceNote,
       roomTypeName: type ? type.name : 'Unknown Type',
       price: type ? type.price : null,
       originalPrice: type ? type.originalPrice : null,
+      bbPrice: type ? type.bbPrice : undefined,
+      bbOriginalPrice: type ? type.bbOriginalPrice : undefined,
       description: type ? type.description : '',
+      size: type ? type.size : '',
+      bed: type ? type.bed : '',
+      occupancy: type ? type.occupancy : '',
+      note: type ? type.note : '',
+      taxNote: type ? type.taxNote : '',
       inclusions: type ? type.inclusions || [] : [],
       images: type ? type.images || [] : [],
       available: isAvailable(room.status),
@@ -134,14 +152,17 @@ export async function updateRoomStatus(roomNumber, status, extra = {}) {
 
 /* ── One-time seed ────────────────────────────────────────────────────── */
 //
-// This property's fixed inventory: 2 room types, 7 physical rooms
-// (101–104 → RM101/Twin, 105–107 → RM102/King). seedInitialRooms() below
-// writes this exact set into Firestore. It's meant to be called ONCE —
-// from a temporary admin button (see RoomManagementScreen's empty state)
-// — not as part of normal app flow. It's safe to call more than once by
-// accident: setDoc without merge overwrites the same 9 doc IDs rather
-// than creating duplicates, so re-running it just resets these 9
-// documents back to these starting values.
+// This property's fixed inventory: 3 room types, 8 physical rooms
+// (101–103, 108 → RM101/Twin, 105–107 → RM102/King, 104 → RM103/Single
+// Room). seedInitialRooms() below writes this exact set into Firestore.
+// It's meant to be called ONCE — from a temporary admin button (see
+// RoomManagementScreen's empty state) — not as part of normal app flow.
+// It's safe to call more than once by accident: setDoc without merge
+// overwrites the same doc IDs rather than creating duplicates, so
+// re-running it just resets these documents back to these starting
+// values (this also means running it will overwrite any manual edits
+// made directly in the Firebase console, e.g. to roomTypes' name fields
+// — that's expected, not a bug).
 
 const SEED_ROOM_TYPES = [
   {
@@ -188,13 +209,33 @@ const SEED_ROOM_TYPES = [
       'City view window',
     ],
   },
+  {
+    id: 'RM103',
+    name: 'Single Room',
+    description: 'One single bed, ideal for solo travelers and short stays.',
+    originalPrice: 1500,
+    price: 1200,
+    note: 'Book now, pay at hotel',
+    taxNote: 'Excludes taxes and charges',
+    size: '20 sqm',
+    bed: '1 Single Bed',
+    occupancy: '1 Adult',
+    floor: 'Ground Floor',
+    inclusions: [
+      'Free Wi-Fi',
+      'Air conditioning',
+      'Flat-screen TV',
+      'Private bathroom with hot & cold shower',
+      'Daily housekeeping',
+    ],
+  },
 ];
 
 const SEED_ROOMS = [
   { roomNumber: '101', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
   { roomNumber: '102', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.OCCUPIED },
   { roomNumber: '103', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.RESERVED },
-  { roomNumber: '104', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
+  { roomNumber: '104', roomTypeId: 'RM103', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
   {
     roomNumber: '105',
     roomTypeId: 'RM102',
@@ -204,6 +245,7 @@ const SEED_ROOMS = [
   },
   { roomNumber: '106', roomTypeId: 'RM102', floor: 'Ground Floor', status: ROOM_STATUS.OCCUPIED },
   { roomNumber: '107', roomTypeId: 'RM102', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
+  { roomNumber: '108', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
 ];
 
 // Writes all 2 room types + 7 rooms to Firestore. Call this from a

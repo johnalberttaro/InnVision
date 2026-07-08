@@ -50,6 +50,20 @@ export const PLACEHOLDER_ROOM_IMAGES = {
       label: 'City View',
     },
   ],
+  RM103: [
+    {
+      uri: 'https://images.unsplash.com/photo-1702255489644-392758161f1f?w=800&h=500&fit=crop&crop=center',
+      label: 'Single Room',
+    },
+    {
+      uri: 'https://images.unsplash.com/photo-1552902865-b72c031ac5ea?w=800&h=500&fit=crop&crop=center',
+      label: 'Bathroom',
+    },
+    {
+      uri: 'https://images.unsplash.com/photo-1529290130-4ca3753253ae?w=800&h=500&fit=crop&crop=center',
+      label: 'City View',
+    },
+  ],
 };
 
 // Generic fallback used only if a roomTypeId has no entry above — keeps

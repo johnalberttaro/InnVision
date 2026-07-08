@@ -11,9 +11,19 @@ import { colors, spacing, fonts } from '../../utils/theme';
  *  - onClose:         () => void
  *  - onProfilePress:  () => void  — navigate to ProfileScreen
  *  - onAboutPress:    () => void  — navigate to AboutScreen
+ *  - onContactPress:  () => void  — navigate to ContactUsScreen
+ *  - onFindBooking:   () => void  — navigate to BookingLookupScreen
  *  - isAuthenticated: boolean     — show Profile item only when logged in
  */
-export default function HamburgerMenu({ visible, onClose, onProfilePress, onAboutPress, isAuthenticated }) {
+export default function HamburgerMenu({
+  visible,
+  onClose,
+  onProfilePress,
+  onAboutPress,
+  onContactPress,
+  onFindBooking,
+  isAuthenticated,
+}) {
 
   const menuItems = [
     {
@@ -25,12 +35,26 @@ export default function HamburgerMenu({ visible, onClose, onProfilePress, onAbou
       },
     },
     { label: 'Promos',     icon: 'pricetag-outline', onPress: onClose },
-    { label: 'Contact Us', icon: 'call-outline',      onPress: onClose },
+    {
+      label: 'Contact Us',
+      icon: 'call-outline',
+      onPress: () => {
+        onClose();
+        onContactPress && onContactPress();
+      },
+    },
+    {
+      label: 'Find My Booking',
+      icon: 'search-outline',
+      onPress: () => {
+        onClose();
+        onFindBooking && onFindBooking();
+      },
+    },
     ...(isAuthenticated
       ? [{
           label: 'Profile',
           icon: 'person-circle-outline',
-          isAccent: true,
           onPress: () => {
             onClose();
             onProfilePress && onProfilePress();
@@ -62,7 +86,7 @@ export default function HamburgerMenu({ visible, onClose, onProfilePress, onAbou
           {menuItems.map((item) => (
             <TouchableOpacity
               key={item.label}
-              style={[styles.menuItem, item.isAccent && styles.menuItemAccent]}
+              style={styles.menuItem}
               onPress={item.onPress}
               activeOpacity={0.75}
             >
@@ -70,16 +94,16 @@ export default function HamburgerMenu({ visible, onClose, onProfilePress, onAbou
                 <Ionicons
                   name={item.icon}
                   size={22}
-                  color={item.isAccent ? colors.accent : 'rgba(255,255,255,0.85)'}
+                  color="rgba(255,255,255,0.85)"
                 />
-                <Text style={[styles.menuItemText, item.isAccent && styles.menuItemTextAccent]}>
+                <Text style={styles.menuItemText}>
                   {item.label}
                 </Text>
               </View>
               <Ionicons
                 name="chevron-forward"
                 size={16}
-                color={item.isAccent ? colors.accent : 'rgba(255,255,255,0.4)'}
+                color="rgba(255,255,255,0.4)"
               />
             </TouchableOpacity>
           ))}
@@ -159,13 +183,6 @@ const styles = StyleSheet.create({
     borderBottomColor: 'rgba(255,255,255,0.15)',
     borderRadius: 8,
   },
-  menuItemAccent: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderBottomWidth: 0,
-    marginTop: spacing.sm,
-    borderWidth: 0.5,
-    borderColor: colors.accentTint,
-  },
   menuItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -175,9 +192,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: fonts.headingSemiBold,
     color: colors.white,
-  },
-  menuItemTextAccent: {
-    color: colors.accentTint,
   },
 
   // Footer note

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,13 +11,23 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  doc,
+  getDoc,
+  query,
+  where,
+  getDocs,
+  updateDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import Brandheader from '../../components/shared/Brandheader';
 import Appfooter from '../../components/shared/Appfooter';
 import StepIndicator from '../../components/shared/StepIndicator';
 import StayBar from '../../components/shared/StayBar';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { useTheme } from '../../context/ThemeContext';
 import { formatDate } from '../../utils/dateHelpers';
 import { formatCurrency } from '../../utils/roomRates';
 
@@ -26,6 +36,40 @@ const TWO_COL_BREAKPOINT = 680;
 
 /**
  * ReviewPayScreen — Final step.
+ *
+ * MIGRATED TO CENTRALIZED THEME (useTheme()). Fixes made during
+ * migration:
+ *  - The separate module-level `summaryStyles` (for the SummaryRow
+ *    sub-component) is folded into the same getStyles() factory as the
+ *    rest of the screen, so both recompute together when the theme
+ *    changes. SummaryRow now takes `styles` as a prop instead of
+ *    importing its own static stylesheet.
+ *  - `roomSummaryRow`'s background was `colors.white` (invariant) used as
+ *    a card surface — changed to `colors.card` so it flips like every
+ *    other card.
+ *  - `checkmark`, `confirmBtnText`, and the confirming-state spinner all
+ *    used `colors.white` while sitting on `colors.primary` (which flips)
+ *    — changed to `onPrimary`.
+ *
+ * GUEST RECORD UPSERT (added): confirming a reservation now also
+ * creates-or-updates a matching document in the "guests" collection,
+ * linked by `linkedUid === user.uid`. This is what makes a booking show
+ * up on the admin Guest Records screen — previously this write didn't
+ * exist, so a guest could book successfully and still never appear
+ * there unless someone had manually added them first. The upsert:
+ *   - Looks for an existing guests doc where linkedUid == user.uid.
+ *   - If none exists, creates one with source: 'Mobile App' (this is a
+ *     guest who booked themselves through the app, as opposed to a
+ *     'Walk-In' entry a staff member adds manually).
+ *   - If one already exists (a returning guest), updates their contact
+ *     info (name/email/phone) in case it changed since their last visit,
+ *     without touching staff-only fields like vipTier, tags, or
+ *     staffNotes.
+ *   - Wrapped in its own try/catch, separate from the reservation write:
+ *     if this upsert fails for any reason, the reservation itself has
+ *     already succeeded and the guest still gets their confirmation —
+ *     we only log a warning rather than showing an error for something
+ *     that isn't the guest's fault and doesn't block their booking.
  *
  * This is the ONLY place in the mobile app that creates a Firestore
  * reservation document. Nothing before this point (dates, room selection,
@@ -39,21 +83,31 @@ const TWO_COL_BREAKPOINT = 680;
  *     which approves (→ 'upcoming') or declines (→ 'declined') from there.
  *     We do NOT set 'upcoming' directly here; that skips admin review.
  *   - checkIn / checkOut as ISO strings
- *   - roomType, totals.totalRooms, nights, totalAmount, guestDetails —
- *     exactly the fields AdminDashboardScreen already reads.
+ *   - selectedRooms: [{roomNumber, roomTypeId, roomTypeName, price}, ...]
+ *     — one entry per physical room in this reservation, from
+ *     RoomSelectionScreen's multi-room picker.
+ *   - roomType: a human-readable comma-joined summary (e.g. "Twin, King")
+ *     kept for any admin views (AdminBookingsScreen) that still display a
+ *     single roomType string rather than drilling into selectedRooms.
+ *   - totals.totalRooms, nights, totalAmount, guestDetails — exactly the
+ *     fields AdminDashboardScreen already reads.
  *   - createdAt: serverTimestamp() so it sorts correctly and appears
  *     immediately in the admin's live onSnapshot listener.
  *
  * Props:
  *  - bookingDetails: { checkIn, checkOut, nights, rooms, totals }
- *  - selectedRate:   rate object from Room & Rates
+ *  - selectedRooms:  Array<{roomNumber, roomTypeId, roomTypeName, price, name, ...}>
+ *                    — one entry per room, from RoomSelectionScreen
  *  - user:           Firebase auth user
  *  - onBackToRooms:  () => void
  *  - onConfirm:      () => void
  */
-export default function ReviewPayScreen({ bookingDetails, selectedRate, user, onBackToRooms, onConfirm }) {
+export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, onBackToRooms, onConfirm }) {
   const { width } = useWindowDimensions();
   const isTwoCol  = width >= TWO_COL_BREAKPOINT;
+
+  const { colors, spacing, radius, fonts } = useTheme();
+  const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
 
   const [firstName, setFirstName]             = useState(user?.displayName?.split(' ')[0] || '');
   const [lastName, setLastName]               = useState(user?.displayName?.split(' ').slice(1).join(' ') || '');
@@ -71,7 +125,31 @@ export default function ReviewPayScreen({ bookingDetails, selectedRate, user, on
   // badge — nothing before confirm should imply a saved record exists.
   const [reservationId, setReservationId] = useState(null);
 
-  if (!bookingDetails || !selectedRate) {
+  // The initial firstName/lastName state above is a rough guess (split
+  // user.displayName on the first space), which breaks for multi-word
+  // first names like "John Albert" — it would show "John" / "Albert
+  // Tabasa" instead of "John Albert" / "Tabasa". guests/{uid} stores
+  // these correctly as separate fields (set at registration), so fetch
+  // and overwrite the guess with the real values once available.
+  useEffect(() => {
+    if (!user?.uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const guestSnap = await getDoc(doc(db, 'guests', user.uid));
+        if (!cancelled && guestSnap.exists()) {
+          const data = guestSnap.data();
+          if (data.firstName) setFirstName(data.firstName);
+          if (data.lastName) setLastName(data.lastName);
+        }
+      } catch (err) {
+        console.warn('Failed to load guest profile for name prefill, keeping displayName guess:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.uid]);
+
+  if (!bookingDetails || !selectedRooms || selectedRooms.length === 0) {
     return (
       <View style={styles.container}>
         <Brandheader />
@@ -81,9 +159,11 @@ export default function ReviewPayScreen({ bookingDetails, selectedRate, user, on
   }
 
   const { checkIn, checkOut, nights, rooms, totals } = bookingDetails;
-  const subtotal = selectedRate.price * Math.max(nights, 1);
+  const combinedNightlyRate = selectedRooms.reduce((sum, r) => sum + (r.price || 0), 0);
+  const subtotal = combinedNightlyRate * Math.max(nights, 1);
   const tax      = Math.round(subtotal * TAX_RATE);
   const total    = subtotal + tax;
+  const roomTypeSummary = selectedRooms.map((r) => r.roomTypeName || r.name).join(', ');
 
   // ── Validation ───────────────────────────────────────────────────────
   const validate = () => {
@@ -99,6 +179,51 @@ export default function ReviewPayScreen({ bookingDetails, selectedRate, user, on
     if (!agreed) e.agreed = 'Please agree to the Terms & Conditions.';
     setErrors(e);
     return Object.keys(e).length === 0;
+  };
+
+  // Creates or updates this guest's entry in the "guests" collection so
+  // the booking shows up on the admin Guest Records screen. Runs after
+  // the reservation itself has already been saved — failure here is
+  // logged but never blocks or fails the guest's actual booking.
+  const upsertGuestRecord = async () => {
+    try {
+      const existingQuery = query(collection(db, 'guests'), where('linkedUid', '==', user.uid));
+      const existingSnap = await getDocs(existingQuery);
+
+      if (existingSnap.empty) {
+        await addDoc(collection(db, 'guests'), {
+          firstName: firstName.trim(),
+          lastName:  lastName.trim(),
+          email:     email.trim(),
+          phone:     phone.trim(),
+          source:    'Mobile App',
+          linkedUid: user.uid,
+          nationality: null,
+          idType:      null,
+          idNumber:    null,
+          vipTier:     null,
+          tags:        [],
+          staffNotes:  null,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          createdBy: 'guest-booking',
+        });
+      } else {
+        // Returning guest — refresh contact info in case it changed,
+        // but never touch staff-only fields (vipTier, tags, staffNotes,
+        // source) that this booking flow has no business overwriting.
+        const existingDocRef = existingSnap.docs[0].ref;
+        await updateDoc(existingDocRef, {
+          firstName: firstName.trim(),
+          lastName:  lastName.trim(),
+          email:     email.trim(),
+          phone:     phone.trim(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to upsert guest record (reservation still succeeded):', err);
+    }
   };
 
   const handleConfirm = async () => {
@@ -136,8 +261,16 @@ export default function ReviewPayScreen({ bookingDetails, selectedRate, user, on
         rooms:  rooms || null,
         totals,
 
-        roomType: selectedRate.name,
-        roomId:   selectedRate.id,
+        // selectedRooms: one entry per physical room in this reservation.
+        // roomType is kept as a simple comma-joined string for any admin
+        // views that don't drill into selectedRooms.
+        selectedRooms: selectedRooms.map((r) => ({
+          roomNumber: r.roomNumber ?? null,
+          roomTypeId: r.roomTypeId ?? r.id ?? null,
+          roomTypeName: r.roomTypeName || r.name,
+          price: r.price ?? null,
+        })),
+        roomType: roomTypeSummary,
 
         subtotal,
         tax,
@@ -153,9 +286,14 @@ export default function ReviewPayScreen({ bookingDetails, selectedRate, user, on
 
       setReservationId(docRef.id);
 
+      // Guest Records upsert — see upsertGuestRecord() docstring above.
+      // Runs after the reservation write succeeds; its own errors are
+      // caught internally and never affect the guest-facing flow below.
+      await upsertGuestRecord();
+
       Alert.alert(
         'Reservation Submitted! 🎉',
-        `Thank you, ${firstName}! Your ${selectedRate.name} room request for ${formatDate(checkIn)} – ${formatDate(checkOut)} has been sent to the hotel for confirmation.\n\nTotal: ${formatCurrency(total)}`,
+        `Thank you, ${firstName}! Your ${roomTypeSummary} room request for ${formatDate(checkIn)} – ${formatDate(checkOut)} has been sent to the hotel for confirmation.\n\nTotal: ${formatCurrency(total)}`,
         [{ text: 'OK', onPress: onConfirm }]
       );
     } catch (err) {
@@ -185,14 +323,16 @@ export default function ReviewPayScreen({ bookingDetails, selectedRate, user, on
       <ScrollView contentContainerStyle={styles.content}>
         <StayBar checkIn={checkIn} checkOut={checkOut} totals={totals} onEdit={onBackToRooms} />
 
-        {/* Room tab indicator */}
-        <View style={styles.roomTabRow}>
-          <View style={styles.roomTabActive}>
-            <Text style={styles.roomTabActiveText}>ROOM 1 ✓</Text>
-          </View>
-          <View style={styles.roomTabRest}>
-            <Text style={styles.roomTabRestText}>{selectedRate.name}</Text>
-          </View>
+        {/* Room selection summary — one row per room in this reservation */}
+        <View style={styles.roomsSummaryList}>
+          {selectedRooms.map((room, i) => (
+            <View key={room.roomNumber ?? room.id ?? i} style={styles.roomSummaryRow}>
+              <Text style={styles.roomSummaryLabel}>ROOM {i + 1} ✓</Text>
+              <Text style={styles.roomSummaryValue} numberOfLines={1}>
+                {room.name || `${room.roomTypeName} (Room ${room.roomNumber})`}
+              </Text>
+            </View>
+          ))}
         </View>
 
         <View style={isTwoCol ? styles.twoCol : styles.oneCol}>
@@ -348,7 +488,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRate, user, on
                 disabled={confirming}
               >
                 {confirming
-                  ? <ActivityIndicator color={colors.white} />
+                  ? <ActivityIndicator color={colors.onPrimary} />
                   : <Text style={styles.confirmBtnText}>Confirm Reservation</Text>
                 }
               </TouchableOpacity>
@@ -359,11 +499,12 @@ export default function ReviewPayScreen({ bookingDetails, selectedRate, user, on
           <View style={[styles.panel, isTwoCol && { flex: 1 }]}>
             <Text style={styles.panelTitle}>Booking Summary</Text>
 
-            <SummaryRow label="Check-in"  value={formatDate(checkIn)} />
-            <SummaryRow label="Check-out" value={formatDate(checkOut)} />
-            <SummaryRow label="Nights"    value={`${nights} night${nights !== 1 ? 's' : ''}`} />
-            <SummaryRow label="Room"      value={selectedRate.name} />
+            <SummaryRow styles={styles} label="Check-in"  value={formatDate(checkIn)} />
+            <SummaryRow styles={styles} label="Check-out" value={formatDate(checkOut)} />
+            <SummaryRow styles={styles} label="Nights"    value={`${nights} night${nights !== 1 ? 's' : ''}`} />
+            <SummaryRow styles={styles} label={`Room${selectedRooms.length !== 1 ? 's' : ''}`} value={roomTypeSummary} />
             <SummaryRow
+              styles={styles}
               label="Guests"
               value={
                 `${totals.totalAdults} Adult${totals.totalAdults !== 1 ? 's' : ''}` +
@@ -374,10 +515,16 @@ export default function ReviewPayScreen({ bookingDetails, selectedRate, user, on
             />
 
             <View style={styles.rateBox}>
-              <Text style={styles.rateBoxLabel}>▪ Room Only</Text>
-              <Text style={styles.rateBoxPrice}>
-                {formatCurrency(selectedRate.price)} × {nights} night{nights !== 1 ? 's' : ''}
-              </Text>
+              {selectedRooms.map((room, i) => (
+                <View key={room.roomNumber ?? room.id ?? i} style={[i > 0 && styles.rateLineDivider]}>
+                  <Text style={styles.rateBoxLabel}>
+                    ▪ {room.name || `${room.roomTypeName} (Room ${room.roomNumber})`}
+                  </Text>
+                  <Text style={styles.rateBoxPrice}>
+                    {formatCurrency(room.price)} × {nights} night{nights !== 1 ? 's' : ''}
+                  </Text>
+                </View>
+              ))}
             </View>
 
             <View style={styles.divider} />
@@ -423,90 +570,101 @@ export default function ReviewPayScreen({ bookingDetails, selectedRate, user, on
   );
 }
 
-function SummaryRow({ label, value }) {
+function SummaryRow({ label, value, styles }) {
   return (
-    <View style={summaryStyles.row}>
-      <Text style={summaryStyles.label}>{label}</Text>
-      <Text style={summaryStyles.value}>{value}</Text>
+    <View style={styles.summaryRow}>
+      <Text style={styles.summaryLabel}>{label}</Text>
+      <Text style={styles.summaryValue}>{value}</Text>
     </View>
   );
 }
 
-const summaryStyles = StyleSheet.create({
-  row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.xs + 2, borderBottomWidth: 0.5, borderBottomColor: colors.border },
-  label: { fontSize: 12, fontFamily: fonts.body,         color: colors.textMuted },
-  value: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text },
-});
+function getStyles(colors, spacing, radius, fonts) {
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: colors.background },
+    content:   { padding: spacing.lg, paddingBottom: spacing.xxl },
+    message:   { fontSize: 15, fontFamily: fonts.body, color: colors.textMuted, margin: spacing.lg },
+    footerBleed: { marginHorizontal: -spacing.lg, marginTop: spacing.xl, marginBottom: -spacing.xxl },
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  content:   { padding: spacing.lg, paddingBottom: spacing.xxl },
-  message:   { fontSize: 15, fontFamily: fonts.body, color: colors.textMuted, margin: spacing.lg },
-  footerBleed: { marginHorizontal: -spacing.lg, marginTop: spacing.xl, marginBottom: -spacing.xxl },
+    roomsSummaryList:  { marginBottom: spacing.lg, gap: spacing.sm },
+    roomSummaryRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.card,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: spacing.sm + 2,
+      paddingHorizontal: spacing.md,
+      gap: spacing.md,
+    },
+    roomSummaryLabel: { fontSize: 12, fontFamily: fonts.headingSemiBold, color: colors.step, letterSpacing: 0.3 },
+    roomSummaryValue: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text, flex: 1 },
 
-  roomTabRow:       { flexDirection: 'row', marginBottom: spacing.lg, borderRadius: 8, overflow: 'hidden' },
-  roomTabActive:    { backgroundColor: colors.step, paddingVertical: spacing.sm + 2, paddingHorizontal: spacing.lg },
-  roomTabActiveText:{ color: colors.white, fontFamily: fonts.headingSemiBold, fontSize: 12, letterSpacing: 0.4 },
-  roomTabRest:      { flex: 1, backgroundColor: colors.stepBg, paddingVertical: spacing.sm + 2, paddingHorizontal: spacing.lg, justifyContent: 'center' },
-  roomTabRestText:  { color: colors.textMuted, fontFamily: fonts.body, fontSize: 12 },
+    twoCol: { flexDirection: 'row', gap: spacing.lg, alignItems: 'flex-start' },
+    oneCol: { flexDirection: 'column', gap: spacing.lg },
 
-  twoCol: { flexDirection: 'row', gap: spacing.lg, alignItems: 'flex-start' },
-  oneCol: { flexDirection: 'column', gap: spacing.lg },
+    panel: { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
+    panelTitle: { fontSize: 13, fontFamily: fonts.headingBold, color: colors.primary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: spacing.md, paddingBottom: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border },
 
-  panel: { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 },
-  panelTitle: { fontSize: 13, fontFamily: fonts.headingBold, color: colors.primary, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: spacing.md, paddingBottom: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border },
+    nameRow:    { flexDirection: 'row', gap: spacing.sm },
+    fieldGroup: { marginBottom: spacing.md },
+    label:      { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.text, marginBottom: spacing.xs },
+    required:   { color: colors.danger },
+    optional:   { color: colors.textMuted, fontFamily: fonts.body },
 
-  nameRow:    { flexDirection: 'row', gap: spacing.sm },
-  fieldGroup: { marginBottom: spacing.md },
-  label:      { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.text, marginBottom: spacing.xs },
-  required:   { color: colors.danger },
-  optional:   { color: colors.textMuted, fontFamily: fonts.body },
+    inputWrap:        { flexDirection: 'row', alignItems: 'center', minHeight: 42, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.md, gap: spacing.sm },
+    inputWrapFocused: { borderColor: colors.primary, backgroundColor: colors.card },
+    inputWrapError:   { borderColor: colors.danger,  backgroundColor: colors.dangerBg },
+    textAreaWrap:     { alignItems: 'flex-start', paddingVertical: spacing.sm },
+    inputIcon:        { flexShrink: 0 },
+    input:            { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text, paddingVertical: 0 },
+    textArea:         { minHeight: 60, textAlignVertical: 'top' },
+    errorText:        { fontFamily: fonts.body, fontSize: 11, color: colors.danger, marginTop: spacing.xs },
 
-  inputWrap:        { flexDirection: 'row', alignItems: 'center', minHeight: 42, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.md, gap: spacing.sm },
-  inputWrapFocused: { borderColor: colors.primary, backgroundColor: colors.card },
-  inputWrapError:   { borderColor: colors.danger,  backgroundColor: colors.dangerBg },
-  textAreaWrap:     { alignItems: 'flex-start', paddingVertical: spacing.sm },
-  inputIcon:        { flexShrink: 0 },
-  input:            { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text, paddingVertical: 0 },
-  textArea:         { minHeight: 60, textAlignVertical: 'top' },
-  errorText:        { fontFamily: fonts.body, fontSize: 11, color: colors.danger, marginTop: spacing.xs },
+    phonePrefix:  { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.text, paddingRight: spacing.xs },
+    phoneDivider: { width: 1, height: 18, backgroundColor: colors.border },
 
-  phonePrefix:  { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.text, paddingRight: spacing.xs },
-  phoneDivider: { width: 1, height: 18, backgroundColor: colors.border },
+    paymentRow:          { flexDirection: 'row', gap: spacing.sm },
+    payOption:           { flex: 1, paddingVertical: spacing.sm + 2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, alignItems: 'center' },
+    payOptionActive:     { borderColor: colors.primary, backgroundColor: colors.primaryTint },
+    payOptionText:       { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.textMuted },
+    payOptionTextActive: { color: colors.primary },
 
-  paymentRow:          { flexDirection: 'row', gap: spacing.sm },
-  payOption:           { flex: 1, paddingVertical: spacing.sm + 2, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, alignItems: 'center' },
-  payOptionActive:     { borderColor: colors.primary, backgroundColor: colors.primaryTint },
-  payOptionText:       { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.textMuted },
-  payOptionTextActive: { color: colors.primary },
+    termsRow:      { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.sm, marginBottom: spacing.sm, backgroundColor: colors.cardAlt, borderRadius: radius.md, padding: spacing.md, borderWidth: 0.5, borderColor: colors.border },
+    termsRowError: { borderColor: colors.danger, backgroundColor: colors.dangerBg },
+    checkbox:        { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center', marginTop: 1, flexShrink: 0 },
+    checkboxChecked: { backgroundColor: colors.primary, borderColor: colors.primary },
+    checkmark:       { color: colors.onPrimary, fontSize: 11, fontFamily: fonts.bodySemiBold },
+    termsText:       { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, flex: 1, lineHeight: 16 },
+    termsLink:       { color: colors.primary, fontFamily: fonts.bodySemiBold, textDecorationLine: 'underline' },
 
-  termsRow:      { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: spacing.sm, marginBottom: spacing.sm, backgroundColor: colors.cardAlt, borderRadius: radius.md, padding: spacing.md, borderWidth: 0.5, borderColor: colors.border },
-  termsRowError: { borderColor: colors.danger, backgroundColor: colors.dangerBg },
-  checkbox:        { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center', marginTop: 1, flexShrink: 0 },
-  checkboxChecked: { backgroundColor: colors.primary, borderColor: colors.primary },
-  checkmark:       { color: colors.white, fontSize: 11, fontFamily: fonts.bodySemiBold },
-  termsText:       { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, flex: 1, lineHeight: 16 },
-  termsLink:       { color: colors.primary, fontFamily: fonts.bodySemiBold, textDecorationLine: 'underline' },
+    actionRow:           { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+    backBtn:             { paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt },
+    backBtnText:         { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+    confirmBtn:          { flex: 1, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+    confirmBtnDisabled:  { opacity: 0.7 },
+    confirmBtnText:      { color: colors.onPrimary, fontSize: 14, fontFamily: fonts.headingSemiBold, letterSpacing: 0.3 },
 
-  actionRow:           { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
-  backBtn:             { paddingVertical: spacing.md, paddingHorizontal: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt },
-  backBtnText:         { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
-  confirmBtn:          { flex: 1, paddingVertical: spacing.md, borderRadius: radius.md, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
-  confirmBtnDisabled:  { opacity: 0.7 },
-  confirmBtnText:      { color: colors.white, fontSize: 14, fontFamily: fonts.headingSemiBold, letterSpacing: 0.3 },
+    rateBox:      { backgroundColor: colors.cardAlt, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm, marginBottom: spacing.sm, gap: 4 },
+    rateLineDivider: { marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 0.5, borderTopColor: colors.border },
+    rateBoxLabel: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
+    rateBoxPrice: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
+    divider:      { height: 0.5, backgroundColor: colors.border, marginVertical: spacing.sm },
+    calcRow:      { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.xs },
+    calcLabel:    { fontSize: 12, fontFamily: fonts.body,         color: colors.textMuted },
+    calcValue:    { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text },
+    totalRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
+    totalLabel:   { fontSize: 15, fontFamily: fonts.headingBold,      color: colors.text },
+    totalValue:   { fontSize: 20, fontFamily: fonts.headingExtraBold, color: colors.primary },
+    taxNote:      { fontSize: 10, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
 
-  rateBox:      { backgroundColor: colors.cardAlt, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm, marginBottom: spacing.sm, gap: 4 },
-  rateBoxLabel: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
-  rateBoxPrice: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
-  divider:      { height: 0.5, backgroundColor: colors.border, marginVertical: spacing.sm },
-  calcRow:      { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.xs },
-  calcLabel:    { fontSize: 12, fontFamily: fonts.body,         color: colors.textMuted },
-  calcValue:    { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text },
-  totalRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: spacing.sm },
-  totalLabel:   { fontSize: 15, fontFamily: fonts.headingBold,      color: colors.text },
-  totalValue:   { fontSize: 20, fontFamily: fonts.headingExtraBold, color: colors.primary },
-  taxNote:      { fontSize: 10, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
+    resIdBadge: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.md, backgroundColor: colors.primaryTint, borderRadius: radius.sm, padding: spacing.sm },
+    resIdText:  { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.primary },
 
-  resIdBadge: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.md, backgroundColor: colors.primaryTint, borderRadius: radius.sm, padding: spacing.sm },
-  resIdText:  { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.primary },
-});
+    // Folded in from the old separate summaryStyles stylesheet
+    summaryRow:   { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.xs + 2, borderBottomWidth: 0.5, borderBottomColor: colors.border },
+    summaryLabel: { fontSize: 12, fontFamily: fonts.body,         color: colors.textMuted },
+    summaryValue: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text },
+  });
+}

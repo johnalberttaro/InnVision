@@ -18,12 +18,28 @@ import RegisterScreen       from './src/screens/form/Registerscreen';
 import ForgotPasswordScreen from './src/screens/form/Forgotpasswordscreen';
 import ProfileScreen        from './src/screens/profile/Profilescreen';
 import AboutScreen          from './src/screens/about/AboutScreen';
+import ContactUsScreen      from './src/screens/contact/ContactUsScreen';
+import BookingLookupScreen  from './src/screens/bookingLookup/BookingLookupScreen';
 import ReservationScreen    from './src/screens/reservation/ReservationScreen';
 import RoomSelectionScreen  from './src/screens/roomRates/RoomSelectionScreen';
 import ReviewPayScreen      from './src/screens/reviewPay/ReviewPayScreen';
 import AdminShell           from './src/screens/admin/Adminshell';
 import { fonts, colors }    from './src/utils/theme';
+import { ThemeProvider }    from './src/context/ThemeContext';
 
+/**
+ * NOTE ON DARK MODE ROLLOUT:
+ * ThemeProvider now wraps the whole app, and its `userId` prop is kept in
+ * sync with the current Firebase user below — this is what lets the dark
+ * mode preference load from Firestore/cache and apply globally.
+ *
+ * However, only screens that individually call useTheme() (instead of the
+ * old static `import { colors } from utils/theme`) will actually respond
+ * to it. ProfileScreen is migrated. Every other screen listed above still
+ * uses the old static import and will keep rendering in light mode until
+ * it's migrated the same way — that's expected, not a bug, and each
+ * screen can be migrated independently without breaking the others.
+ */
 export default function App() {
   const [fontsLoaded] = useFonts({
     [fonts.headingExtraBold]: Baloo2_800ExtraBold,
@@ -70,11 +86,11 @@ export default function App() {
 
   // ── Screen state ────────────────────────────────────────────────────
   // 'home' | 'login' | 'register' | 'forgotPassword' | 'profile' | 'about'
-  // | 'roomRates' | 'reviewPay' | 'admin'
+  // | 'contact' | 'findBooking' | 'roomRates' | 'reviewPay' | 'admin'
   const [screen, setScreen]                   = useState('home');
   const [showReservation, setShowReservation] = useState(false);
   const [bookingDetails, setBookingDetails]   = useState(null);
-  const [selectedRate, setSelectedRate]       = useState(null);
+  const [selectedRooms, setSelectedRooms]     = useState(null);
 
   // ── Auth handlers ───────────────────────────────────────────────────
   const handleLogin = (firebaseUser, role) => {
@@ -113,124 +129,143 @@ export default function App() {
   };
 
   const goBackToSearch    = () => { setScreen('home'); setShowReservation(true); };
-  const goToReviewPay     = (rate) => { setSelectedRate(rate); setScreen('reviewPay'); };
+  const goToReviewPay     = (rooms) => { setSelectedRooms(rooms); setScreen('reviewPay'); };
   const goBackToRoomRates = () => setScreen('roomRates');
 
   const handleConfirmed = () => {
     setBookingDetails(null);
-    setSelectedRate(null);
+    setSelectedRooms(null);
     setScreen('home');
   };
 
   // ── Loading gate ────────────────────────────────────────────────────
   if (!fontsLoaded || authLoading) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      </SafeAreaView>
+      <ThemeProvider userId={user?.uid}>
+        <SafeAreaView style={styles.safeArea}>
+          <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={colors.primary} />
+          </View>
+        </SafeAreaView>
+      </ThemeProvider>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+    <ThemeProvider userId={user?.uid}>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
 
-      {/* ── Home ──────────────────────────────────────────────── */}
-      {screen === 'home' && (
-        <HomeScreen
-          onBookNow={openReservation}
-          onSignIn={() => setScreen('login')}
-          onProfilePress={() => setScreen('profile')}
-          onAboutPress={() => setScreen('about')}
-          isAuthenticated={!!user}
-          user={user}
-          onLogout={handleLogout}
-        />
-      )}
+        {/* ── Home ──────────────────────────────────────────────── */}
+        {screen === 'home' && (
+          <HomeScreen
+            onBookNow={openReservation}
+            onSignIn={() => setScreen('login')}
+            onProfilePress={() => setScreen('profile')}
+            onAboutPress={() => setScreen('about')}
+            onContactPress={() => setScreen('contact')}
+            onFindBooking={() => setScreen('findBooking')}
+            isAuthenticated={!!user}
+            user={user}
+            onLogout={handleLogout}
+          />
+        )}
 
-      {/* ── Admin ─────────────────────────────────────────────── */}
-      {screen === 'admin' && (
-        <AdminShell
-          onLoggedOut={handleLogout}
-          adminName={user?.displayName || user?.email || 'Admin User'}
-          adminRole="Hotel Administrator"
-        />
-      )}
+        {/* ── Admin ─────────────────────────────────────────────── */}
+        {screen === 'admin' && (
+          <AdminShell
+            onLoggedOut={handleLogout}
+            adminName={user?.displayName || user?.email || 'Admin User'}
+            adminRole="Hotel Administrator"
+          />
+        )}
 
-      {/* ── Auth ──────────────────────────────────────────────── */}
-      {screen === 'login' && (
-        <LoginScreen
-          onLogin={handleLogin}
-          onForgotPress={() => setScreen('forgotPassword')}
-          onRegisterPress={() => setScreen('register')}
-        />
-      )}
-      {screen === 'register' && (
-        <RegisterScreen
-          onRegister={handleRegister}
-          onLoginPress={() => setScreen('login')}
-        />
-      )}
-      {screen === 'forgotPassword' && (
-        <ForgotPasswordScreen
-          onLoginPress={() => setScreen('login')}
-        />
-      )}
+        {/* ── Auth ──────────────────────────────────────────────── */}
+        {screen === 'login' && (
+          <LoginScreen
+            onLogin={handleLogin}
+            onForgotPress={() => setScreen('forgotPassword')}
+            onRegisterPress={() => setScreen('register')}
+          />
+        )}
+        {screen === 'register' && (
+          <RegisterScreen
+            onRegister={handleRegister}
+            onLoginPress={() => setScreen('login')}
+          />
+        )}
+        {screen === 'forgotPassword' && (
+          <ForgotPasswordScreen
+            onLoginPress={() => setScreen('login')}
+          />
+        )}
 
-      {/* ── Profile ───────────────────────────────────────────── */}
-      {screen === 'profile' && (
-        <ProfileScreen
-          user={user}
-          onBookNow={openReservation}
-          onLogout={handleLogout}
-          onEditProfile={() => console.log('TODO: edit profile')}
-          onBackPress={() => setScreen('home')}
-        />
-      )}
+        {/* ── Profile ───────────────────────────────────────────── */}
+        {screen === 'profile' && (
+          <ProfileScreen
+            user={user}
+            onBookNow={openReservation}
+            onLogout={handleLogout}
+            onBackPress={() => setScreen('home')}
+          />
+        )}
 
-      {/* ── About ─────────────────────────────────────────────── */}
-      {screen === 'about' && (
-        <AboutScreen
-          onBack={() => setScreen('home')}
-        />
-      )}
+        {/* ── About ─────────────────────────────────────────────── */}
+        {screen === 'about' && (
+          <AboutScreen
+            onBack={() => setScreen('home')}
+          />
+        )}
 
-      {/* ── Booking ───────────────────────────────────────────── */}
-      {screen === 'roomRates' && (
-        <RoomSelectionScreen
-          bookingDetails={bookingDetails}
-          onEditSearch={goBackToSearch}
-          onReserve={goToReviewPay}
-        />
-      )}
-      {screen === 'reviewPay' && (
-        <ReviewPayScreen
-          bookingDetails={bookingDetails}
-          selectedRate={selectedRate}
-          user={user}
-          onBackToRooms={goBackToRoomRates}
-          onConfirm={handleConfirmed}
-        />
-      )}
+        {/* ── Contact Us ────────────────────────────────────────── */}
+        {screen === 'contact' && (
+          <ContactUsScreen
+            onBack={() => setScreen('home')}
+          />
+        )}
 
-      {/* ── Reservation modal ─────────────────────────────────── */}
-      {/* user prop added so ReservationScreen can tag the Firestore doc */}
-      <Modal
-        visible={showReservation}
-        animationType="slide"
-        onRequestClose={closeReservation}
-        presentationStyle="fullScreen"
-      >
-        <ReservationScreen
-          user={user}
-          onSearch={goToRoomRates}
-          onClose={closeReservation}
-        />
-      </Modal>
-    </SafeAreaView>
+        {/* ── Find My Booking ──────────────────────────────────────── */}
+        {screen === 'findBooking' && (
+          <BookingLookupScreen
+            onBack={() => setScreen('home')}
+          />
+        )}
+
+        {/* ── Booking ───────────────────────────────────────────── */}
+        {screen === 'roomRates' && (
+          <RoomSelectionScreen
+            bookingDetails={bookingDetails}
+            onEditSearch={goBackToSearch}
+            onReserve={goToReviewPay}
+          />
+        )}
+        {screen === 'reviewPay' && (
+          <ReviewPayScreen
+            bookingDetails={bookingDetails}
+            selectedRooms={selectedRooms}
+            user={user}
+            onBackToRooms={goBackToRoomRates}
+            onConfirm={handleConfirmed}
+          />
+        )}
+
+        {/* ── Reservation modal ─────────────────────────────────── */}
+        {/* user prop added so ReservationScreen can tag the Firestore doc */}
+        <Modal
+          visible={showReservation}
+          animationType="slide"
+          onRequestClose={closeReservation}
+          presentationStyle="fullScreen"
+        >
+          <ReservationScreen
+            user={user}
+            onSearch={goToRoomRates}
+            onClose={closeReservation}
+          />
+        </Modal>
+      </SafeAreaView>
+    </ThemeProvider>
   );
 }
 

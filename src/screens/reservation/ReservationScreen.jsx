@@ -13,13 +13,31 @@ import { Ionicons } from '@expo/vector-icons';
 import RangeCalendar from '../../components/reservation/RangeCalendar';
 import GuestRoomSelector from '../../components/reservation/GuestRoomSelector';
 import DropdownTrigger from '../../components/reservation/DropdownTrigger';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { useTheme } from '../../context/ThemeContext';
+import { lightColors } from '../../utils/theme';
 import { formatDate, isCheckOutValid, nightsBetween } from '../../utils/dateHelpers';
 
 const initialRoom = () => ({ adults: 1, children: 0 });
 
 /**
  * ReservationScreen — STAY DETAILS ONLY.
+ *
+ * MIGRATED TO CENTRALIZED THEME (useTheme()). Two intentional fixes made
+ * during migration, not just a mechanical swap:
+ *
+ *  - `screen`'s background was `colors.primary`, a token meant to flip
+ *    for buttons/headings — used as a full-bleed backdrop, it would have
+ *    turned near-white in dark mode and swallowed the white logo/close
+ *    chips. Changed to `colors.heroBackground`, the token intentionally
+ *    kept a dark band in BOTH palettes (same one AboutScreen's header
+ *    uses), so this immersive booking sheet keeps its look either way.
+ *  - `logoText` / `closeText` sit on chips that are deliberately always
+ *    white (`colors.white`, literal in both palettes) against that now
+ *    always-dark backdrop. Their text must therefore stay always dark
+ *    too — using `colors.primary` here would flip to near-white in dark
+ *    mode and vanish against the white chip. Pinned to
+ *    `lightColors.primary` directly (bypassing the active theme on
+ *    purpose) for exactly these two spots.
  *
  * IMPORTANT: this screen no longer writes to Firestore. Nothing the guest
  * enters here (dates, rooms, guests) is an official reservation yet — it's
@@ -43,6 +61,9 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
   const [showCalendar, setShowCalendar]           = useState(false);
   const [showGuestSelector, setShowGuestSelector] = useState(false);
   const [errors, setErrors]     = useState({});
+
+  const { colors, spacing, radius, fonts } = useTheme();
+  const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
 
   const totals = useMemo(() => {
     const totalRooms    = rooms.length;
@@ -112,7 +133,7 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
           <Text style={styles.logoText}>IV</Text>
         </View>
         <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityLabel="Close">
-          <Ionicons name="close-outline" size={20} color={colors.primary} />
+          <Ionicons name="close-outline" size={20} color={lightColors.primary} />
           <Text style={styles.closeText}>Close</Text>
         </TouchableOpacity>
       </View>
@@ -221,159 +242,161 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.primary,
-  },
+function getStyles(colors, spacing, radius, fonts) {
+  return StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: colors.heroBackground,
+    },
 
-  /* Header */
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  logoBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.md,
-    backgroundColor: colors.white,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoText: {
-    fontFamily: fonts.headingExtraBold,
-    fontSize: 16,
-    color: colors.primary,
-    letterSpacing: -0.5,
-  },
-  closeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.white,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: 999,
-    gap: spacing.xs,
-  },
-  closeText: {
-    fontFamily: fonts.bodySemiBold,
-    fontSize: 13,
-    color: colors.primary,
-  },
+    /* Header */
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+    },
+    logoBadge: {
+      width: 40,
+      height: 40,
+      borderRadius: radius.md,
+      backgroundColor: colors.white,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    logoText: {
+      fontFamily: fonts.headingExtraBold,
+      fontSize: 16,
+      color: lightColors.primary, // always-dark text on an always-white chip
+      letterSpacing: -0.5,
+    },
+    closeButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.white,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+      borderRadius: 999,
+      gap: spacing.xs,
+    },
+    closeText: {
+      fontFamily: fonts.bodySemiBold,
+      fontSize: 13,
+      color: lightColors.primary, // always-dark text on an always-white chip
+    },
 
-  /* Scroll */
-  scroll: { flex: 1 },
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: spacing.lg,
-    paddingVertical: spacing.xl,
-  },
+    /* Scroll */
+    scroll: { flex: 1 },
+    scrollContent: {
+      flexGrow: 1,
+      justifyContent: 'center',
+      padding: spacing.lg,
+      paddingVertical: spacing.xl,
+    },
 
-  /* Card */
-  card: {
-    backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    borderWidth: 0.5,
-    borderColor: colors.border,
-    padding: spacing.xl,
-  },
-  cardTitle: {
-    fontFamily: fonts.headingExtraBold,
-    fontSize: 22,
-    color: colors.primary,
-    textAlign: 'center',
-    marginBottom: spacing.xs,
-  },
-  cardSubtitle: {
-    fontFamily: fonts.body,
-    fontSize: 13,
-    color: colors.textMuted,
-    textAlign: 'center',
-    marginBottom: spacing.xl,
-  },
+    /* Card */
+    card: {
+      backgroundColor: colors.card,
+      borderRadius: radius.lg,
+      borderWidth: 0.5,
+      borderColor: colors.border,
+      padding: spacing.xl,
+    },
+    cardTitle: {
+      fontFamily: fonts.headingExtraBold,
+      fontSize: 22,
+      color: colors.primary,
+      textAlign: 'center',
+      marginBottom: spacing.xs,
+    },
+    cardSubtitle: {
+      fontFamily: fonts.body,
+      fontSize: 13,
+      color: colors.textMuted,
+      textAlign: 'center',
+      marginBottom: spacing.xl,
+    },
 
-  /* Section label */
-  sectionLabel: {
-    fontFamily: fonts.headingBold,
-    fontSize: 12,
-    color: colors.primary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: spacing.md,
-    paddingBottom: spacing.xs,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
+    /* Section label */
+    sectionLabel: {
+      fontFamily: fonts.headingBold,
+      fontSize: 12,
+      color: colors.primary,
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+      marginBottom: spacing.md,
+      paddingBottom: spacing.xs,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
 
-  /* Fields */
-  fieldGroup: {
-    marginBottom: spacing.md,
-  },
-  label: {
-    fontFamily: fonts.bodyMedium,
-    fontSize: 13,
-    color: colors.text,
-    marginBottom: spacing.xs,
-  },
-  required: { color: colors.danger },
-  errorText: {
-    fontFamily: fonts.body,
-    fontSize: 11,
-    color: colors.danger,
-    marginTop: spacing.xs,
-  },
-  pillValue: {
-    fontSize: 13,
-    fontFamily: fonts.bodySemiBold,
-    color: colors.text,
-  },
-  pillPlaceholder: {
-    fontSize: 13,
-    fontFamily: fonts.body,
-    color: colors.textMuted,
-  },
-  nightsHint: {
-    fontFamily: fonts.body,
-    fontSize: 12,
-    color: colors.textMuted,
-    marginTop: spacing.xs,
-  },
+    /* Fields */
+    fieldGroup: {
+      marginBottom: spacing.md,
+    },
+    label: {
+      fontFamily: fonts.bodyMedium,
+      fontSize: 13,
+      color: colors.text,
+      marginBottom: spacing.xs,
+    },
+    required: { color: colors.danger },
+    errorText: {
+      fontFamily: fonts.body,
+      fontSize: 11,
+      color: colors.danger,
+      marginTop: spacing.xs,
+    },
+    pillValue: {
+      fontSize: 13,
+      fontFamily: fonts.bodySemiBold,
+      color: colors.text,
+    },
+    pillPlaceholder: {
+      fontSize: 13,
+      fontFamily: fonts.body,
+      color: colors.textMuted,
+    },
+    nightsHint: {
+      fontFamily: fonts.body,
+      fontSize: 12,
+      color: colors.textMuted,
+      marginTop: spacing.xs,
+    },
 
-  /* CTA */
-  ctaButton: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.md,
-    height: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.md,
-  },
-  ctaText: {
-    color: colors.white,
-    fontSize: 15,
-    fontFamily: fonts.headingSemiBold,
-    letterSpacing: 0.3,
-  },
-  termsText: {
-    fontFamily: fonts.body,
-    fontSize: 10,
-    color: colors.textMuted,
-    textAlign: 'right',
-    marginTop: spacing.sm,
-  },
+    /* CTA */
+    ctaButton: {
+      backgroundColor: colors.accent,
+      borderRadius: radius.md,
+      height: 48,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: spacing.md,
+    },
+    ctaText: {
+      color: colors.onPrimary,
+      fontSize: 15,
+      fontFamily: fonts.headingSemiBold,
+      letterSpacing: 0.3,
+    },
+    termsText: {
+      fontFamily: fonts.body,
+      fontSize: 10,
+      color: colors.textMuted,
+      textAlign: 'right',
+      marginTop: spacing.sm,
+    },
 
-  /* Modals */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: colors.overlayDim,
-    justifyContent: 'center',
-    padding: spacing.lg,
-  },
-  modalSheet: {
-    maxHeight: '85%',
-  },
-});
+    /* Modals */
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: colors.overlayDim,
+      justifyContent: 'center',
+      padding: spacing.lg,
+    },
+    modalSheet: {
+      maxHeight: '85%',
+    },
+  });
+}

@@ -10,7 +10,7 @@ import { auth, db } from '../../services/firebase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 
 export default function RegisterScreen({ onRegister, onLoginPress }) {
-  const [form, setForm] = useState({ firstName: '', lastName: '', email: '', password: '', confirmPassword: '' });
+  const [form, setForm] = useState({ firstName: '', lastName: '', email: '', phone: '', password: '', confirmPassword: '' });
   const [errors, setErrors]             = useState({});
   const [touched, setTouched]           = useState({});
   const [showPass, setShowPass]         = useState(false);
@@ -36,6 +36,19 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
     if (!form.lastName.trim())   e.lastName  = 'Last name is required.';
     if (!form.email.trim())      e.email     = 'Email address is required.';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Enter a valid email address.';
+
+    if (!form.phone.trim()) {
+      e.phone = 'Phone number is required.';
+    } else {
+      const cleaned = form.phone.trim();
+      const digitsOnly = cleaned.replace(/[^\d]/g, '');
+      if (!/^[\d\s\-().+]+$/.test(cleaned)) {
+        e.phone = 'Phone number contains invalid characters.';
+      } else if (digitsOnly.length < 7 || digitsOnly.length > 15) {
+        e.phone = 'Enter a valid phone number.';
+      }
+    }
+
     if (!form.password)          e.password  = 'Password is required.';
     else if (form.password.length < 8) e.password = 'Password must be at least 8 characters.';
     if (!form.confirmPassword)   e.confirmPassword = 'Please confirm your password.';
@@ -47,7 +60,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
     const e = validate();
     if (Object.keys(e).length > 0) {
       setErrors(e);
-      setTouched({ firstName: true, lastName: true, email: true, password: true, confirmPassword: true });
+      setTouched({ firstName: true, lastName: true, email: true, phone: true, password: true, confirmPassword: true });
       return;
     }
 
@@ -74,6 +87,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
           firstName:   form.firstName.trim(),
           lastName:    form.lastName.trim(),
           email:       form.email.trim(),
+          phone:       form.phone.trim(),
           displayName: `${form.firstName.trim()} ${form.lastName.trim()}`,
           createdAt:   serverTimestamp(),
         });
@@ -202,6 +216,25 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
                 {isValid('email') && <Text style={styles.checkIcon}>✓</Text>}
               </View>
               {touched.email && errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
+            </View>
+
+            {/* Phone Number */}
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Phone Number <Text style={styles.required}>*</Text></Text>
+              <View style={wrapStyle('phone')}>
+                <TextInput
+                  style={inputStyle('phone')}
+                  placeholderTextColor={colors.disabled}
+                  placeholder="e.g. +1 555 123 4567"
+                  value={form.phone}
+                  onChangeText={v => update('phone', v)}
+                  onFocus={() => setFocusedField('phone')}
+                  onBlur={() => blur('phone')}
+                  keyboardType="phone-pad"
+                />
+                {isValid('phone') && <Text style={styles.checkIcon}>✓</Text>}
+              </View>
+              {touched.phone && errors.phone && <Text style={styles.errorText}>{errors.phone}</Text>}
             </View>
 
             {/* Password */}

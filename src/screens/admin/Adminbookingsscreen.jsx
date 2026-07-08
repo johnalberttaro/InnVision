@@ -37,30 +37,33 @@ import { formatCurrency } from '../../utils/roomRates';
  *                           | 'reservations:checkouts' (defaults to showing all)
  */
 
-// Cross-platform confirm dialog — Alert.alert has no UI on React Native Web,
-// so on web we fall back to window.confirm; on native we use the real Alert.
-const confirmAction = (title, message, confirmLabel, onConfirm) => {
+// ── Web-safe confirm/alert helpers ─────────────────────────────────────
+// `Alert.alert(...)` is a NO-OP on react-native-web — it never renders a
+// dialog, it just silently does nothing. Every "Are you sure?" flow below
+// puts the actual Firestore update inside the alert's onPress, so on web
+// that update code was simply never reached, even though the buttons
+// looked fine and were tappable. These two helpers route to
+// window.confirm/window.alert on web and keep the native Alert UX on
+// iOS/Android.
+function confirmDialog(title, message, confirmLabel, onConfirmPressed) {
   if (Platform.OS === 'web') {
-    if (window.confirm(`${title}\n\n${message}`)) {
-      onConfirm();
-    }
-  } else {
-    const destructive = confirmLabel === 'Decline';
-    Alert.alert(title, message, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: confirmLabel, style: destructive ? 'destructive' : 'default', onPress: onConfirm },
-    ]);
+    const ok = window.confirm(`${title}\n\n${message}`);
+    if (ok) onConfirmPressed();
+    return;
   }
-};
+  Alert.alert(title, message, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: confirmLabel, style: confirmLabel === 'Decline' ? 'destructive' : 'default', onPress: onConfirmPressed },
+  ]);
+}
 
-// Cross-platform simple alert (no confirm needed, just an info message)
-const notifyUser = (title, message) => {
+function notifyDialog(title, message) {
   if (Platform.OS === 'web') {
-    window.alert(message ? `${title}\n\n${message}` : title);
-  } else {
-    Alert.alert(title, message);
+    window.alert(`${title}\n\n${message}`);
+    return;
   }
-};
+  Alert.alert(title, message);
+}
 
 export default function AdminBookingsScreen({ onLogout, filterKey = 'reservations:all' }) {
   const [bookings, setBookings] = useState([]);
@@ -148,7 +151,7 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
       showToast(toastMessage);
     } catch (err) {
       console.error(`Failed to update reservation to ${newStatus}:`, err);
-      notifyUser('Error', 'Could not update this reservation. Please try again.');
+      notifyDialog('Error', 'Could not update this reservation. Please try again.');
     } finally {
       setActingId(null);
     }
@@ -156,13 +159,13 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
 
   const handleAdminConfirm = (item) => {
     if (!item.roomType || !item.guestDetails) {
-      notifyUser(
+      notifyDialog(
         'Cannot confirm yet',
         "This guest hasn't finished selecting a room and entering their details. Ask them to complete the booking first."
       );
       return;
     }
-    confirmAction(
+    confirmDialog(
       'Confirm this reservation?',
       `${getGuestName(item)} — ${item.roomType}, ${formatDateRange(item.checkIn, item.checkOut)}`,
       'Confirm',
@@ -179,7 +182,7 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
   };
 
   const handleAdminDecline = (item) => {
-    confirmAction(
+    confirmDialog(
       'Decline this reservation?',
       `${getGuestName(item)} — ${formatDateRange(item.checkIn, item.checkOut)}. This cannot be undone.`,
       'Decline',
@@ -196,7 +199,7 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
   };
 
   const handleCheckIn = (item) => {
-    confirmAction(
+    confirmDialog(
       'Check in this guest?',
       `${getGuestName(item)} — ${item.roomType}`,
       'Check In',
@@ -213,7 +216,7 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
   };
 
   const handleCheckOut = (item) => {
-    confirmAction(
+    confirmDialog(
       'Check out this guest?',
       `${getGuestName(item)} — ${item.roomType}`,
       'Check Out',

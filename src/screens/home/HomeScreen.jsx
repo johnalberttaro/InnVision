@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,10 +10,22 @@ import ImageCarousel from '../../components/home/ImageCarousel';
 import HamburgerMenu from '../../components/home/HamburgerMenu';
 import HomeHeader from '../../components/shared/HomeHeader';
 import Appfooter from '../../components/shared/Appfooter';
-import { colors, spacing, fonts } from '../../utils/theme';
+import { useTheme } from '../../context/ThemeContext';
 
 /**
  * HomeScreen — Landing page.
+ *
+ * MIGRATED TO CENTRALIZED THEME (useTheme()). Two things fixed during
+ * migration, not just a mechanical swap:
+ *  - `screen`'s background was `colors.white` (a token that's
+ *    intentionally literal white in BOTH palettes) — that would have left
+ *    this screen stuck white even in dark mode. Changed to
+ *    `colors.background`, the token designed to flip.
+ *  - `signInPromptText` / `bottomCtaText` used `colors.white` for text
+ *    drawn on top of a primary/step-colored button. Since those button
+ *    backgrounds flip to a light color in dark mode, the text sitting on
+ *    them needs to flip to dark too — changed to the `onPrimary` token,
+ *    which exists exactly for this case.
  *
  * Props:
  *  - onBookNow:       () => void
@@ -21,6 +33,8 @@ import { colors, spacing, fonts } from '../../utils/theme';
  *  - onLogout:        () => void
  *  - onProfilePress:  () => void
  *  - onAboutPress:    () => void
+ *  - onContactPress:  () => void
+ *  - onFindBooking:   () => void
  *  - isAuthenticated: boolean
  */
 export default function HomeScreen({
@@ -29,9 +43,13 @@ export default function HomeScreen({
   onLogout,
   onProfilePress,
   onAboutPress,
+  onContactPress,
+  onFindBooking,
   isAuthenticated,
 }) {
   const [menuVisible, setMenuVisible] = useState(false);
+  const { colors, spacing, fonts } = useTheme();
+  const styles = useMemo(() => getStyles(colors, spacing, fonts), [colors, spacing, fonts]);
 
   return (
     <View style={styles.screen}>
@@ -41,6 +59,8 @@ export default function HomeScreen({
         onMenuPress={() => setMenuVisible(true)}
         onProfilePress={onProfilePress}
         onAboutPress={onAboutPress}
+        onContactPress={onContactPress}
+        onFindBooking={onFindBooking}
         isAuthenticated={isAuthenticated}
       />
 
@@ -107,116 +127,120 @@ export default function HomeScreen({
         onClose={() => setMenuVisible(false)}
         onProfilePress={onProfilePress}
         onAboutPress={onAboutPress}
+        onContactPress={onContactPress}
+        onFindBooking={onFindBooking}
         isAuthenticated={isAuthenticated}
       />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.white,
-  },
-  scroll: {
-    flex: 1,
-  },
+function getStyles(colors, spacing, fonts) {
+  return StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    scroll: {
+      flex: 1,
+    },
 
-  /* About */
-  aboutSection: {
-    backgroundColor: colors.aboutBackground,
-    padding: spacing.xl,
-  },
-  aboutHeader: {
-    alignItems: 'center',
-    marginBottom: spacing.lg,
-  },
-  compassIcon: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 2,
-    borderColor: colors.aboutAccent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  compassEmoji: {
-    fontSize: 24,
-  },
-  aboutTitle: {
-    fontSize: 20,
-    fontFamily: fonts.headingExtraBold,
-    color: colors.aboutAccent,
-    letterSpacing: 0.5,
-  },
-  aboutParagraph: {
-    fontSize: 13,
-    fontFamily: fonts.body,
-    lineHeight: 20,
-    color: colors.text,
-    textAlign: 'center',
-    marginBottom: spacing.md,
-  },
+    /* About */
+    aboutSection: {
+      backgroundColor: colors.aboutBackground,
+      padding: spacing.xl,
+    },
+    aboutHeader: {
+      alignItems: 'center',
+      marginBottom: spacing.lg,
+    },
+    compassIcon: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      borderWidth: 2,
+      borderColor: colors.aboutAccent,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: spacing.sm,
+    },
+    compassEmoji: {
+      fontSize: 24,
+    },
+    aboutTitle: {
+      fontSize: 20,
+      fontFamily: fonts.headingExtraBold,
+      color: colors.aboutAccent,
+      letterSpacing: 0.5,
+    },
+    aboutParagraph: {
+      fontSize: 13,
+      fontFamily: fonts.body,
+      lineHeight: 20,
+      color: colors.text,
+      textAlign: 'center',
+      marginBottom: spacing.md,
+    },
 
-  /* Learn more */
-  learnMoreBtn: {
-    alignSelf: 'center',
-    marginTop: spacing.xs,
-    marginBottom: spacing.sm,
-  },
-  learnMoreText: {
-    fontSize: 13,
-    fontFamily: fonts.bodySemiBold,
-    color: colors.aboutAccent,
-    textDecorationLine: 'underline',
-  },
+    /* Learn more */
+    learnMoreBtn: {
+      alignSelf: 'center',
+      marginTop: spacing.xs,
+      marginBottom: spacing.sm,
+    },
+    learnMoreText: {
+      fontSize: 13,
+      fontFamily: fonts.bodySemiBold,
+      color: colors.aboutAccent,
+      textDecorationLine: 'underline',
+    },
 
-  /* Sign in prompt */
-  signInPromptBtn: {
-    marginTop: spacing.sm,
-    alignSelf: 'center',
-    backgroundColor: colors.primary,
-    borderRadius: 999,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xxl,
-  },
-  signInPromptText: {
-    color: colors.white,
-    fontFamily: fonts.headingSemiBold,
-    fontSize: 14,
-    letterSpacing: 0.3,
-  },
+    /* Sign in prompt */
+    signInPromptBtn: {
+      marginTop: spacing.sm,
+      alignSelf: 'center',
+      backgroundColor: colors.primary,
+      borderRadius: 999,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.xxl,
+    },
+    signInPromptText: {
+      color: colors.onPrimary,
+      fontFamily: fonts.headingSemiBold,
+      fontSize: 14,
+      letterSpacing: 0.3,
+    },
 
-  /* Book Your Stay */
-  bottomCtaWrap: {
-    padding: spacing.xl,
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  bottomCtaButton: {
-    backgroundColor: colors.step,
-    borderRadius: 999,
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.xxl,
-  },
-  bottomCtaText: {
-    color: colors.white,
-    fontFamily: fonts.headingSemiBold,
-    fontSize: 15,
-  },
+    /* Book Your Stay */
+    bottomCtaWrap: {
+      padding: spacing.xl,
+      alignItems: 'center',
+      gap: spacing.md,
+    },
+    bottomCtaButton: {
+      backgroundColor: colors.step,
+      borderRadius: 999,
+      paddingVertical: spacing.lg,
+      paddingHorizontal: spacing.xxl,
+    },
+    bottomCtaText: {
+      color: colors.onPrimary,
+      fontFamily: fonts.headingSemiBold,
+      fontSize: 15,
+    },
 
-  /* Sign out */
-  logoutBtn: {
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  logoutText: {
-    fontSize: 13,
-    fontFamily: fonts.bodySemiBold,
-    color: colors.textMuted,
-  },
-});
+    /* Sign out */
+    logoutBtn: {
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.lg,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    logoutText: {
+      fontSize: 13,
+      fontFamily: fonts.bodySemiBold,
+      color: colors.textMuted,
+    },
+  });
+}

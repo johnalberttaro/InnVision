@@ -16,6 +16,13 @@ const WIDE_SCREEN_BREAKPOINT = 768;
 /**
  * HomeHeader — logo + InnVision name + dynamic CTA + nav/hamburger.
  *
+ * Safe-area note: the root SafeAreaView in App.jsx already reserves space
+ * for the status bar / notch on both iOS and Android, so this header only
+ * needs its normal small padding for visual breathing room — it should
+ * NOT also add useSafeAreaInsets() here, or the inset gets applied twice
+ * (once by the root wrapper, once here), producing an oversized gap above
+ * the header on mobile.
+ *
  * CTA button behavior:
  *  - isAuthenticated = false  →  shows "SIGN IN"  (calls onSignIn)
  *  - isAuthenticated = true   →  shows "BOOK NOW" (calls onBookNow)
@@ -26,6 +33,8 @@ const WIDE_SCREEN_BREAKPOINT = 768;
  *  - onMenuPress:      () => void
  *  - onProfilePress:   () => void
  *  - onAboutPress:     () => void
+ *  - onContactPress:   () => void
+ *  - onFindBooking:    () => void   — navigate to the booking lookup screen
  *  - isAuthenticated:  boolean
  */
 export default function HomeHeader({
@@ -34,6 +43,8 @@ export default function HomeHeader({
   onMenuPress,
   onProfilePress,
   onAboutPress,
+  onContactPress,
+  onFindBooking,
   isAuthenticated,
 }) {
   const { width } = useWindowDimensions();
@@ -49,9 +60,10 @@ export default function HomeHeader({
 
   // Nav items — Profile only shown when authenticated
   const navItems = [
-    { label: 'About',      onPress: () => onAboutPress && onAboutPress() },
-    { label: 'Promos',     onPress: () => {} },
-    { label: 'Contact Us', onPress: () => {} },
+    { label: 'About',            onPress: () => onAboutPress && onAboutPress() },
+    { label: 'Promos',           onPress: () => {} },
+    { label: 'Contact Us',       onPress: () => onContactPress && onContactPress() },
+    { label: 'Find My Booking',  onPress: () => onFindBooking && onFindBooking() },
     ...(isAuthenticated
       ? [{ label: 'Profile', onPress: () => onProfilePress && onProfilePress(), isAccent: true }]
       : []
@@ -106,16 +118,21 @@ export default function HomeHeader({
               </Text>
             </TouchableOpacity>
 
-            {/* Hamburger — mobile only */}
+            {/* Hamburger — mobile only. 44x44 touch target with extra
+                inset from the screen edge, per accessibility guidelines. */}
             {!isWideScreen && (
               <TouchableOpacity
                 style={styles.menuButton}
                 onPress={onMenuPress}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityLabel="Open menu"
+                accessibilityRole="button"
               >
-                <View style={styles.menuLine} />
-                <View style={styles.menuLine} />
-                <View style={styles.menuLine} />
+                <View style={styles.menuLinesWrap}>
+                  <View style={styles.menuLine} />
+                  <View style={styles.menuLine} />
+                  <View style={styles.menuLine} />
+                </View>
               </TouchableOpacity>
             )}
           </View>
@@ -161,10 +178,11 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   logoImage: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 10,
     marginRight: spacing.sm,
+    resizeMode: 'contain',
   },
   name: {
     fontSize: 16,
@@ -220,10 +238,19 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // Hamburger
+  // Hamburger — outer touchable is a full 44x44 target; inner lines stay
+  // visually compact and centered within it.
   menuButton: {
-    width: 28,
-    height: 20,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: spacing.xs,
+    marginRight: -spacing.xs, // keeps the visible icon aligned with content edge despite the larger tap target
+  },
+  menuLinesWrap: {
+    width: 24,
+    height: 18,
     justifyContent: 'space-between',
   },
   menuLine: {

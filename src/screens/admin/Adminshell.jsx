@@ -4,6 +4,8 @@ import AdminSidebar from './Adminsidebar';
 import AdminDashboardScreen from './Admindashboardscreen';
 import AdminBookingsScreen from './Adminbookingsscreen';
 import RoomManagementScreen from './Roommanagementscreen';
+import GuestRecordsScreen from './Guestrecordsscreen';
+import GuestProfileScreen from './Guestprofilescreen';
 import { colors, spacing, fonts } from '../../utils/theme';
 
 const WIDE_BREAKPOINT = 1024;
@@ -13,14 +15,14 @@ const WIDE_BREAKPOINT = 1024;
  * collapsible overlay on mobile/tablet) + whichever section is active.
  *
  * Wired to real screens: 'dashboard', the reservation-related keys
- * (AdminBookingsScreen), and every 'rooms:*' key (RoomManagementScreen —
- * one shared, fully read-only screen covering Room Types, Room List,
- * Room Availability, Room Status, and Room Maintenance, since the hotel's
- * room inventory is fixed and defined entirely in roomRates.js). Every
- * other sidebar item still renders a "Coming soon" placeholder — the
- * sidebar itself is fully built per the spec, but Guest Management,
- * Billing, Housekeeping, Reports, and Administration haven't been built
- * yet.
+ * (AdminBookingsScreen), every 'rooms:*' key (RoomManagementScreen),
+ * 'guests:records' (GuestRecordsScreen — the master guest directory), and
+ * now 'guests:profile' (GuestProfileScreen — the single-guest dossier,
+ * opened by tapping a card in Guest Records; it is NOT a separate sidebar
+ * item, just a detail view layered on top of Guest Records). Every other
+ * sidebar item still renders a "Coming soon" placeholder — Guest History,
+ * Special Requests, Billing, Housekeeping, Reports, and Administration
+ * haven't been built yet.
  *
  * Props:
  *  - onLoggedOut: () => void   called after sign-out, to leave the admin area entirely
@@ -33,12 +35,31 @@ export default function AdminShell({ onLoggedOut, adminName, adminRole }) {
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
 
+  // Which guest's dossier is currently open, if any. Only meaningful while
+  // activeKey === 'guests:profile'; cleared on the way back out so a stale
+  // id can't linger and get reused if the admin navigates elsewhere and
+  // back into Guest Records without going through a fresh selection.
+  const [selectedGuestId, setSelectedGuestId] = useState(null);
+
   const handleNavigate = (key) => {
     if (key === 'logout') {
       handleLogout();
       return;
     }
+    // Navigating anywhere via the sidebar always leaves any open guest
+    // profile behind, since 'guests:profile' isn't itself a sidebar item.
+    setSelectedGuestId(null);
     setActiveKey(key);
+  };
+
+  const openGuestProfile = (guest) => {
+    setSelectedGuestId(guest.id);
+    setActiveKey('guests:profile');
+  };
+
+  const closeGuestProfile = () => {
+    setSelectedGuestId(null);
+    setActiveKey('guests:records');
   };
 
   // App.jsx's handleLogout already calls signOut(auth) and resets screen
@@ -50,7 +71,7 @@ export default function AdminShell({ onLoggedOut, adminName, adminRole }) {
   return (
     <View style={styles.screen}>
       <AdminSidebar
-        activeKey={activeKey}
+        activeKey={activeKey === 'guests:profile' ? 'guests:records' : activeKey}
         onNavigate={handleNavigate}
         onLogout={handleLogout}
         adminName={adminName}
@@ -79,14 +100,14 @@ export default function AdminShell({ onLoggedOut, adminName, adminRole }) {
         )}
 
         <View style={styles.screenContent}>
-          {renderActiveScreen(activeKey, onLoggedOut)}
+          {renderActiveScreen(activeKey, onLoggedOut, selectedGuestId, openGuestProfile, closeGuestProfile)}
         </View>
       </View>
     </View>
   );
 }
 
-function renderActiveScreen(activeKey, onLoggedOut) {
+function renderActiveScreen(activeKey, onLoggedOut, selectedGuestId, openGuestProfile, closeGuestProfile) {
   if (activeKey === 'dashboard') {
     return <AdminDashboardScreen />;
   }
@@ -96,6 +117,12 @@ function renderActiveScreen(activeKey, onLoggedOut) {
   if (activeKey.startsWith('rooms:')) {
     const section = activeKey.split(':')[1]; // types | list | availability | status | maintenance
     return <RoomManagementScreen onLogout={onLoggedOut} section={section} />;
+  }
+  if (activeKey === 'guests:records') {
+    return <GuestRecordsScreen onSelectGuest={openGuestProfile} />;
+  }
+  if (activeKey === 'guests:profile') {
+    return <GuestProfileScreen guestId={selectedGuestId} onBack={closeGuestProfile} />;
   }
   return <PlaceholderScreen activeKey={activeKey} />;
 }

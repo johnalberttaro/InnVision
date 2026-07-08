@@ -1,11 +1,27 @@
 // Shared theme tokens — keeps colors/spacing consistent across screens.
 //
-// Palette identity: clean white + pure black/charcoal.
-// Black carries all structural weight (nav, headings, primary buttons, CTAs).
-// Backgrounds stay white and soft grey — no color distractions, just clean
-// contrast. One strong neutral palette reads professional and timeless.
+// ─────────────────────────────────────────────────────────────────────────
+// DARK MODE ARCHITECTURE
+//
+// This file now exports TWO color palettes (lightColors / darkColors)
+// instead of one. Screens should stop importing `colors` directly and
+// instead call useTheme() from context/ThemeContext.js, which returns
+// whichever palette is currently active plus spacing/radius/fonts.
+//
+// The plain `colors` export below is kept ONLY for backward compatibility
+// with screens that haven't been migrated to useTheme() yet — it always
+// equals lightColors. Those screens will keep rendering in light mode
+// until they're individually migrated (a static `import { colors }` can't
+// react to theme changes — that's a hard JS/React constraint, not a bug).
+//
+// Semantic token note: `colors.white` means "literally white" in both
+// palettes. For "the color of text/icons drawn on top of a
+// primary/accent-colored element" (which needs to FLIP between light and
+// dark mode, since primary itself flips), use the new `onPrimary` token
+// instead of `white`.
+// ─────────────────────────────────────────────────────────────────────────
 
-export const colors = {
+export const lightColors = {
   background: '#ffffff',
   card: '#ffffff',
   cardAlt: '#f7f7f7', // soft grey for section backgrounds
@@ -14,6 +30,7 @@ export const colors = {
   primary: '#1a1a1a',       // near-black — nav, headings, primary structure
   primaryDark: '#000000',   // pressed/active state of primary
   primaryTint: '#f2f2f2',   // subtle grey-tinted background (e.g. selected rows)
+  onPrimary: '#ffffff',     // text/icons drawn ON TOP of primary/accent-colored elements
   accent: '#1a1a1a',        // same as primary — single-color identity
   accentDark: '#000000',
   accentTint: '#f2f2f2',
@@ -54,6 +71,59 @@ export const colors = {
   white: '#ffffff',
   disabled: '#cfcfcf',
 };
+
+export const darkColors = {
+  background: '#000000',
+  card: '#1a1a1a',
+  cardAlt: '#242424',    // dark equivalent of the light soft-grey section bg
+  border: '#333333',
+
+  primary: '#f2f2f2',        // flips to near-white so it still pops against dark bg
+  primaryDark: '#ffffff',
+  primaryTint: '#2a2a2a',
+  onPrimary: '#0a0a0a',      // text/icons on top of the now-light primary color
+  accent: '#f2f2f2',
+  accentDark: '#ffffff',
+  accentTint: '#2a2a2a',
+
+  step: '#f2f2f2',
+  stepBg: '#2a2a2a',
+  stepDone: '#8a8a8a',
+  priceStrike: '#7a7a7a',
+
+  heroBackground: '#1a1919',
+  heroBackgroundDark: '#1a1919',
+  heroCard: '#1a1a1a',
+  heroCta: '#f2f2f2',
+  heroCtaDark: '#ffffff',
+  heroIcon: '#f2f2f2',
+
+  calendarToday: '#f2f2f2',
+  calendarRangeBg: '#2a2a2a',
+  calendarPast: '#4a4a4a',
+
+  navBackground: '#141414',
+  homeHeroGreen: '#000000',
+  homeHeroGreenDark: '#000000',
+  aboutBackground: '#1f1f1f',
+  aboutAccent: '#f2f2f2',
+  overlayDim: 'rgba(0,0,0,0.6)',
+  dotInactive: 'rgba(255,255,255,0.35)',
+  dotActive: '#ffffff',
+
+  text: '#f2f2f2',
+  textMuted: '#a3a3a3',
+  danger: '#ff6659',
+  dangerBg: '#3b1f1c',
+  white: '#ffffff',       // stays literally white in both palettes
+  disabled: '#555555',
+};
+
+// Backward-compatible default — always light. Screens not yet migrated to
+// useTheme() (context/ThemeContext.js) will keep importing this and will
+// render in light mode regardless of the user's dark mode preference,
+// until they're migrated one by one.
+export const colors = lightColors;
 
 export const spacing = {
   xs: 4,
