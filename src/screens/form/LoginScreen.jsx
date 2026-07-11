@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
+  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -9,7 +9,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../services/firebase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 
-export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress }) {
+export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, onBack }) {
   const [email, setEmail]               = useState('');
   const [password, setPassword]         = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -71,13 +71,33 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress })
 
   return (
     <SafeAreaView style={styles.safe}>
+      {/* Back button — top-left, returns to the Home screen. Sits outside
+          the ScrollView/card so it stays fixed at the top regardless of
+          scroll position or keyboard state. */}
+      {!!onBack && (
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={onBack}
+          activeOpacity={0.7}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+        >
+          <Ionicons name="arrow-back" size={22} color={colors.text} />
+        </TouchableOpacity>
+      )}
+
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <View style={styles.card}>
 
             {/* Logo */}
             <View style={styles.logoBadge}>
-              <Text style={styles.logoText}>IV</Text>
+              <Image
+                source={require('../../../assets/logo.png')}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
             </View>
 
             <Text style={styles.title}>Account Login</Text>
@@ -165,8 +185,18 @@ const styles = StyleSheet.create({
   scroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   card:   { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 0.5, borderColor: colors.border, padding: spacing.xxl, width: '100%', maxWidth: 420, alignItems: 'center' },
 
-  logoBadge: { width: 56, height: 56, borderRadius: radius.lg, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.lg },
-  logoText:  { fontFamily: fonts.headingExtraBold, fontSize: 22, color: colors.white, letterSpacing: -0.5 },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+    marginLeft: spacing.md,
+  },
+
+  logoBadge: { width: 80, height: 80, borderRadius: radius.lg, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.lg, overflow: 'hidden' },
+  logoImage: { width: 56, height: 56 },
 
   title:    { fontFamily: fonts.headingExtraBold, fontSize: 24, color: colors.primary, marginBottom: spacing.xs, textAlign: 'center' },
   subtitle: { fontFamily: fonts.body, fontSize: 14, color: colors.textMuted, marginBottom: spacing.xl, textAlign: 'center' },

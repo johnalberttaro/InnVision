@@ -19,104 +19,109 @@
 // primary/accent-colored element" (which needs to FLIP between light and
 // dark mode, since primary itself flips), use the new `onPrimary` token
 // instead of `white`.
+//
+// PALETTE NOTE: the black-and-white identity has been replaced with a warm
+// cream/charcoal palette (cream surfaces, dark warm-brown/charcoal for
+// primary structure and text) across both light and dark modes. `white`
+// stays literally white as before — it's a separate token from `cream`.
 // ─────────────────────────────────────────────────────────────────────────
 
 export const lightColors = {
-  background: '#ffffff',
-  card: '#ffffff',
-  cardAlt: '#f7f7f7', // soft grey for section backgrounds
-  border: '#e0e0e0',
+  background: '#F5EFE6',
+  card: '#FDFAF4',
+  cardAlt: '#EFE7D8', // warm cream for section backgrounds
+  border: '#E2D6C1',
 
-  primary: '#1a1a1a',       // near-black — nav, headings, primary structure
-  primaryDark: '#000000',   // pressed/active state of primary
-  primaryTint: '#f2f2f2',   // subtle grey-tinted background (e.g. selected rows)
-  onPrimary: '#ffffff',     // text/icons drawn ON TOP of primary/accent-colored elements
-  accent: '#1a1a1a',        // same as primary — single-color identity
-  accentDark: '#000000',
-  accentTint: '#f2f2f2',
+  primary: '#332B22',        // dark warm charcoal-brown — nav, headings, primary structure
+  primaryDark: '#1F1912',    // pressed/active state of primary
+  primaryTint: '#EFE7D8',    // subtle cream-tinted background (e.g. selected rows)
+  onPrimary: '#FDFAF4',      // text/icons drawn ON TOP of primary/accent-colored elements
+  accent: '#332B22',         // same as primary — single-color identity
+  accentDark: '#1F1912',
+  accentTint: '#EFE7D8',
 
   // Booking-engine step/CTA accent (Room & Rates / Review & Pay flow)
-  step: '#1a1a1a',          // active step + reserve button — black CTA
-  stepBg: '#ebebeb',        // inactive step background
-  stepDone: '#4a4a4a',      // completed step indicator — dark grey
-  priceStrike: '#a0a0a0',
+  step: '#332B22',           // active step + reserve button — charcoal CTA
+  stepBg: '#E9DFC9',         // inactive step background
+  stepDone: '#6B5F4C',       // completed step indicator — warm mid-brown
+  priceStrike: '#B3A48C',
 
   // Landing/search hero
-  heroBackground: '#1a1a1a',
-  heroBackgroundDark: '#000000',
-  heroCard: '#ffffff',
-  heroCta: '#1a1a1a',
-  heroCtaDark: '#000000',
-  heroIcon: '#1a1a1a',
+  heroBackground: '#332B22',
+  heroBackgroundDark: '#1F1912',
+  heroCard: '#FDFAF4',
+  heroCta: '#332B22',
+  heroCtaDark: '#1F1912',
+  heroIcon: '#332B22',
 
   // Calendar popup
-  calendarToday: '#1a1a1a',
-  calendarRangeBg: '#f2f2f2',
-  calendarPast: '#cfcfcf',
+  calendarToday: '#332B22',
+  calendarRangeBg: '#EFE7D8',
+  calendarPast: '#D8CBB0',
 
   // Homepage (nav bar, hero carousel, About section)
-  navBackground: '#ffffff',
-  homeHeroGreen: '#1a1a1a',     // kept name for backward compatibility
-  homeHeroGreenDark: '#000000',
-  aboutBackground: '#f7f7f7',   // soft grey band
-  aboutAccent: '#1a1a1a',
-  overlayDim: 'rgba(0,0,0,0.45)',
+  navBackground: '#FDFAF4',
+  homeHeroGreen: '#332B22',     // kept name for backward compatibility
+  homeHeroGreenDark: '#1F1912',
+  aboutBackground: '#EFE7D8',   // soft cream band
+  aboutAccent: '#332B22',
+  overlayDim: 'rgba(30,24,16,0.45)',
   dotInactive: 'rgba(255,255,255,0.55)',
   dotActive: '#ffffff',
 
-  text: '#1a1a1a',          // near-black — clean and sharp
-  textMuted: '#6b6b6b',     // mid-grey for secondary text
+  text: '#332B22',          // dark warm charcoal — clean and sharp
+  textMuted: '#8A7C64',     // warm mid-tan for secondary text
   danger: '#b3261e',
   dangerBg: '#fdecea',
   white: '#ffffff',
-  disabled: '#cfcfcf',
+  disabled: '#D8CBB0',
 };
 
 export const darkColors = {
-  background: '#000000',
-  card: '#1a1a1a',
-  cardAlt: '#242424',    // dark equivalent of the light soft-grey section bg
-  border: '#333333',
+  background: '#1E1A14',
+  card: '#2A2419',
+  cardAlt: '#332C1F',    // dark equivalent of the light soft-cream section bg
+  border: '#453C2B',
 
-  primary: '#f2f2f2',        // flips to near-white so it still pops against dark bg
-  primaryDark: '#ffffff',
-  primaryTint: '#2a2a2a',
-  onPrimary: '#0a0a0a',      // text/icons on top of the now-light primary color
-  accent: '#f2f2f2',
-  accentDark: '#ffffff',
-  accentTint: '#2a2a2a',
+  primary: '#F0E6D2',        // flips to warm cream so it still pops against dark bg
+  primaryDark: '#FFFFFF',
+  primaryTint: '#332C1F',
+  onPrimary: '#1E1A14',      // text/icons on top of the now-light primary color
+  accent: '#F0E6D2',
+  accentDark: '#FFFFFF',
+  accentTint: '#332C1F',
 
-  step: '#f2f2f2',
-  stepBg: '#2a2a2a',
-  stepDone: '#8a8a8a',
-  priceStrike: '#7a7a7a',
+  step: '#F0E6D2',
+  stepBg: '#332C1F',
+  stepDone: '#A99B7C',
+  priceStrike: '#7A6F58',
 
-  heroBackground: '#1a1919',
-  heroBackgroundDark: '#1a1919',
-  heroCard: '#1a1a1a',
-  heroCta: '#f2f2f2',
-  heroCtaDark: '#ffffff',
-  heroIcon: '#f2f2f2',
+  heroBackground: '#181410',
+  heroBackgroundDark: '#181410',
+  heroCard: '#2A2419',
+  heroCta: '#F0E6D2',
+  heroCtaDark: '#FFFFFF',
+  heroIcon: '#F0E6D2',
 
-  calendarToday: '#f2f2f2',
-  calendarRangeBg: '#2a2a2a',
-  calendarPast: '#4a4a4a',
+  calendarToday: '#F0E6D2',
+  calendarRangeBg: '#332C1F',
+  calendarPast: '#544A34',
 
-  navBackground: '#141414',
-  homeHeroGreen: '#000000',
-  homeHeroGreenDark: '#000000',
-  aboutBackground: '#1f1f1f',
-  aboutAccent: '#f2f2f2',
+  navBackground: '#211C15',
+  homeHeroGreen: '#181410',
+  homeHeroGreenDark: '#181410',
+  aboutBackground: '#282217',
+  aboutAccent: '#F0E6D2',
   overlayDim: 'rgba(0,0,0,0.6)',
   dotInactive: 'rgba(255,255,255,0.35)',
   dotActive: '#ffffff',
 
-  text: '#f2f2f2',
-  textMuted: '#a3a3a3',
+  text: '#F0E6D2',
+  textMuted: '#B3A48C',
   danger: '#ff6659',
   dangerBg: '#3b1f1c',
   white: '#ffffff',       // stays literally white in both palettes
-  disabled: '#555555',
+  disabled: '#5A5140',
 };
 
 // Backward-compatible default — always light. Screens not yet migrated to

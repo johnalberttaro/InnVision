@@ -18,6 +18,15 @@ import {
  * page forward/back, which reads well on a phone-width screen.
  * Used by: screens/reservation/ReservationScreen.jsx
  *
+ * RANGE VISUAL: check-in, check-out, and every day in between now render
+ * as one continuous, single-color pill (colors.step) instead of solid
+ * circles on the two endpoints with a separate faint-background block in
+ * the middle. Corners are only rounded at the true start/end of the range
+ * — and additionally at the start/end of each calendar row, so a range
+ * that spans a week-wrap (e.g. ends on a Saturday, continues Sunday of
+ * the next row) still reads as a continuous band on each row rather than
+ * showing a hard square edge where it isn't actually the range boundary.
+ *
  * Props:
  *  - checkIn: Date | null
  *  - checkOut: Date | null
@@ -123,15 +132,30 @@ function MonthGrid({ year, month, today, checkIn, checkOut, onDayPress }) {
           const isCheckIn = isSameDay(cell.date, checkIn);
           const isCheckOut = isSameDay(cell.date, checkOut);
           const inRange = isWithinRange(cell.date, checkIn, checkOut);
+          const isPartOfRange = isCheckIn || isCheckOut || inRange;
           const disabled = !cell.inMonth || isPast;
+
+          // Round pill corners only at the TRUE range boundaries — the
+          // actual check-in and check-out days. (An earlier version also
+          // rounded at calendar row-wrap edges for visual continuity
+          // across week boundaries, but that relied on assuming the grid's
+          // column order matches the Su-Sa header labels; when that
+          // assumption didn't hold, it mis-detected a day like the
+          // check-in date as a "row end" and rounded both its sides,
+          // rendering it as an isolated circle disconnected from the rest
+          // of the pill. Keeping this simple and only trusting the real
+          // checkIn/checkOut values avoids that class of bug entirely.)
+          const roundLeft = isCheckIn;
+          const roundRight = isCheckOut;
 
           return (
             <TouchableOpacity
               key={idx}
               style={[
                 styles.dayCell,
-                inRange && styles.dayCellInRange,
-                (isCheckIn || isCheckOut) && styles.dayCellSelected,
+                isPartOfRange && styles.dayCellInRange,
+                roundLeft && styles.dayCellRoundLeft,
+                roundRight && styles.dayCellRoundRight,
               ]}
               onPress={() => cell.inMonth && onDayPress(cell.date)}
               disabled={disabled}
@@ -141,7 +165,7 @@ function MonthGrid({ year, month, today, checkIn, checkOut, onDayPress }) {
                   styles.dayText,
                   !cell.inMonth && styles.dayTextOutside,
                   isPast && styles.dayTextPast,
-                  (isCheckIn || isCheckOut) && styles.dayTextSelected,
+                  isPartOfRange && styles.dayTextSelected,
                 ]}
               >
                 {cell.date.getDate()}
@@ -219,15 +243,22 @@ const styles = StyleSheet.create({
     height: CELL_SIZE,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: CELL_SIZE / 2,
   },
+  // Every day that's check-in, check-out, or in between now shares this
+  // single solid color — no separate faint "in range" background. Corners
+  // are square by default; dayCellRoundLeft/Right punch rounding into just
+  // the edges that are true range/row boundaries, so adjacent range cells
+  // sit flush against each other and read as one continuous pill.
   dayCellInRange: {
-    backgroundColor: colors.calendarRangeBg,
-    borderRadius: 0,
-  },
-  dayCellSelected: {
     backgroundColor: colors.step,
-    borderRadius: CELL_SIZE / 2,
+  },
+  dayCellRoundLeft: {
+    borderTopLeftRadius: CELL_SIZE / 2,
+    borderBottomLeftRadius: CELL_SIZE / 2,
+  },
+  dayCellRoundRight: {
+    borderTopRightRadius: CELL_SIZE / 2,
+    borderBottomRightRadius: CELL_SIZE / 2,
   },
   dayText: {
     fontSize: 13,

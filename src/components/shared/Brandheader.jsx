@@ -4,10 +4,20 @@ import { BlurView } from 'expo-blur';
 import { useTheme } from '../../context/ThemeContext';
 
 // ─── Logo image ───────────────────────────────────────────────────────────
-// Replace null with require('../../../assets/logo.png') once you have the file.
 // Path is relative to src/components/shared/Brandheader.jsx — adjust if you move this file.
-const LOGO_SOURCE = null; // ← swap to require('../../assets/logo.png')
+const LOGO_SOURCE = require('../../../assets/logo.png');
 // ─────────────────────────────────────────────────────────────────────────
+
+// Converts a "#rrggbb" hex string to "r,g,b" for building an rgba() string.
+// Needed because RN StyleSheet requires a literal rgba string for alpha —
+// there's no way to apply opacity to a hex color token at runtime otherwise.
+function hexToRgbTriplet(hex) {
+  const clean = hex.replace('#', '');
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+  return `${r},${g},${b}`;
+}
 
 /**
  * BrandHeader — minimal brand-identity header: logo + "InnVision" name only.
@@ -16,11 +26,19 @@ const LOGO_SOURCE = null; // ← swap to require('../../assets/logo.png')
  * actions in its header, use AppHeader instead (see components/AppHeader.jsx).
  *
  * MIGRATED TO CENTRALIZED THEME (useTheme()). This header's frosted-glass
- * look was hardcoded for a light background only — `tint="light"` on the
- * BlurView, plus a white `rgba(255,255,255,0.72)` overlay tint. Both now
- * flip based on `isDark`: the BlurView's `tint` prop switches to `"dark"`
- * (so iOS blurs correctly against dark content behind it), and the overlay
- * becomes a dark frosted tint instead of a white one.
+ * overlay now derives its color from `colors.background` (theme.js) instead
+ * of a hardcoded white/dark value — so it automatically follows whatever
+ * palette theme.js defines (currently cream in light mode, dark charcoal in
+ * dark mode) without needing another manual update here if the palette
+ * changes again. The BlurView's `tint` prop still switches to `"dark"` in
+ * dark mode so iOS blurs correctly against dark content behind it.
+ *
+ * Overlay opacity is 0.94, not a lower value like 0.7 — BlurView's native
+ * tint="light"/"dark" renders its own whitish/dark blur backdrop
+ * underneath, and at lower opacity that native tint bleeds through and
+ * washes out the intended theme color (this exact issue showed up on
+ * HomeHeader first). High opacity keeps the theme color dominant; it does
+ * trade away some of the visible "blur" softening effect as a result.
  *
  * Glassmorphism look via expo-blur's BlurView (real blur on iOS; on this
  * project's installed expo-blur 13.x, Android needs the ref-less
@@ -40,7 +58,7 @@ const LOGO_SOURCE = null; // ← swap to require('../../assets/logo.png')
 export default function BrandHeader() {
   const { colors, spacing, fonts, isDark } = useTheme();
   const styles = useMemo(() => getStyles(colors, spacing, fonts), [colors, spacing, fonts]);
-  const overlayColor = isDark ? 'rgba(20,20,20,0.75)' : 'rgba(255,255,255,0.72)';
+  const overlayColor = `rgba(${hexToRgbTriplet(colors.background)},0.94)`;
 
   return (
     <View style={styles.shadowWrap}>
@@ -52,17 +70,14 @@ export default function BrandHeader() {
       >
         {/* Semi-transparent tint on top of the blur so text/logo stay
             crisp while the blur still softens whatever is behind it —
-            flips between a white and dark frosted look with the theme. */}
+            color follows colors.background, flipping between cream and
+            dark charcoal with the theme. */}
         <View style={[styles.tint, { backgroundColor: overlayColor }]} />
 
         <View style={styles.content}>
-          {LOGO_SOURCE ? (
+          <View style={styles.logoBadge}>
             <Image source={LOGO_SOURCE} style={styles.logoImage} resizeMode="contain" />
-          ) : (
-            <View style={styles.logoBadge}>
-              <Text style={styles.logoBadgeText}>LOGO</Text>
-            </View>
-          )}
+          </View>
           <Text style={styles.name}>InnVision</Text>
         </View>
       </BlurView>
@@ -85,8 +100,8 @@ function getStyles(colors, spacing, fonts) {
     blur: {
       overflow: 'hidden',
     },
-    // Overlay tint — flips between white and dark frosted glass; the
-    // actual color comes from overlayColor above, set inline.
+    // Overlay tint — flips between cream and dark charcoal frosted glass;
+    // the actual color comes from overlayColor above, set inline.
     tint: {
       position: 'absolute',
       top: 0,
@@ -102,26 +117,27 @@ function getStyles(colors, spacing, fonts) {
       // adjust if this sits inside a SafeAreaView that already insets it.
       paddingVertical: Platform.select({ ios: spacing.md, android: spacing.md, default: spacing.lg }),
     },
-    logoImage: {
-      width: 32,
-      height: 32,
-      marginRight: spacing.sm,
-    },
+    // White boxed badge behind the logo — matches the treatment used on the
+    // auth screens (Login/Register/Forgot Password), so the mark reads
+    // consistently across the app instead of floating bare in the header.
+    // Intentionally colors.white (literal white), not colors.background —
+    // the badge is a fixed white card the logo sits on, same as the auth
+    // screens, not a themed surface.
     logoBadge: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
-      borderWidth: 1.5,
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      backgroundColor: colors.white,
+      borderWidth: 1,
       borderColor: colors.border,
-      borderStyle: 'dashed',
       alignItems: 'center',
       justifyContent: 'center',
       marginRight: spacing.sm,
+      overflow: 'hidden',
     },
-    logoBadgeText: {
-      fontSize: 7,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.textMuted,
+    logoImage: {
+      width: 26,
+      height: 26,
     },
     name: {
       fontSize: 17,

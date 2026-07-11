@@ -13,15 +13,30 @@ import { colors, spacing, fonts } from '../../utils/theme';
 
 const WIDE_SCREEN_BREAKPOINT = 768;
 
+const CONTENT_PADDING_TOP = Platform.select({
+  ios: spacing.sm,
+  android: spacing.sm,
+  default: spacing.md,
+});
+
+const CONTENT_PADDING_BOTTOM = Platform.select({
+  ios: spacing.sm,
+  android: spacing.sm,
+  default: spacing.md,
+});
+
 /**
  * HomeHeader — logo + InnVision name + dynamic CTA + nav/hamburger.
  *
- * Safe-area note: the root SafeAreaView in App.jsx already reserves space
- * for the status bar / notch on both iOS and Android, so this header only
- * needs its normal small padding for visual breathing room — it should
- * NOT also add useSafeAreaInsets() here, or the inset gets applied twice
- * (once by the root wrapper, once here), producing an oversized gap above
- * the header on mobile.
+ * Safe-area note: this header does NOT call useSafeAreaInsets() itself.
+ * The app's root SafeAreaView (in App.jsx, imported from
+ * 'react-native-safe-area-context') already applies the top inset to every
+ * screen it wraps, including the one that renders this header. Adding a
+ * second inset here would double-pad the header — that's exactly what
+ * happened during initial development, which is why this component went
+ * through an inset-handling change and back. If this header is ever
+ * rendered somewhere NOT wrapped by that root SafeAreaView, re-add
+ * useSafeAreaInsets() here at that point — don't add it preemptively.
  *
  * CTA button behavior:
  *  - isAuthenticated = false  →  shows "SIGN IN"  (calls onSignIn)
@@ -156,18 +171,22 @@ const styles = StyleSheet.create({
   tint: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(255,255,255,0.72)',
+    // Matches theme.js lightColors.background (#F5EFE6). Opacity raised to
+    // 0.94 (from 0.72) because BlurView's tint="light" renders its own
+    // native whitish blur backdrop underneath — at lower opacity that
+    // native white was bleeding through and washing out the cream color,
+    // making the header read white instead of cream. If the background
+    // token in theme.js changes, update the rgb values to match (keep the
+    // alpha near 0.9+ for the same reason).
+    backgroundColor: 'rgba(245,239,230,0.94)',
   },
   content: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
-    paddingVertical: Platform.select({
-      ios: spacing.sm,
-      android: spacing.sm,
-      default: spacing.md,
-    }),
+    paddingTop: CONTENT_PADDING_TOP,
+    paddingBottom: CONTENT_PADDING_BOTTOM,
   },
 
   // Logo

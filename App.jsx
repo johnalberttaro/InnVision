@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { SafeAreaView, StyleSheet, StatusBar, Modal, ActivityIndicator, View } from 'react-native';
+import { StyleSheet, StatusBar, Modal, ActivityIndicator, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { Baloo2_800ExtraBold } from '@expo-google-fonts/baloo-2/800ExtraBold';
 import { Baloo2_700Bold } from '@expo-google-fonts/baloo-2/700Bold';
@@ -19,7 +20,7 @@ import ForgotPasswordScreen from './src/screens/form/Forgotpasswordscreen';
 import ProfileScreen        from './src/screens/profile/Profilescreen';
 import AboutScreen          from './src/screens/about/AboutScreen';
 import ContactUsScreen      from './src/screens/contact/ContactUsScreen';
-import BookingLookupScreen  from './src/screens/bookingLookup/BookingLookupScreen';
+import MyReservationsScreen from './src/screens/bookingLookup/MyReservationsScreen';
 import ReservationScreen    from './src/screens/reservation/ReservationScreen';
 import RoomSelectionScreen  from './src/screens/roomRates/RoomSelectionScreen';
 import ReviewPayScreen      from './src/screens/reviewPay/ReviewPayScreen';
@@ -39,6 +40,21 @@ import { ThemeProvider }    from './src/context/ThemeContext';
  * uses the old static import and will keep rendering in light mode until
  * it's migrated the same way — that's expected, not a bug, and each
  * screen can be migrated independently without breaking the others.
+ *
+ * NOTE ON SAFE AREA:
+ * SafeAreaView/SafeAreaProvider now come from 'react-native-safe-area-context'
+ * instead of the core 'react-native' package. The core RN SafeAreaView only
+ * applies inset padding on iOS — on Android it's a no-op — which was letting
+ * headers render under the status bar (clock/battery) on Android devices.
+ * SafeAreaProvider must wrap the tree for useSafeAreaInsets() to work in any
+ * descendant. HomeHeader relies entirely on THIS root SafeAreaView for its
+ * top inset (it does not call useSafeAreaInsets() itself) — don't add a
+ * second inset call there, or the header gets double-padded.
+ *
+ * A few other screens (LoginScreen, RegisterScreen, ForgotPasswordScreen,
+ * ProfileScreen, HamburgerMenu, RateCard) still import the deprecated core
+ * `SafeAreaView` from 'react-native' directly rather than going through
+ * this provider — that's a known remaining cleanup item, not yet migrated.
  */
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -86,7 +102,7 @@ export default function App() {
 
   // ── Screen state ────────────────────────────────────────────────────
   // 'home' | 'login' | 'register' | 'forgotPassword' | 'profile' | 'about'
-  // | 'contact' | 'findBooking' | 'roomRates' | 'reviewPay' | 'admin'
+  // | 'contact' | 'myReservations' | 'roomRates' | 'reviewPay' | 'admin'
   const [screen, setScreen]                   = useState('home');
   const [showReservation, setShowReservation] = useState(false);
   const [bookingDetails, setBookingDetails]   = useState(null);
@@ -138,134 +154,144 @@ export default function App() {
     setScreen('home');
   };
 
+  // My Reservations is guest-account-only (it reads the signed-in user's
+  // email to pull their bookings) — bounce unauthenticated taps to login
+  // instead of opening the screen with nothing to show.
+  const goToMyReservations = () => setScreen(user ? 'myReservations' : 'login');
+
   // ── Loading gate ────────────────────────────────────────────────────
   if (!fontsLoaded || authLoading) {
     return (
-      <ThemeProvider userId={user?.uid}>
-        <SafeAreaView style={styles.safeArea}>
-          <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
-          </View>
-        </SafeAreaView>
-      </ThemeProvider>
+      <SafeAreaProvider>
+        <ThemeProvider userId={user?.uid}>
+          <SafeAreaView style={styles.safeArea}>
+            <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+          </SafeAreaView>
+        </ThemeProvider>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <ThemeProvider userId={user?.uid}>
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+    <SafeAreaProvider>
+      <ThemeProvider userId={user?.uid}>
+        <SafeAreaView style={styles.safeArea}>
+          <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
 
-        {/* ── Home ──────────────────────────────────────────────── */}
-        {screen === 'home' && (
-          <HomeScreen
-            onBookNow={openReservation}
-            onSignIn={() => setScreen('login')}
-            onProfilePress={() => setScreen('profile')}
-            onAboutPress={() => setScreen('about')}
-            onContactPress={() => setScreen('contact')}
-            onFindBooking={() => setScreen('findBooking')}
-            isAuthenticated={!!user}
-            user={user}
-            onLogout={handleLogout}
-          />
-        )}
+          {/* ── Home ──────────────────────────────────────────────── */}
+          {screen === 'home' && (
+            <HomeScreen
+              onBookNow={openReservation}
+              onSignIn={() => setScreen('login')}
+              onProfilePress={() => setScreen('profile')}
+              onAboutPress={() => setScreen('about')}
+              onContactPress={() => setScreen('contact')}
+              onFindBooking={goToMyReservations}
+              isAuthenticated={!!user}
+              user={user}
+              onLogout={handleLogout}
+            />
+          )}
 
-        {/* ── Admin ─────────────────────────────────────────────── */}
-        {screen === 'admin' && (
-          <AdminShell
-            onLoggedOut={handleLogout}
-            adminName={user?.displayName || user?.email || 'Admin User'}
-            adminRole="Hotel Administrator"
-          />
-        )}
+          {/* ── Admin ─────────────────────────────────────────────── */}
+          {screen === 'admin' && (
+            <AdminShell
+              onLoggedOut={handleLogout}
+              adminName={user?.displayName || user?.email || 'Admin User'}
+              adminRole="Hotel Administrator"
+            />
+          )}
 
-        {/* ── Auth ──────────────────────────────────────────────── */}
-        {screen === 'login' && (
-          <LoginScreen
-            onLogin={handleLogin}
-            onForgotPress={() => setScreen('forgotPassword')}
-            onRegisterPress={() => setScreen('register')}
-          />
-        )}
-        {screen === 'register' && (
-          <RegisterScreen
-            onRegister={handleRegister}
-            onLoginPress={() => setScreen('login')}
-          />
-        )}
-        {screen === 'forgotPassword' && (
-          <ForgotPasswordScreen
-            onLoginPress={() => setScreen('login')}
-          />
-        )}
+          {/* ── Auth ──────────────────────────────────────────────── */}
+          {screen === 'login' && (
+            <LoginScreen
+              onLogin={handleLogin}
+              onForgotPress={() => setScreen('forgotPassword')}
+              onRegisterPress={() => setScreen('register')}
+              onBack={() => setScreen('home')}
+            />
+          )}
+          {screen === 'register' && (
+            <RegisterScreen
+              onRegister={handleRegister}
+              onLoginPress={() => setScreen('login')}
+            />
+          )}
+          {screen === 'forgotPassword' && (
+            <ForgotPasswordScreen
+              onLoginPress={() => setScreen('login')}
+            />
+          )}
 
-        {/* ── Profile ───────────────────────────────────────────── */}
-        {screen === 'profile' && (
-          <ProfileScreen
-            user={user}
-            onBookNow={openReservation}
-            onLogout={handleLogout}
-            onBackPress={() => setScreen('home')}
-          />
-        )}
+          {/* ── Profile ───────────────────────────────────────────── */}
+          {screen === 'profile' && (
+            <ProfileScreen
+              user={user}
+              onBookNow={openReservation}
+              onLogout={handleLogout}
+              onBackPress={() => setScreen('home')}
+            />
+          )}
 
-        {/* ── About ─────────────────────────────────────────────── */}
-        {screen === 'about' && (
-          <AboutScreen
-            onBack={() => setScreen('home')}
-          />
-        )}
+          {/* ── About ─────────────────────────────────────────────── */}
+          {screen === 'about' && (
+            <AboutScreen
+              onBack={() => setScreen('home')}
+            />
+          )}
 
-        {/* ── Contact Us ────────────────────────────────────────── */}
-        {screen === 'contact' && (
-          <ContactUsScreen
-            onBack={() => setScreen('home')}
-          />
-        )}
+          {/* ── Contact Us ────────────────────────────────────────── */}
+          {screen === 'contact' && (
+            <ContactUsScreen
+              onBack={() => setScreen('home')}
+            />
+          )}
 
-        {/* ── Find My Booking ──────────────────────────────────────── */}
-        {screen === 'findBooking' && (
-          <BookingLookupScreen
-            onBack={() => setScreen('home')}
-          />
-        )}
+          {/* ── My Reservations ──────────────────────────────────────── */}
+          {screen === 'myReservations' && (
+            <MyReservationsScreen
+              onBack={() => setScreen('home')}
+            />
+          )}
 
-        {/* ── Booking ───────────────────────────────────────────── */}
-        {screen === 'roomRates' && (
-          <RoomSelectionScreen
-            bookingDetails={bookingDetails}
-            onEditSearch={goBackToSearch}
-            onReserve={goToReviewPay}
-          />
-        )}
-        {screen === 'reviewPay' && (
-          <ReviewPayScreen
-            bookingDetails={bookingDetails}
-            selectedRooms={selectedRooms}
-            user={user}
-            onBackToRooms={goBackToRoomRates}
-            onConfirm={handleConfirmed}
-          />
-        )}
+          {/* ── Booking ───────────────────────────────────────────── */}
+          {screen === 'roomRates' && (
+            <RoomSelectionScreen
+              bookingDetails={bookingDetails}
+              onEditSearch={goBackToSearch}
+              onReserve={goToReviewPay}
+            />
+          )}
+          {screen === 'reviewPay' && (
+            <ReviewPayScreen
+              bookingDetails={bookingDetails}
+              selectedRooms={selectedRooms}
+              user={user}
+              onBackToRooms={goBackToRoomRates}
+              onConfirm={handleConfirmed}
+            />
+          )}
 
-        {/* ── Reservation modal ─────────────────────────────────── */}
-        {/* user prop added so ReservationScreen can tag the Firestore doc */}
-        <Modal
-          visible={showReservation}
-          animationType="slide"
-          onRequestClose={closeReservation}
-          presentationStyle="fullScreen"
-        >
-          <ReservationScreen
-            user={user}
-            onSearch={goToRoomRates}
-            onClose={closeReservation}
-          />
-        </Modal>
-      </SafeAreaView>
-    </ThemeProvider>
+          {/* ── Reservation modal ─────────────────────────────────── */}
+          {/* user prop added so ReservationScreen can tag the Firestore doc */}
+          <Modal
+            visible={showReservation}
+            animationType="slide"
+            onRequestClose={closeReservation}
+            presentationStyle="fullScreen"
+          >
+            <ReservationScreen
+              user={user}
+              onSearch={goToRoomRates}
+              onClose={closeReservation}
+            />
+          </Modal>
+        </SafeAreaView>
+      </ThemeProvider>
+    </SafeAreaProvider>
   );
 }
 

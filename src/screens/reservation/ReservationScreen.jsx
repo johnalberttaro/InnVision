@@ -8,6 +8,7 @@ import {
   Modal,
   SafeAreaView,
   Alert,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import RangeCalendar from '../../components/reservation/RangeCalendar';
@@ -16,6 +17,8 @@ import DropdownTrigger from '../../components/reservation/DropdownTrigger';
 import { useTheme } from '../../context/ThemeContext';
 import { lightColors } from '../../utils/theme';
 import { formatDate, isCheckOutValid, nightsBetween } from '../../utils/dateHelpers';
+
+const logo = require('../../../assets/logo.png');
 
 const initialRoom = () => ({ adults: 1, children: 0 });
 
@@ -31,13 +34,14 @@ const initialRoom = () => ({ adults: 1, children: 0 });
  *    chips. Changed to `colors.heroBackground`, the token intentionally
  *    kept a dark band in BOTH palettes (same one AboutScreen's header
  *    uses), so this immersive booking sheet keeps its look either way.
- *  - `logoText` / `closeText` sit on chips that are deliberately always
- *    white (`colors.white`, literal in both palettes) against that now
- *    always-dark backdrop. Their text must therefore stay always dark
- *    too — using `colors.primary` here would flip to near-white in dark
- *    mode and vanish against the white chip. Pinned to
- *    `lightColors.primary` directly (bypassing the active theme on
- *    purpose) for exactly these two spots.
+ *  - `closeText` sits on a chip that is deliberately always white
+ *    (`colors.white`, literal in both palettes) against that now
+ *    always-dark backdrop. Its text must therefore stay always dark too —
+ *    using `colors.primary` here would flip to near-white in dark mode
+ *    and vanish against the white chip. Pinned to `lightColors.primary`
+ *    directly (bypassing the active theme on purpose) for this spot.
+ *  - `logoBadge` no longer renders "IV" text — it now hosts the actual
+ *    hotel logo image, same white badge treatment as `BrandHeader`.
  *
  * IMPORTANT: this screen no longer writes to Firestore. Nothing the guest
  * enters here (dates, rooms, guests) is an official reservation yet — it's
@@ -130,7 +134,7 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
       {/* ── Header ───────────────────────────────────────────── */}
       <View style={styles.header}>
         <View style={styles.logoBadge}>
-          <Text style={styles.logoText}>IV</Text>
+          <Image source={logo} style={styles.logoImage} resizeMode="contain" />
         </View>
         <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityLabel="Close">
           <Ionicons name="close-outline" size={20} color={lightColors.primary} />
@@ -264,12 +268,11 @@ function getStyles(colors, spacing, radius, fonts) {
       backgroundColor: colors.white,
       alignItems: 'center',
       justifyContent: 'center',
+      overflow: 'hidden',
     },
-    logoText: {
-      fontFamily: fonts.headingExtraBold,
-      fontSize: 16,
-      color: lightColors.primary, // always-dark text on an always-white chip
-      letterSpacing: -0.5,
+    logoImage: {
+      width: 28,
+      height: 28,
     },
     closeButton: {
       flexDirection: 'row',
