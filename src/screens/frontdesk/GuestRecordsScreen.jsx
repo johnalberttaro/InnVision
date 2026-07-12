@@ -17,6 +17,8 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   collection,
   addDoc,
+  deleteDoc,
+  doc,
   query,
   orderBy,
   onSnapshot,
@@ -74,6 +76,15 @@ import { formatCurrency } from '../../utils/roomRates';
  * a walk-in's card will correctly show "No reservation on file" until
  * that flow exists. That's accurate, not a bug.
  *
+ * DELETE NOTE: deleting a guest here removes ONLY the `guests` document —
+ * it is a separate collection from `reservations` and the two are never
+ * cascade-deleted in either direction. If a guest still has reservation
+ * documents pointed at their `linkedUid`, those documents are untouched;
+ * they'll simply no longer join to a guest card here. Conversely,
+ * deleting a reservation in Firestore does NOT remove the guest record —
+ * staff must delete the guest separately, which is what this button is
+ * for.
+ *
  * Props:
  *  - onSelectGuest: (guest) => void
  *      Called when a guest card is tapped. Should navigate to the (future)
@@ -120,6 +131,24 @@ function notifyDialog(title, message) {
   Alert.alert(title, message);
 }
 
+// ── Web-safe confirm helper ─────────────────────────────────────────────
+// Alert.alert's two-button confirm pattern doesn't work on web either;
+// mirrors the confirmAction helper used for the admin confirm/decline
+// buttons elsewhere in the app (window.confirm on web, Alert.alert with
+// a destructive button everywhere else).
+function confirmAction(title, message, onConfirm) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) {
+      onConfirm();
+    }
+    return;
+  }
+  Alert.alert(title, message, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Delete', style: 'destructive', onPress: onConfirm },
+  ]);
+}
+
 function formatDateTime(value) {
   if (!value) return '—';
   try {
@@ -145,6 +174,11 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
   const [form, setForm] = useState(emptyForm());
   const [formErrors, setFormErrors] = useState({});
   const [saving, setSaving] = useState(false);
+
+  // Track which guest id is currently being deleted so we can show a
+  // per-card spinner and disable that card's delete button without
+  // blocking the rest of the list.
+  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
     const guestsQuery = query(collection(db, 'guests'), orderBy('lastName'));
@@ -290,18 +324,47 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
     }
   };
 
+  // ── Delete Guest ────────────────────────────────────────────────────
+  // Deletes only the `guests` document. Does not touch `reservations` —
+  // see the DELETE NOTE in the file header for why that's intentional.
+  const performDeleteGuest = async (guestId) => {
+    setDeletingId(guestId);
+    try {
+      await deleteDoc(doc(db, 'guests', guestId));
+    } catch (err) {
+      console.error('Failed to delete guest:', err);
+      notifyDialog('Error', 'Could not delete this guest. Please try again.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleDeleteGuest = (guest) => {
+    const fullName = `${guest.firstName || ''} ${guest.lastName || ''}`.trim() || 'this guest';
+    const hasActiveStay =
+      guest._currentReservation && ACTIVE_RESERVATION_STATUSES.includes(guest._currentReservation.status);
+
+    const message = hasActiveStay
+      ? `${fullName} has an active reservation on file. Deleting the guest record will not cancel that reservation, but it will remove them from Guest Records. Continue?`
+      : `This will permanently remove ${fullName} from Guest Records. This does not delete any reservation history in Firestore. Continue?`;
+
+    confirmAction('Delete Guest', message, () => performDeleteGuest(guest.id));
+  };
+
   // ── Render helpers ──────────────────────────────────────────────────
   const renderGuestCard = ({ item }) => {
     const isVip = !!item.vipTier;
     const reservation = item._currentReservation;
     const statusMeta = reservation ? RESERVATION_STATUS_META[reservation.status] : null;
     const { totalStays, totalReservations, lifetimeSpend, lastStayDate } = item._stats;
+    const isDeleting = deletingId === item.id;
 
     return (
       <TouchableOpacity
         style={styles.card}
         activeOpacity={0.7}
         onPress={() => onSelectGuest && onSelectGuest(item)}
+        disabled={isDeleting}
       >
         {/* ── Guest Information ─────────────────────────────── */}
         <View style={styles.identityRow}>
@@ -337,6 +400,24 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
               </View>
             </View>
           </View>
+
+          {/* Delete button — stops propagation so it doesn't also
+              trigger the card's onSelectGuest press. */}
+          <TouchableOpacity
+            style={styles.deleteBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            disabled={isDeleting}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              handleDeleteGuest(item);
+            }}
+          >
+            {isDeleting ? (
+              <ActivityIndicator size="small" color={colors.danger} />
+            ) : (
+              <Ionicons name="trash-outline" size={16} color={colors.danger} />
+            )}
+          </TouchableOpacity>
 
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
         </View>
@@ -703,6 +784,15 @@ const styles = StyleSheet.create({
   contactRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.xs },
   contactItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   contactText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
+
+  deleteBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
 
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.sm },
 

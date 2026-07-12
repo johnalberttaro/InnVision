@@ -22,6 +22,10 @@ const LOGO_SOURCE = null; // ← swap to require('../../../assets/logo.png')
 // a parent with sub-items expands/collapses them rather than navigating
 // directly (parents with no sub-items, like Dashboard and Logout, navigate
 // immediately on tap).
+//
+// NOTE: Reports & Analytics and Administration sections were removed from
+// here — those are Admin Portal responsibilities, not Front Desk. They'll
+// live in screens/admin/AdminSidebar.jsx when that module is built.
 const MENU_SECTIONS = [
   {
     key: 'dashboard',
@@ -84,33 +88,10 @@ const MENU_SECTIONS = [
       { key: 'housekeeping:maintenance', label: 'Maintenance Requests' },
     ],
   },
-  {
-    key: 'reports',
-    icon: '📊',
-    label: 'Reports & Analytics',
-    subItems: [
-      { key: 'reports:occupancy', label: 'Occupancy Reports' },
-      { key: 'reports:revenue', label: 'Revenue Reports' },
-      { key: 'reports:reservations', label: 'Reservation Reports' },
-      { key: 'reports:guests', label: 'Guest Statistics' },
-      { key: 'reports:performance', label: 'Performance Analytics' },
-    ],
-  },
-  {
-    key: 'admin',
-    icon: '⚙',
-    label: 'Administration',
-    subItems: [
-      { key: 'admin:users', label: 'User Management' },
-      { key: 'admin:roles', label: 'Roles & Permissions' },
-      { key: 'admin:settings', label: 'System Settings' },
-      { key: 'admin:audit', label: 'Audit Logs' },
-    ],
-  },
 ];
 
 /**
- * AdminSidebar — left navigation for the admin dashboard.
+ * FrontDeskSidebar — left navigation for the Front Desk Staff portal.
  *
  * Responsive behavior:
  *  - Wide screens (>= 1024px, desktop): fixed, always-visible sidebar.
@@ -118,23 +99,23 @@ const MENU_SECTIONS = [
  *  - Narrow screens (< 1024px, tablet/mobile): sidebar is hidden by
  *    default and slides in as a full-height overlay when `collapsed` is
  *    false, triggered by a hamburger button the parent screen renders
- *    (see AdminShell.jsx) and closed via `onClose`.
+ *    (see FrontDeskShell.jsx) and closed via `onClose`.
  *
  * Props:
  *  - activeKey: string             currently active menu/sub-item key
  *  - onNavigate: (key) => void     called when a leaf item is tapped
  *  - onLogout: () => void
- *  - adminName?: string
- *  - adminRole?: string
+ *  - staffName?: string
+ *  - staffRole?: string
  *  - collapsed: boolean            (mobile only) whether the overlay is open
  *  - onClose: () => void           (mobile only) close the overlay
  */
-export default function AdminSidebar({
+export default function FrontDeskSidebar({
   activeKey,
   onNavigate,
   onLogout,
-  adminName = 'Admin User',
-  adminRole = 'Hotel Administrator',
+  staffName = 'Front Desk Staff',
+  staffRole = 'Front Desk',
   collapsed = false,
   onClose,
 }) {
@@ -149,8 +130,8 @@ export default function AdminSidebar({
         if (!isWide && onClose) onClose();
       }}
       onLogout={onLogout}
-      adminName={adminName}
-      adminRole={adminRole}
+      staffName={staffName}
+      staffRole={staffRole}
     />
   );
 
@@ -170,9 +151,9 @@ export default function AdminSidebar({
   );
 }
 
-function SidebarContent({ activeKey, onNavigate, onLogout, adminName, adminRole }) {
+function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole }) {
   // Auto-expand whichever section contains the active leaf item, so the
-  // active page is always visible without the admin needing to manually
+  // active page is always visible without staff needing to manually
   // re-open its parent section.
   const initialExpanded = MENU_SECTIONS.find((section) =>
     section.subItems?.some((sub) => sub.key === activeKey)
@@ -199,7 +180,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName, adminRole 
           </View>
         )}
         <Text style={styles.brandName}>InnVision</Text>
-        <Text style={styles.brandSubtitle}>Hotel Property Management System</Text>
+        <Text style={styles.brandSubtitle}>Front Desk Staff Portal</Text>
       </View>
 
       {/* Menu */}
@@ -261,11 +242,11 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName, adminRole 
       {/* Profile footer */}
       <View style={styles.profileFooter}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{adminName.charAt(0).toUpperCase()}</Text>
+          <Text style={styles.avatarText}>{staffName.charAt(0).toUpperCase()}</Text>
         </View>
         <View style={styles.profileTextWrap}>
-          <Text style={styles.profileName} numberOfLines={1}>{adminName}</Text>
-          <Text style={styles.profileRole} numberOfLines={1}>{adminRole}</Text>
+          <Text style={styles.profileName} numberOfLines={1}>{staffName}</Text>
+          <Text style={styles.profileRole} numberOfLines={1}>{staffRole}</Text>
         </View>
         <TouchableOpacity onPress={onLogout} style={styles.quickLogout} accessibilityLabel="Log out">
           <Text style={styles.quickLogoutIcon}>⏻</Text>

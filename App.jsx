@@ -24,7 +24,7 @@ import MyReservationsScreen from './src/screens/bookingLookup/MyReservationsScre
 import ReservationScreen    from './src/screens/reservation/ReservationScreen';
 import RoomSelectionScreen  from './src/screens/roomRates/RoomSelectionScreen';
 import ReviewPayScreen      from './src/screens/reviewPay/ReviewPayScreen';
-import AdminShell           from './src/screens/admin/Adminshell';
+import FrontDeskShell       from './src/screens/frontdesk/FrontDeskShell';
 import { fonts, colors }    from './src/utils/theme';
 import { ThemeProvider }    from './src/context/ThemeContext';
 
@@ -55,6 +55,17 @@ import { ThemeProvider }    from './src/context/ThemeContext';
  * ProfileScreen, HamburgerMenu, RateCard) still import the deprecated core
  * `SafeAreaView` from 'react-native' directly rather than going through
  * this provider — that's a known remaining cleanup item, not yet migrated.
+ *
+ * NOTE ON FRONT DESK / ADMIN SPLIT:
+ * The Firestore `role` field on a user's `guests/{uid}` doc is still the
+ * string 'admin' — that hasn't been renamed. Right now it means "this
+ * user is Front Desk staff (or higher)." Only the local `screen` state
+ * value has been renamed from 'admin' to 'frontdesk' below, to route into
+ * FrontDeskShell instead of the old AdminShell. When a real Admin module
+ * is built, this role check will need to distinguish an actual admin
+ * from front desk staff (e.g. role: 'frontdesk' vs role: 'admin') — until
+ * then, anyone with role === 'admin' in Firestore lands in the Front Desk
+ * portal, not a real admin panel.
  */
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -79,8 +90,8 @@ export default function App() {
         // Re-run the same role lookup LoginScreen does on every auth-state
         // resolution (not just fresh logins), so a page refresh — which
         // silently restores the existing Firebase session — still routes
-        // an admin back into the admin panel instead of falling back to
-        // the default 'home' screen.
+        // staff back into the Front Desk portal instead of falling back
+        // to the default 'home' screen.
         let role = 'guest';
         try {
           const guestDoc = await getDoc(doc(db, 'guests', firebaseUser.uid));
@@ -90,7 +101,7 @@ export default function App() {
         } catch (roleLookupError) {
           console.warn('Role lookup failed on session restore, defaulting to guest:', roleLookupError);
         }
-        setScreen(role === 'admin' ? 'admin' : 'home');
+        setScreen(role === 'admin' ? 'frontdesk' : 'home');
       } else {
         setScreen('home');
       }
@@ -102,7 +113,7 @@ export default function App() {
 
   // ── Screen state ────────────────────────────────────────────────────
   // 'home' | 'login' | 'register' | 'forgotPassword' | 'profile' | 'about'
-  // | 'contact' | 'myReservations' | 'roomRates' | 'reviewPay' | 'admin'
+  // | 'contact' | 'myReservations' | 'roomRates' | 'reviewPay' | 'frontdesk'
   const [screen, setScreen]                   = useState('home');
   const [showReservation, setShowReservation] = useState(false);
   const [bookingDetails, setBookingDetails]   = useState(null);
@@ -111,7 +122,7 @@ export default function App() {
   // ── Auth handlers ───────────────────────────────────────────────────
   const handleLogin = (firebaseUser, role) => {
     setUser(firebaseUser);
-    setScreen(role === 'admin' ? 'admin' : 'home');
+    setScreen(role === 'admin' ? 'frontdesk' : 'home');
   };
 
   const handleRegister = async () => {
@@ -196,12 +207,13 @@ export default function App() {
             />
           )}
 
-          {/* ── Admin ─────────────────────────────────────────────── */}
-          {screen === 'admin' && (
-            <AdminShell
+          {/* ── Front Desk ────────────────────────────────────────── */}
+          {screen === 'frontdesk' && (
+            <FrontDeskShell
               onLoggedOut={handleLogout}
-              adminName={user?.displayName || user?.email || 'Admin User'}
-              adminRole="Hotel Administrator"
+              staffName={user?.displayName || user?.email || 'Front Desk Staff'}
+              staffRole="Front Desk"
+              staffUid={user?.uid}
             />
           )}
 

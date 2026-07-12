@@ -22,29 +22,8 @@ import {
 import { db } from '../../services/firebase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatCurrency } from '../../utils/roomRates';
+import { createBillingRecord } from '../../utils/BillingService';
 
-/**
- * Admin bookings list — shows reservations from Firestore's "reservations"
- * collection, newest first. Lives behind AdminLoginScreen.
- *
- * Status lifecycle: pending -> upcoming -> checked-in -> checked-out
- *                            -> declined (dead end, admin rejected it)
- *
- * Props:
- *  - onLogout: () => void   called after sign-out completes
- *  - filterKey: string      one of 'reservations:all' | 'reservations:pending'
- *                           | 'reservations:confirmed' | 'reservations:checkins'
- *                           | 'reservations:checkouts' (defaults to showing all)
- */
-
-// ── Web-safe confirm/alert helpers ─────────────────────────────────────
-// `Alert.alert(...)` is a NO-OP on react-native-web — it never renders a
-// dialog, it just silently does nothing. Every "Are you sure?" flow below
-// puts the actual Firestore update inside the alert's onPress, so on web
-// that update code was simply never reached, even though the buttons
-// looked fine and were tappable. These two helpers route to
-// window.confirm/window.alert on web and keep the native Alert UX on
-// iOS/Android.
 function confirmDialog(title, message, confirmLabel, onConfirmPressed) {
   if (Platform.OS === 'web') {
     const ok = window.confirm(`${title}\n\n${message}`);
@@ -97,6 +76,8 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
     }
   };
 
+  const getReferenceNumber = (id) => `RES-${id.slice(0, 8).toUpperCase()}`;
+
   const getGuestName = (item) => {
     if (!item.guestDetails) return item.guestName || '— (pending) —';
     const { firstName, lastName } = item.guestDetails;
@@ -128,13 +109,59 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
     setTimeout(() => setToast(null), 2800);
   };
 
-  const runStatusUpdate = async ({ item, newStatus, extraFields = {}, notifTitle, notifMessage, toastMessage }) => {
+  // Derives the room number list for the folio. Prefers item.selectedRooms
+  // (written by the multi-room booking flow in ReviewPayScreen) and falls
+  // back to roomType if selectedRooms isn't present or has an unexpected
+  // shape — better to show something on the folio than crash check-in.
+  const getRoomNumbersForFolio = (item) => {
+    if (Array.isArray(item.selectedRooms) && item.selectedRooms.length > 0) {
+      return item.selectedRooms.map(
+        (r) => r.roomNumber || r.number || r.room || String(r)
+      );
+    }
+    return [item.roomType || 'Unassigned'];
+  };
+
+  // Creates the guest folio at the moment of check-in. Runs as a
+  // runStatusUpdate sideEffect — see note there on failure handling.
+  const createFolioForCheckIn = async (item) => {
+    await createBillingRecord({
+      reservationRef: item.id,
+      guestUid: item.uid || null,
+      guestName: getGuestName(item),
+      roomNumbers: getRoomNumbersForFolio(item),
+      checkInDate: item.checkIn,
+      checkOutDate: item.checkOut,
+      roomCharges: item.totalAmount || 0,
+      additionalCharges: 0,
+      taxServiceCharges: 0,
+    });
+  };
+
+  const runStatusUpdate = async ({ item, newStatus, extraFields = {}, notifTitle, notifMessage, toastMessage, sideEffect }) => {
     setActingId(item.id);
     try {
       await updateDoc(doc(db, 'reservations', item.id), {
         status: newStatus,
         ...extraFields,
       });
+
+      // Runs after the status update succeeds but is isolated in its own
+      // try/catch: a folio-creation failure shouldn't undo a check-in that
+      // already went through, and shouldn't block the guest notification
+      // either — it just surfaces a separate warning so staff know to
+      // create the folio manually if this ever fails.
+      if (sideEffect) {
+        try {
+          await sideEffect();
+        } catch (sideEffectError) {
+          console.error('Post-status-update step failed:', sideEffectError);
+          notifyDialog(
+            'Check-in succeeded, but one step failed',
+            'The guest was checked in, but the billing folio could not be created automatically. Please create it manually from Billing Records.'
+          );
+        }
+      }
 
       if (item.uid) {
         await addDoc(collection(db, 'notifications'), {
@@ -211,6 +238,7 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
           notifTitle: "You're Checked In! 🏨",
           notifMessage: `Welcome! You're checked in to your ${item.roomType} room. Enjoy your stay.`,
           toastMessage: `${getGuestName(item)} checked in`,
+          sideEffect: () => createFolioForCheckIn(item),
         })
     );
   };
@@ -296,9 +324,11 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
             return (
               <View style={styles.card}>
                 <View style={styles.cardHeader}>
-                  <Text style={styles.guestName}>{getGuestName(item)}</Text>
+                  <View style={styles.nameCol}>
+                    <Text style={styles.referenceNumber}>{getReferenceNumber(item.id)}</Text>
+                    <Text style={styles.guestName}>{getGuestName(item)}</Text>
+                  </View>
 
-                  {/* Icon-style confirm/decline buttons live next to the name on pending cards */}
                   {isPending ? (
                     <View style={styles.iconButtonRow}>
                       <TouchableOpacity
@@ -442,6 +472,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: spacing.xs,
+  },
+  nameCol: { flexShrink: 1 },
+  referenceNumber: {
+    fontSize: 11,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.textMuted,
+    marginBottom: 2,
   },
   guestName: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.text, flexShrink: 1 },
   subtotal: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.accent },

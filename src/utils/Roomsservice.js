@@ -11,33 +11,6 @@ import { db } from '../services/firebase';
 
 import { getPlaceholderImages } from './Roomimageplaceholders';
 
-/**
- * Firestore-backed room data access layer.
- *
- * Two collections, matching the fixed-inventory model discussed for this
- * property:
- *
- *   roomTypes/{roomTypeId}   — the 3 room categories (Twin, King, Single
- *                              Room). Rarely changes; holds pricing,
- *                              amenities, images.
- *   rooms/{roomNumber}       — the 8 physical rooms. Each references a
- *                              roomTypeId. This is where day-to-day state
- *                              (status) lives and changes constantly.
- *
- * Both are FIXED-SIZE collections — this file intentionally has no
- * "create room" or "delete room" function for ongoing use. The only
- * mutation exposed for regular use is updateRoomStatus(), because status
- * is the one thing that legitimately changes minute-to-minute (a guest
- * checks in, housekeeping flags a repair, etc.). Room number, type, and
- * floor are set once via seedInitialRooms() (see bottom of this file) and
- * are not intended to change through the regular app UI afterwards.
- *
- * Every screen — admin Room Management AND the guest reservation flow —
- * reads through subscribeToRoomTypes / subscribeToRooms rather than
- * importing static data, so both sides of the app always see the same
- * live state.
- */
-
 export const ROOM_STATUS = {
   VACANT: 'vacant',
   OCCUPIED: 'occupied',
@@ -54,10 +27,40 @@ export const STATUS_META = {
 
 export const statusMeta = (status) => STATUS_META[status] || STATUS_META[ROOM_STATUS.VACANT];
 
-// A room is bookable by a guest only when it's vacant. Centralized here
-// so "availability" is always derived from status rather than stored as
-// a second, potentially-inconsistent field.
-export const isAvailable = (status) => status === ROOM_STATUS.VACANT;
+// ── Housekeeping status — separate concept from occupancy status above.
+// A room can be OCCUPIED (a guest is staying) and CLEAN (housekeeping
+// serviced it that morning) at the same time — these two fields are
+// intentionally independent so one doesn't get clobbered updating the
+// other.
+export const HOUSEKEEPING_STATUS = {
+  CLEAN: 'clean',
+  DIRTY: 'dirty',
+  IN_PROGRESS: 'in_progress',
+  INSPECTED: 'inspected',
+};
+
+export const HOUSEKEEPING_STATUS_META = {
+  [HOUSEKEEPING_STATUS.CLEAN]: { label: 'Clean', color: '#16a34a', bg: '#dcfce7' },
+  [HOUSEKEEPING_STATUS.DIRTY]: { label: 'Needs Cleaning', color: '#dc2626', bg: '#fee2e2' },
+  [HOUSEKEEPING_STATUS.IN_PROGRESS]: { label: 'In Progress', color: '#d97706', bg: '#fef3c7' },
+  [HOUSEKEEPING_STATUS.INSPECTED]: { label: 'Inspected', color: '#7c3aed', bg: '#ede9fe' },
+};
+
+export const housekeepingStatusMeta = (status) =>
+  HOUSEKEEPING_STATUS_META[status] || HOUSEKEEPING_STATUS_META[HOUSEKEEPING_STATUS.CLEAN];
+
+// A room's cleaning cycle always moves forward through this sequence.
+// Used by Room Cleaning Status to know what the "next" button should do.
+export const NEXT_HOUSEKEEPING_STATUS = {
+  [HOUSEKEEPING_STATUS.DIRTY]: HOUSEKEEPING_STATUS.IN_PROGRESS,
+  [HOUSEKEEPING_STATUS.IN_PROGRESS]: HOUSEKEEPING_STATUS.CLEAN,
+  [HOUSEKEEPING_STATUS.CLEAN]: HOUSEKEEPING_STATUS.INSPECTED,
+  [HOUSEKEEPING_STATUS.INSPECTED]: null, // end of the cycle until the room is dirtied again at next checkout
+};
+
+export function isAvailable(status) {
+  return status === ROOM_STATUS.VACANT;
+}
 
 export function formatCurrency(amount) {
   return `₱${(amount ?? 0).toLocaleString()}`;
@@ -65,8 +68,6 @@ export function formatCurrency(amount) {
 
 /* ── Real-time subscriptions ─────────────────────────────────────────── */
 
-// Calls onData(array) every time roomTypes changes, and keeps calling it
-// live. Returns an unsubscribe function — call it on unmount.
 export function subscribeToRoomTypes(onData, onError) {
   const q = query(collection(db, 'roomTypes'), orderBy('name'));
   return onSnapshot(
@@ -79,8 +80,6 @@ export function subscribeToRoomTypes(onData, onError) {
   );
 }
 
-// Calls onData(array) every time rooms changes, and keeps calling it live.
-// Returns an unsubscribe function — call it on unmount.
 export function subscribeToRooms(onData, onError) {
   const q = query(collection(db, 'rooms'), orderBy('roomNumber'));
   return onSnapshot(
@@ -95,16 +94,6 @@ export function subscribeToRooms(onData, onError) {
 
 /* ── Join helper ──────────────────────────────────────────────────────── */
 
-// Merges physical rooms with their room type's full display info (name,
-// price, description, size/bed/occupancy, notes, amenities, images) so
-// every screen — admin Room Management AND the guest-facing per-room
-// cards — gets "complete" room data without that data being duplicated
-// in Firestore itself. Pure function — safe to call with whatever the two
-// subscriptions currently hold, on every render.
-//
-// `id` on the returned object is the physical room's doc ID (roomNumber),
-// not the room type's ID — each physical room needs a unique key/id of
-// its own when rendered as an individual card.
 export function joinRoomsWithTypes(rooms, roomTypes) {
   const typesById = {};
   roomTypes.forEach((rt) => { typesById[rt.id] = rt; });
@@ -117,6 +106,7 @@ export function joinRoomsWithTypes(rooms, roomTypes) {
       roomTypeId: room.roomTypeId,
       floor: room.floor,
       status: room.status,
+      housekeepingStatus: room.housekeepingStatus || HOUSEKEEPING_STATUS.CLEAN,
       maintenanceNote: room.maintenanceNote,
       roomTypeName: type ? type.name : 'Unknown Type',
       price: type ? type.price : null,
@@ -138,10 +128,6 @@ export function joinRoomsWithTypes(rooms, roomTypes) {
 
 /* ── Mutations ────────────────────────────────────────────────────────── */
 
-// The one write path this module exposes for regular use. Used by the
-// admin Room Status / Availability / Maintenance views, and safe to call
-// from anywhere else that legitimately changes a room's state (e.g. a
-// future check-in/check-out flow). extra can carry a maintenanceNote, etc.
 export async function updateRoomStatus(roomNumber, status, extra = {}) {
   await setDoc(
     doc(db, 'rooms', roomNumber),
@@ -150,19 +136,19 @@ export async function updateRoomStatus(roomNumber, status, extra = {}) {
   );
 }
 
+// Sibling to updateRoomStatus() above, but for the independent
+// housekeeping cycle. Deliberately does NOT touch the occupancy `status`
+// field — merge:true means only housekeepingStatus (+ extra) change,
+// everything else on the room doc is left alone.
+export async function updateRoomHousekeepingStatus(roomNumber, housekeepingStatus, extra = {}) {
+  await setDoc(
+    doc(db, 'rooms', roomNumber),
+    { housekeepingStatus, ...extra, housekeepingUpdatedAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
 /* ── One-time seed ────────────────────────────────────────────────────── */
-//
-// This property's fixed inventory: 3 room types, 8 physical rooms
-// (101–103, 108 → RM101/Twin, 105–107 → RM102/King, 104 → RM103/Single
-// Room). seedInitialRooms() below writes this exact set into Firestore.
-// It's meant to be called ONCE — from a temporary admin button (see
-// RoomManagementScreen's empty state) — not as part of normal app flow.
-// It's safe to call more than once by accident: setDoc without merge
-// overwrites the same doc IDs rather than creating duplicates, so
-// re-running it just resets these documents back to these starting
-// values (this also means running it will overwrite any manual edits
-// made directly in the Firebase console, e.g. to roomTypes' name fields
-// — that's expected, not a bug).
 
 const SEED_ROOM_TYPES = [
   {
@@ -232,24 +218,23 @@ const SEED_ROOM_TYPES = [
 ];
 
 const SEED_ROOMS = [
-  { roomNumber: '101', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
-  { roomNumber: '102', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.OCCUPIED },
-  { roomNumber: '103', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.RESERVED },
-  { roomNumber: '104', roomTypeId: 'RM103', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
+  { roomNumber: '101', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.VACANT, housekeepingStatus: HOUSEKEEPING_STATUS.CLEAN },
+  { roomNumber: '102', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.OCCUPIED, housekeepingStatus: HOUSEKEEPING_STATUS.CLEAN },
+  { roomNumber: '103', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.RESERVED, housekeepingStatus: HOUSEKEEPING_STATUS.CLEAN },
+  { roomNumber: '104', roomTypeId: 'RM103', floor: 'Ground Floor', status: ROOM_STATUS.VACANT, housekeepingStatus: HOUSEKEEPING_STATUS.CLEAN },
   {
     roomNumber: '105',
     roomTypeId: 'RM102',
     floor: 'Ground Floor',
     status: ROOM_STATUS.MAINTENANCE,
+    housekeepingStatus: HOUSEKEEPING_STATUS.CLEAN,
     maintenanceNote: 'AC unit repair — scheduled for completion this week.',
   },
-  { roomNumber: '106', roomTypeId: 'RM102', floor: 'Ground Floor', status: ROOM_STATUS.OCCUPIED },
-  { roomNumber: '107', roomTypeId: 'RM102', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
-  { roomNumber: '108', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
+  { roomNumber: '106', roomTypeId: 'RM102', floor: 'Ground Floor', status: ROOM_STATUS.OCCUPIED, housekeepingStatus: HOUSEKEEPING_STATUS.CLEAN },
+  { roomNumber: '107', roomTypeId: 'RM102', floor: 'Ground Floor', status: ROOM_STATUS.VACANT, housekeepingStatus: HOUSEKEEPING_STATUS.CLEAN },
+  { roomNumber: '108', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.VACANT, housekeepingStatus: HOUSEKEEPING_STATUS.CLEAN },
 ];
 
-// Writes all 2 room types + 7 rooms to Firestore. Call this from a
-// button, not automatically on app load — it's a one-time setup action.
 export async function seedInitialRooms() {
   for (const roomType of SEED_ROOM_TYPES) {
     const { id, ...data } = roomType;
