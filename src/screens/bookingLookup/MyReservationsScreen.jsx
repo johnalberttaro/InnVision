@@ -41,9 +41,14 @@ import { useTheme } from '../../context/ThemeContext';
  *     `{ roomNumber, roomType, rate }` (mirrors RoomSelectionScreen /
  *     ReviewPayScreen output). Adjust `roomLabel`/`rateLabel` below if
  *     your actual shape differs.
- *  3. `paymentMethod` is read from the reservation doc's top level, with
- *     a fallback into `guestDetails.paymentMethod`. Point it at whatever
- *     field ReviewPayScreen actually writes.
+ *  3. Payment method display: reservations written by submitReservation()
+ *     store `paymentMode` ('online' | 'cash' | ...) and, for online
+ *     payments, `eWalletProvider` (e.g. 'gcash'). `paymentMethod()` below
+ *     maps those to a human label. A legacy `paymentMethod` /
+ *     `guestDetails.paymentMethod` field is still checked first as a
+ *     fallback for any older reservations that used it. Verify the exact
+ *     field names/casing submitReservation() writes and adjust the
+ *     EWALLET_LABELS map/keys if they differ (e.g. `ewalletProvider`).
  *  4. `bookingDate` falls back to `createdAt` (Firestore Timestamp),
  *     which is what BookingLookupScreen sorted on.
  *  5. Room release on cancellation: this does a best-effort transaction
@@ -212,7 +217,40 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     return r.guestName || '—';
   };
 
-  const paymentMethod = (r) => r.paymentMethod || r.guestDetails?.paymentMethod || '—';
+  // Human-readable labels for known e-wallet providers. Add more here as
+  // new providers get wired up in ReviewPayScreen/submitReservation.
+  const EWALLET_LABELS = {
+    gcash: 'GCash',
+    maya: 'Maya',
+    maribank: 'Maribank',
+    gotyme: 'GoTyme',
+  };
+
+  /**
+   * submitReservation() writes `paymentMode` ('online' | 'cash' | ...)
+   * and, for online payments, `eWalletProvider` (e.g. 'gcash') — it does
+   * NOT write a top-level `paymentMethod` field. This maps those actual
+   * fields to a display label, while still checking the legacy
+   * `paymentMethod` / `guestDetails.paymentMethod` fields first in case
+   * any older reservations used them.
+   */
+  const paymentMethod = (r) => {
+    if (r.paymentMethod || r.guestDetails?.paymentMethod) {
+      return r.paymentMethod || r.guestDetails?.paymentMethod;
+    }
+
+    const mode = (r.paymentMode || '').toLowerCase();
+    if (mode === 'online') {
+      const provider = (r.eWalletProvider || '').toLowerCase();
+      return EWALLET_LABELS[provider] || (r.eWalletProvider ? r.eWalletProvider : 'E-wallet');
+    }
+    if (mode === 'cash') return 'Cash on arrival';
+    if (mode === 'hotel') return 'Pay at Hotel';
+    if (mode) return mode.charAt(0).toUpperCase() + mode.slice(1);
+
+    return '—';
+  };
+
   const contactNumber = (r) => r.guestDetails?.phone || r.guestPhone || '—';
   const emailAddress = (r) => r.guestDetails?.email || r.guestEmail || '—';
 

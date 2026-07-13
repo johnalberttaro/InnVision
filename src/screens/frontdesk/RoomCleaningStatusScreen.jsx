@@ -1,26 +1,26 @@
 // Roomcleaningstatusscreen.jsx
-// "Room Cleaning Status" — live grid of all 8 rooms showing their current
-// housekeeping status (independent of occupancy status), with a button to
-// advance each room through the cleaning cycle: dirty -> in_progress ->
-// clean -> inspected.
+// "Room Cleaning Status" — live grid of all rooms showing their current
+// status, with cleaning-cycle action buttons for the rooms currently
+// moving through housekeeping: Inspect -> (Needs Cleaning Again ->)
+// Start Cleaning -> In Progress -> Vacant (Ready for Guest).
+//
+// Rooms in OCCUPIED, RESERVED, or MAINTENANCE aren't part of the
+// cleaning cycle, so this screen shows their status but no action button
+// for them — those are managed from Room Management instead.
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import {
   subscribeToRooms,
-  updateRoomHousekeepingStatus,
-  housekeepingStatusMeta,
-  NEXT_HOUSEKEEPING_STATUS,
-  HOUSEKEEPING_STATUS,
+  updateRoomStatus,
+  statusMeta,
+  ROOM_STATUS,
   STATUS_META,
+  CLEANING_WORKFLOW_STATUSES,
+  NEXT_CLEANING_STATUS,
+  CLEANING_ACTION_LABEL,
 } from '../../utils/Roomsservice';
-
-const NEXT_ACTION_LABEL = {
-  [HOUSEKEEPING_STATUS.DIRTY]: 'Start Cleaning',
-  [HOUSEKEEPING_STATUS.IN_PROGRESS]: 'Mark Clean',
-  [HOUSEKEEPING_STATUS.CLEAN]: 'Mark Inspected',
-};
 
 export default function RoomCleaningStatusScreen() {
   const [rooms, setRooms] = useState([]);
@@ -43,33 +43,37 @@ export default function RoomCleaningStatusScreen() {
     return unsubscribe;
   }, []);
 
-  const handleAdvanceStatus = async (room) => {
-    const currentStatus = room.housekeepingStatus || HOUSEKEEPING_STATUS.CLEAN;
-    const nextStatus = NEXT_HOUSEKEEPING_STATUS[currentStatus];
-    if (!nextStatus) return;
-
-    setUpdatingRoom(room.roomNumber);
+  const runUpdate = async (roomNumber, nextStatus) => {
+    setUpdatingRoom(roomNumber);
     try {
-      await updateRoomHousekeepingStatus(room.roomNumber, nextStatus);
+      await updateRoomStatus(roomNumber, nextStatus);
     } catch (err) {
-      console.error('Failed to update housekeeping status:', err);
+      console.error('Failed to update room status:', err);
     } finally {
       setUpdatingRoom(null);
     }
   };
 
-  // Manual reset for a room that's already Inspected but gets dirtied
-  // again outside the normal checkout flow (e.g. a long-stay guest's
-  // room needs a mid-stay clean).
-  const handleResetToDirty = async (room) => {
-    setUpdatingRoom(room.roomNumber);
-    try {
-      await updateRoomHousekeepingStatus(room.roomNumber, HOUSEKEEPING_STATUS.DIRTY);
-    } catch (err) {
-      console.error('Failed to reset housekeeping status:', err);
-    } finally {
-      setUpdatingRoom(null);
-    }
+  // Primary advance button — e.g. Inspect -> Start Cleaning,
+  // Start Cleaning -> In Progress, In Progress -> Vacant.
+  const handleAdvance = (room) => {
+    const nextStatus = NEXT_CLEANING_STATUS[room.status];
+    if (!nextStatus) return;
+    runUpdate(room.roomNumber, nextStatus);
+  };
+
+  // Branch action, only shown while a room is at Inspect: fails
+  // inspection -> Needs Cleaning Again (instead of going straight to
+  // Start Cleaning).
+  const handleNeedsCleaningAgain = (room) => {
+    runUpdate(room.roomNumber, ROOM_STATUS.NEEDS_CLEANING_AGAIN);
+  };
+
+  // Manual reset for a room that's already Vacant but gets dirtied again
+  // outside the normal checkout flow (e.g. a long-stay guest's room
+  // needs a mid-stay clean).
+  const handleResetFromVacant = (room) => {
+    runUpdate(room.roomNumber, ROOM_STATUS.NEEDS_CLEANING_AGAIN);
   };
 
   if (loading) {
@@ -89,51 +93,56 @@ export default function RoomCleaningStatusScreen() {
 
       <View style={styles.grid}>
         {rooms.map((room) => {
-          const hkStatus = room.housekeepingStatus || HOUSEKEEPING_STATUS.CLEAN;
-          const hkMeta = housekeepingStatusMeta(hkStatus);
-          const occupancyMeta = STATUS_META[room.status] || STATUS_META.vacant;
-          const nextStatus = NEXT_HOUSEKEEPING_STATUS[hkStatus];
+          const meta = statusMeta(room.status);
           const isUpdating = updatingRoom === room.roomNumber;
+          const inCleaningCycle = CLEANING_WORKFLOW_STATUSES.includes(room.status);
+          const isInspect = room.status === ROOM_STATUS.INSPECT;
+          const isVacant = room.status === ROOM_STATUS.VACANT;
+          const primaryLabel = CLEANING_ACTION_LABEL[room.status];
 
           return (
             <View key={room.roomNumber} style={styles.card}>
               <View style={styles.cardHeader}>
                 <Text style={styles.roomNumber}>Room {room.roomNumber}</Text>
-                <View style={[styles.occupancyBadge, { backgroundColor: occupancyMeta.bg }]}>
-                  <Text style={[styles.occupancyBadgeText, { color: occupancyMeta.color }]}>
-                    {occupancyMeta.label}
-                  </Text>
-                </View>
               </View>
 
-              <View style={[styles.statusBadge, { backgroundColor: hkMeta.bg }]}>
-                <Text style={[styles.statusBadgeText, { color: hkMeta.color }]}>{hkMeta.label}</Text>
+              <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>
+                <Text style={[styles.statusBadgeText, { color: meta.color }]}>{meta.label}</Text>
               </View>
 
-              {nextStatus ? (
-                <TouchableOpacity
-                  style={[styles.actionButton, isUpdating && styles.actionButtonDisabled]}
-                  onPress={() => handleAdvanceStatus(room)}
-                  disabled={isUpdating}
-                >
-                  {isUpdating ? (
-                    <ActivityIndicator color={colors.white} size="small" />
-                  ) : (
-                    <Text style={styles.actionButtonText}>{NEXT_ACTION_LABEL[hkStatus]}</Text>
+              {isUpdating ? (
+                <ActivityIndicator color={colors.primary} size="small" style={{ marginTop: spacing.sm }} />
+              ) : inCleaningCycle && primaryLabel ? (
+                <View>
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => handleAdvance(room)}
+                  >
+                    <Text style={styles.actionButtonText}>{primaryLabel}</Text>
+                  </TouchableOpacity>
+
+                  {isInspect && (
+                    <TouchableOpacity
+                      style={styles.resetButton}
+                      onPress={() => handleNeedsCleaningAgain(room)}
+                    >
+                      <Text style={styles.resetButtonText}>Needs Cleaning Again</Text>
+                    </TouchableOpacity>
                   )}
+                </View>
+              ) : isVacant ? (
+                <TouchableOpacity
+                  style={styles.resetButton}
+                  onPress={() => handleResetFromVacant(room)}
+                >
+                  <Text style={styles.resetButtonText}>Needs Cleaning Again</Text>
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity
-                  style={[styles.resetButton, isUpdating && styles.actionButtonDisabled]}
-                  onPress={() => handleResetToDirty(room)}
-                  disabled={isUpdating}
-                >
-                  {isUpdating ? (
-                    <ActivityIndicator color={colors.primary} size="small" />
-                  ) : (
-                    <Text style={styles.resetButtonText}>Needs Cleaning Again</Text>
-                  )}
-                </TouchableOpacity>
+                <Text style={styles.notInCycleNote}>
+                  {room.status === ROOM_STATUS.OCCUPIED
+                    ? 'Guest currently staying — not in the cleaning cycle yet.'
+                    : 'Managed from Room Management.'}
+                </Text>
               )}
             </View>
           );
@@ -166,8 +175,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   roomNumber: { fontFamily: fonts.headingSemiBold, fontSize: 16, color: colors.text },
-  occupancyBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.sm },
-  occupancyBadgeText: { fontFamily: fonts.bodySemiBold, fontSize: 10 },
   statusBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: spacing.sm,
@@ -182,7 +189,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     alignItems: 'center',
   },
-  actionButtonDisabled: { opacity: 0.6 },
   actionButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.white },
   resetButton: {
     borderWidth: 1,
@@ -190,6 +196,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     paddingVertical: spacing.sm,
     alignItems: 'center',
+    marginTop: spacing.xs,
   },
   resetButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.textMuted },
+  notInCycleNote: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+    marginTop: spacing.xs,
+  },
 });

@@ -13,42 +13,6 @@ import {
 } from '../../utils/Roomsservice';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 
-/**
- * Admin Room Management — a single screen covering all five Room
- * Management sidebar items, now backed by live Firestore data:
- *   rooms:types         → Room Types view      (roomTypes collection)
- *   rooms:list          → Room List view        (rooms + roomTypes, joined)
- *   rooms:availability  → Room Availability view
- *   rooms:status        → Room Status view      (admin can change status here)
- *   rooms:maintenance   → Room Maintenance view (admin can flag/clear maintenance)
- *
- * The property has a FIXED room count (7 rooms, 2 types) — this screen
- * still has no "Add Room" / "Add Room Type" / "Delete" anywhere. The
- * first time this screen loads with an empty "rooms" collection, it
- * shows a one-time "Seed Sample Rooms" button (calls seedInitialRooms()
- * in Roomsservice.js) that creates the fixed inventory. That button is
- * keyed off `rooms` being empty specifically (not roomTypes too) —
- * roomTypes can already have manually-entered documents (e.g. edited
- * directly in the Firebase console) while `rooms` is still completely
- * unpopulated, and the button needs to show in that case so the physical
- * room inventory can still be seeded. After seeding, room number/type/
- * floor aren't intended to change through the app UI. The one thing that
- * legitimately changes minute-to-minute is STATUS, so that's the one
- * field admins can edit here, via updateRoomStatus() — every change
- * writes to Firestore immediately and is reflected live to every other
- * screen subscribed to the same collections (including the guest
- * reservation flow).
- *
- * Navigation lives ONLY in the sidebar — this screen has no internal
- * tabs. Which section renders is controlled by the `section` prop
- * passed down from AdminShell, mapped directly from the active sidebar
- * key.
- *
- * Props:
- *  - onLogout: () => void
- *  - section: 'types' | 'list' | 'availability' | 'status' | 'maintenance'
- */
-
 const SECTION_TITLES = {
   types: 'Room Types',
   list: 'Room List',
@@ -65,9 +29,6 @@ const notifyUser = (title, message) => {
   }
 };
 
-// Cross-platform confirm dialog — Alert.alert has no UI on React Native
-// Web, so on web we fall back to window.confirm; on native we use the
-// real Alert with a destructive-style confirm button.
 const confirmAction = (title, message, confirmLabel, onConfirm) => {
   if (Platform.OS === 'web') {
     if (window.confirm(`${title}\n\n${message}`)) {
@@ -104,16 +65,12 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
     };
   }, []);
 
-  // Recomputed automatically whenever either live subscription fires.
   const roomsWithDetails = useMemo(
     () => joinRoomsWithTypes(rooms, roomTypes),
     [rooms, roomTypes]
   );
 
   const loading = loadingTypes || loadingRooms;
-  // Keyed off `rooms` specifically — roomTypes may already have manually
-  // entered documents while `rooms` is still empty, and seeding still
-  // needs to happen in that case (see note above the component).
   const isEmpty = !loading && rooms.length === 0;
 
   const handleLogout = () => onLogout();
@@ -136,8 +93,6 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
     try {
       await seedInitialRooms();
       notifyUser('Done', 'Seeded 3 room types and 8 rooms into Firestore.');
-      // No manual state update needed — the live subscriptions above will
-      // pick up the new documents automatically via onSnapshot.
     } catch (err) {
       console.error('Failed to seed rooms:', err);
       notifyUser('Error', 'Could not seed room data. Check your Firestore connection/rules and try again.');
@@ -146,13 +101,6 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
     }
   };
 
-  // Wraps handleSeed with a confirmation step — used by the permanent
-  // header button (as opposed to the one-time empty-state button above,
-  // which doesn't need a confirm since there's nothing to overwrite yet).
-  // This is a developer utility for pushing SEED_ROOM_TYPES/SEED_ROOMS
-  // from Roomsservice.js into Firestore whenever that code changes — not
-  // a general admin feature, since room types/inventory are meant to be
-  // fixed and defined in code, not created through this UI.
   const handleSeedWithConfirm = () => {
     confirmAction(
       'Reseed room data?',
@@ -236,7 +184,6 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
   );
 }
 
-/* ── Room Types (still read-only — pricing/category is not admin-editable here) ── */
 function RoomTypesSection({ roomTypes }) {
   return (
     <View>
@@ -285,7 +232,6 @@ function RoomTypesSection({ roomTypes }) {
   );
 }
 
-/* ── Room List ────────────────────────────────────────────────────────── */
 function RoomListSection({ rooms }) {
   return (
     <View>
@@ -297,7 +243,6 @@ function RoomListSection({ rooms }) {
   );
 }
 
-/* ── Room Availability ───────────────────────────────────────────────── */
 function AvailabilitySection({ rooms }) {
   const available = rooms.filter((r) => r.available);
   const unavailable = rooms.filter((r) => !r.available);
@@ -334,16 +279,25 @@ function AvailabilitySection({ rooms }) {
   );
 }
 
-/* ── Room Status (admin can change status here — writes to Firestore) ── */
 function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
   const grouped = useMemo(() => {
     const byStatus = {};
     Object.keys(STATUS_META).forEach((key) => { byStatus[key] = []; });
+    // Rooms whose status doesn't match any known STATUS_META key (missing
+    // field, stale data, a typo entered directly in Firestore) go here
+    // instead of silently vanishing from this screen — previously a room
+    // like this wouldn't appear under ANY group below, since only
+    // Object.keys(STATUS_META) gets rendered, leaving no way to fix it
+    // from here at all.
+    const unrecognized = [];
     rooms.forEach((room) => {
-      if (!byStatus[room.status]) byStatus[room.status] = [];
-      byStatus[room.status].push(room);
+      if (byStatus[room.status]) {
+        byStatus[room.status].push(room);
+      } else {
+        unrecognized.push(room);
+      }
     });
-    return byStatus;
+    return { byStatus, unrecognized };
   }, [rooms]);
 
   return (
@@ -351,7 +305,7 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
       <SectionIntro description="Current status of every room. Tap a status chip on any room to update it — the change is saved to Firestore immediately and reflected everywhere else in the system." />
       {Object.keys(STATUS_META).map((statusKey) => {
         const meta = STATUS_META[statusKey];
-        const roomsInGroup = grouped[statusKey] || [];
+        const roomsInGroup = grouped.byStatus[statusKey] || [];
         return (
           <View key={statusKey} style={{ marginBottom: spacing.lg }}>
             <View style={styles.statusGroupHeader}>
@@ -374,11 +328,31 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
           </View>
         );
       })}
+
+      {grouped.unrecognized.length > 0 && (
+        <View style={{ marginBottom: spacing.lg }}>
+          <View style={styles.statusGroupHeader}>
+            <View style={[styles.statusDot, { backgroundColor: '#6b7280' }]} />
+            <Text style={styles.groupHeading}>Unrecognized Status ({grouped.unrecognized.length})</Text>
+          </View>
+          <Text style={styles.emptyText}>
+            These rooms have missing or invalid status data. Tap a status chip below to set them to a valid state.
+          </Text>
+          {grouped.unrecognized.map((room) => (
+            <RoomRow
+              key={room.roomNumber}
+              room={room}
+              editable
+              isUpdating={updatingRoomNumber === room.roomNumber}
+              onStatusChange={(status) => onStatusChange(room, status)}
+            />
+          ))}
+        </View>
+      )}
     </View>
   );
 }
 
-/* ── Room Maintenance (admin can flag/clear here — writes to Firestore) ── */
 function MaintenanceSection({ rooms, updatingRoomNumber, onStatusChange }) {
   const maintenanceRooms = rooms.filter((r) => r.status === ROOM_STATUS.MAINTENANCE);
   const otherRooms = rooms.filter((r) => r.status !== ROOM_STATUS.MAINTENANCE);
@@ -446,7 +420,6 @@ function MaintenanceSection({ rooms, updatingRoomNumber, onStatusChange }) {
   );
 }
 
-/* ── Shared pieces ────────────────────────────────────────────────────── */
 function SectionIntro({ description }) {
   return (
     <View style={styles.sectionIntro}>

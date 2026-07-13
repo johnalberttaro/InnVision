@@ -25,8 +25,10 @@ import ReservationScreen    from './src/screens/reservation/ReservationScreen';
 import RoomSelectionScreen  from './src/screens/roomRates/RoomSelectionScreen';
 import ReviewPayScreen      from './src/screens/reviewPay/ReviewPayScreen';
 import FrontDeskShell       from './src/screens/frontdesk/FrontDeskShell';
+import AdminShell           from './src/screens/admin/AdminShell';
 import { fonts, colors }    from './src/utils/theme';
 import { ThemeProvider }    from './src/context/ThemeContext';
+import { resolveUserRole }  from './src/utils/roleHelpers';
 
 /**
  * NOTE ON DARK MODE ROLLOUT:
@@ -40,6 +42,8 @@ import { ThemeProvider }    from './src/context/ThemeContext';
  * uses the old static import and will keep rendering in light mode until
  * it's migrated the same way — that's expected, not a bug, and each
  * screen can be migrated independently without breaking the others.
+ * AdminShell is new but was still built against the static import, so add
+ * it to this migration backlog too.
  *
  * NOTE ON SAFE AREA:
  * SafeAreaView/SafeAreaProvider now come from 'react-native-safe-area-context'
@@ -56,16 +60,14 @@ import { ThemeProvider }    from './src/context/ThemeContext';
  * `SafeAreaView` from 'react-native' directly rather than going through
  * this provider — that's a known remaining cleanup item, not yet migrated.
  *
- * NOTE ON FRONT DESK / ADMIN SPLIT:
- * The Firestore `role` field on a user's `guests/{uid}` doc is still the
- * string 'admin' — that hasn't been renamed. Right now it means "this
- * user is Front Desk staff (or higher)." Only the local `screen` state
- * value has been renamed from 'admin' to 'frontdesk' below, to route into
- * FrontDeskShell instead of the old AdminShell. When a real Admin module
- * is built, this role check will need to distinguish an actual admin
- * from front desk staff (e.g. role: 'frontdesk' vs role: 'admin') — until
- * then, anyone with role === 'admin' in Firestore lands in the Front Desk
- * portal, not a real admin panel.
+ * NOTE ON FRONT DESK / ADMIN SPLIT (resolved):
+ * `resolveUserRole()` in `src/utils/roleHelpers.js` normalizes the Firestore
+ * `guests/{uid}` document (via a `role`/`userRole`/`accessLevel`/`roleName`
+ * string field, or legacy boolean flags like `isAdmin`/`isFrontDesk`) into
+ * one of `'admin' | 'frontdesk' | 'guest'`. Both the auth-state listener
+ * below and `handleLogin` use it to route users to `AdminShell`,
+ * `FrontDeskShell`, or the guest-facing `home` screen respectively. See
+ * that file for the full mapping/aliases.
  */
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -95,13 +97,13 @@ export default function App() {
         let role = 'guest';
         try {
           const guestDoc = await getDoc(doc(db, 'guests', firebaseUser.uid));
-          if (guestDoc.exists() && guestDoc.data().role === 'admin') {
-            role = 'admin';
-          }
+          role = resolveUserRole(guestDoc.exists() ? guestDoc.data() : null);
         } catch (roleLookupError) {
           console.warn('Role lookup failed on session restore, defaulting to guest:', roleLookupError);
         }
-        setScreen(role === 'admin' ? 'frontdesk' : 'home');
+
+        const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : 'home';
+        setScreen(nextScreen);
       } else {
         setScreen('home');
       }
@@ -113,7 +115,7 @@ export default function App() {
 
   // ── Screen state ────────────────────────────────────────────────────
   // 'home' | 'login' | 'register' | 'forgotPassword' | 'profile' | 'about'
-  // | 'contact' | 'myReservations' | 'roomRates' | 'reviewPay' | 'frontdesk'
+  // | 'contact' | 'myReservations' | 'roomRates' | 'reviewPay' | 'frontdesk' | 'admin'
   const [screen, setScreen]                   = useState('home');
   const [showReservation, setShowReservation] = useState(false);
   const [bookingDetails, setBookingDetails]   = useState(null);
@@ -122,7 +124,8 @@ export default function App() {
   // ── Auth handlers ───────────────────────────────────────────────────
   const handleLogin = (firebaseUser, role) => {
     setUser(firebaseUser);
-    setScreen(role === 'admin' ? 'frontdesk' : 'home');
+    const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : 'home';
+    setScreen(nextScreen);
   };
 
   const handleRegister = async () => {
@@ -204,6 +207,14 @@ export default function App() {
               isAuthenticated={!!user}
               user={user}
               onLogout={handleLogout}
+            />
+          )}
+
+          {/* ── Admin ─────────────────────────────────────────────── */}
+          {screen === 'admin' && (
+            <AdminShell
+              onLoggedOut={handleLogout}
+              adminName={user?.displayName || user?.email || 'Administrator'}
             />
           )}
 

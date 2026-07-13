@@ -27,6 +27,7 @@ import Brandheader from '../../components/shared/Brandheader';
 import Appfooter from '../../components/shared/Appfooter';
 import StepIndicator from '../../components/shared/StepIndicator';
 import StayBar from '../../components/shared/StayBar';
+import EwalletPaymentScreen from './EwalletPaymentScreen';
 import { useTheme } from '../../context/ThemeContext';
 import { formatDate } from '../../utils/dateHelpers';
 import { formatCurrency } from '../../utils/roomRates';
@@ -51,31 +52,41 @@ const TWO_COL_BREAKPOINT = 680;
  *    used `colors.white` while sitting on `colors.primary` (which flips)
  *    — changed to `onPrimary`.
  *
- * GUEST RECORD UPSERT (added): confirming a reservation now also
- * creates-or-updates a matching document in the "guests" collection,
- * linked by `linkedUid === user.uid`. This is what makes a booking show
- * up on the admin Guest Records screen — previously this write didn't
- * exist, so a guest could book successfully and still never appear
- * there unless someone had manually added them first. The upsert:
- *   - Looks for an existing guests doc where linkedUid == user.uid.
- *   - If none exists, creates one with source: 'Mobile App' (this is a
- *     guest who booked themselves through the app, as opposed to a
- *     'Walk-In' entry a staff member adds manually).
- *   - If one already exists (a returning guest), updates their contact
- *     info (name/email/phone) in case it changed since their last visit,
- *     without touching staff-only fields like vipTier, tags, or
- *     staffNotes.
- *   - Wrapped in its own try/catch, separate from the reservation write:
- *     if this upsert fails for any reason, the reservation itself has
- *     already succeeded and the guest still gets their confirmation —
- *     we only log a warning rather than showing an error for something
- *     that isn't the guest's fault and doesn't block their booking.
+ * GUEST RECORD UPSERT: confirming a reservation also creates-or-updates
+ * a matching document in the "guests" collection, linked by
+ * `linkedUid === user.uid`. See upsertGuestRecord() below for details.
+ *
+ * E-WALLET PAYMENT STEP (added): when Payment Mode is "Pay Online", the
+ * "Confirm Reservation" button becomes "Pay Now". Tapping it does NOT
+ * write to Firestore directly — instead ReviewPayScreen swaps its own
+ * content for <EwalletPaymentScreen>, a dedicated sub-view (own file,
+ * src/screens/booking/EwalletPaymentScreen.jsx) where the guest picks
+ * GCash / Maya / GoTyme / Maribank and taps Proceed. This is a local
+ * view swap (paymentStep state), not an App.jsx route change — the
+ * guest-details form and the payment step are just two render branches
+ * of this same screen, so no navigation prop wiring was needed.
+ *
+ * EwalletPaymentScreen is presentation-only: once its mock "processing"
+ * delay finishes, it calls back via onConfirmPayment(walletId), which
+ * this screen uses to set `eWallet` and immediately call
+ * submitReservation() — the actual (and only) Firestore write still
+ * happens here, same as the Pay at Hotel path.
+ *
+ * This is a MOCK payment step — no real gateway integration exists for
+ * any of the four wallets. The reservation is still created with
+ * status: 'pending' regardless of payment mode; a paid-online reservation
+ * additionally gets paymentStatus: 'paid' and eWalletProvider set, which
+ * BillingService.createBillingRecordFromReservation() reads at check-in
+ * time to auto-record the payment on the folio.
+ *
+ * "Pay at Hotel" is unaffected — it still calls submitReservation()
+ * directly with paymentStatus: 'unpaid'.
  *
  * This is the ONLY place in the mobile app that creates a Firestore
  * reservation document. Nothing before this point (dates, room selection,
  * guest form fields) is saved — it's all local, in-progress state passed
- * down as props. The document is created here, once, when the guest taps
- * "Confirm Reservation".
+ * down as props. The document is created here, once, when the guest's
+ * confirmation actually goes through.
  *
  * It's written to the same collection/shape AdminDashboardScreen (and
  * AdminBookingsScreen) read from — collection "reservations" — with:
@@ -91,6 +102,12 @@ const TWO_COL_BREAKPOINT = 680;
  *     single roomType string rather than drilling into selectedRooms.
  *   - totals.totalRooms, nights, totalAmount, guestDetails — exactly the
  *     fields AdminDashboardScreen already reads.
+ *   - paymentStatus: 'paid' | 'unpaid' — 'paid' only when paymentMode is
+ *     'online' and the mock e-wallet step completed; 'unpaid' for Pay at
+ *     Hotel. Read by BillingService.createBillingRecordFromReservation()
+ *     at check-in to auto-settle the folio for pre-paid reservations.
+ *   - eWalletProvider: 'gcash' | 'maya' | 'gotyme' | 'maribank' | null —
+ *     only set when paymentMode === 'online'. Mock only.
  *   - createdAt: serverTimestamp() so it sorts correctly and appears
  *     immediately in the admin's live onSnapshot listener.
  *
@@ -115,10 +132,15 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   const [phone, setPhone]                     = useState('');
   const [specialRequests, setSpecialRequests] = useState('');
   const [paymentMode, setPaymentMode]         = useState('hotel');
+  const [eWallet, setEWallet]                 = useState(null);
   const [agreed, setAgreed]                   = useState(false);
   const [errors, setErrors]                   = useState({});
   const [focusedField, setFocusedField]       = useState(null);
   const [confirming, setConfirming]           = useState(false);
+
+  // 'form' shows the guest-details form below; 'ewallet' swaps in
+  // EwalletPaymentScreen. See docstring above.
+  const [paymentStep, setPaymentStep] = useState('form');
 
   // Only set once the reservation has actually been created in Firestore
   // (i.e. after a successful addDoc below). Used only for the reference
@@ -166,6 +188,9 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   const roomTypeSummary = selectedRooms.map((r) => r.roomTypeName || r.name).join(', ');
 
   // ── Validation ───────────────────────────────────────────────────────
+  // Note: eWallet choice is no longer validated here — it's chosen on
+  // EwalletPaymentScreen itself, which won't call back until one is
+  // selected. This only guards the fields that belong to this form.
   const validate = () => {
     const e = {};
     if (!firstName.trim()) e.firstName = 'First name is required.';
@@ -226,20 +251,13 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
     }
   };
 
-  const handleConfirm = async () => {
-    if (!validate()) return;
-
-    if (!user) {
-      Alert.alert('Please log in', 'You need to be logged in to complete your reservation.');
-      return;
-    }
-
+  // Actually writes the reservation to Firestore. Called either directly
+  // (Pay at Hotel) or after EwalletPaymentScreen's onConfirmPayment fires
+  // (Pay Online). Assumes validate() has already passed, and for online
+  // payments that `eWallet` has already been set by handleEwalletConfirm.
+  const submitReservation = async () => {
     setConfirming(true);
-
     try {
-      // Create the reservation now — this is the single moment a booking
-      // becomes official. Field names/shape here must match what
-      // AdminDashboardScreen / AdminBookingsScreen query and read.
       const docRef = await addDoc(collection(db, 'reservations'), {
         uid:        user.uid,
         guestEmail: email.trim(),
@@ -276,9 +294,19 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
         tax,
         totalAmount: total,
         paymentMode,
+        // 'paid' only when the mock e-wallet step actually completed;
+        // read by BillingService.createBillingRecordFromReservation() at
+        // check-in to auto-settle the folio. See its docstring for how.
+        paymentStatus: paymentMode === 'online' && eWallet ? 'paid' : 'unpaid',
+        // Mock only — no real gateway is wired in. Recorded purely for
+        // reference/display and to pick the right paymentMethod on the
+        // auto-generated receipt at check-in.
+        eWalletProvider: paymentMode === 'online' ? eWallet : null,
 
         // 'pending' → awaits admin approval on the Pending Reservations
         // screen (✓ moves it to 'upcoming', ✕ moves it to 'declined').
+        // This stays 'pending' regardless of payment mode — a mock
+        // e-wallet payment never bypasses admin review.
         status: 'pending',
 
         createdAt: serverTimestamp(),
@@ -299,9 +327,42 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
     } catch (err) {
       console.error('Confirm reservation error:', err);
       Alert.alert('Error', 'Could not submit your reservation. Please try again.');
+      // Let the guest retry from the form rather than being stuck on a
+      // payment-step view that already reported success to them.
+      setPaymentStep('form');
     } finally {
       setConfirming(false);
     }
+  };
+
+  // Entry point for the form's action button. Pay at Hotel goes straight
+  // to submitReservation(); Pay Online switches to EwalletPaymentScreen
+  // instead — submitReservation() only runs once that screen calls back.
+  const handleConfirm = () => {
+    if (!validate()) return;
+
+    if (!user) {
+      Alert.alert('Please log in', 'You need to be logged in to complete your reservation.');
+      return;
+    }
+
+    if (paymentMode === 'online') {
+      setPaymentStep('ewallet');
+      return;
+    }
+
+    submitReservation();
+  };
+
+  // Called by EwalletPaymentScreen once the guest picks a wallet and the
+  // mock processing delay finishes.
+  const handleEwalletConfirm = (walletId) => {
+    setEWallet(walletId);
+    submitReservation();
+  };
+
+  const handleEwalletCancel = () => {
+    setPaymentStep('form');
   };
 
   // ── Helpers ──────────────────────────────────────────────────────────
@@ -335,6 +396,20 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
           ))}
         </View>
 
+        {paymentStep === 'ewallet' ? (
+          <EwalletPaymentScreen
+            checkIn={checkIn}
+            checkOut={checkOut}
+            nights={nights}
+            roomTypeSummary={roomTypeSummary}
+            guestName={`${firstName} ${lastName}`.trim()}
+            subtotal={subtotal}
+            tax={tax}
+            total={total}
+            onCancel={handleEwalletCancel}
+            onConfirmPayment={handleEwalletConfirm}
+          />
+        ) : (
         <View style={isTwoCol ? styles.twoCol : styles.oneCol}>
 
           {/* ── LEFT: Guest Details Form ──────────────────────── */}
@@ -447,7 +522,10 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
                   <TouchableOpacity
                     key={mode}
                     style={[styles.payOption, paymentMode === mode && styles.payOptionActive]}
-                    onPress={() => setPaymentMode(mode)}
+                    onPress={() => {
+                      setPaymentMode(mode);
+                      if (mode === 'hotel') setEWallet(null);
+                    }}
                     activeOpacity={0.8}
                   >
                     <Text style={[styles.payOptionText, paymentMode === mode && styles.payOptionTextActive]}>
@@ -489,7 +567,9 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
               >
                 {confirming
                   ? <ActivityIndicator color={colors.onPrimary} />
-                  : <Text style={styles.confirmBtnText}>Confirm Reservation</Text>
+                  : <Text style={styles.confirmBtnText}>
+                      {paymentMode === 'online' ? 'Pay Now' : 'Confirm Reservation'}
+                    </Text>
                 }
               </TouchableOpacity>
             </View>
@@ -561,6 +641,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
           </View>
 
         </View>
+        )}
 
         <View style={styles.footerBleed}>
           <Appfooter />

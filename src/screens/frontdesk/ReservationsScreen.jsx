@@ -23,6 +23,7 @@ import { db } from '../../services/firebase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatCurrency } from '../../utils/roomRates';
 import { createBillingRecord } from '../../utils/BillingService';
+import { updateRoomStatus, ROOM_STATUS } from '../../utils/Roomsservice';
 
 function confirmDialog(title, message, confirmLabel, onConfirmPressed) {
   if (Platform.OS === 'web') {
@@ -44,7 +45,7 @@ function notifyDialog(title, message) {
   Alert.alert(title, message);
 }
 
-export default function AdminBookingsScreen({ onLogout, filterKey = 'reservations:all' }) {
+export default function ReservationsScreen({ onLogout, filterKey = 'reservations:all' }) {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actingId, setActingId] = useState(null);
@@ -109,10 +110,11 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
     setTimeout(() => setToast(null), 2800);
   };
 
-  // Derives the room number list for the folio. Prefers item.selectedRooms
-  // (written by the multi-room booking flow in ReviewPayScreen) and falls
-  // back to roomType if selectedRooms isn't present or has an unexpected
-  // shape — better to show something on the folio than crash check-in.
+  // Derives the room number list for the folio / room-status sync.
+  // Prefers item.selectedRooms (written by the multi-room booking flow
+  // in ReviewPayScreen) and falls back to roomType if selectedRooms
+  // isn't present or has an unexpected shape — better to show something
+  // on the folio than crash check-in.
   const getRoomNumbersForFolio = (item) => {
     if (Array.isArray(item.selectedRooms) && item.selectedRooms.length > 0) {
       return item.selectedRooms.map(
@@ -138,6 +140,25 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
     });
   };
 
+  // Flips every physical room tied to this reservation to OCCUPIED the
+  // moment a guest is checked in. Skips 'Unassigned' — that placeholder
+  // means the booking never had a real room number attached, so there's
+  // no rooms/{roomNumber} doc to update.
+  const markRoomsOccupied = async (item) => {
+    const roomNumbers = getRoomNumbersForFolio(item).filter((rn) => rn !== 'Unassigned');
+    await Promise.all(roomNumbers.map((rn) => updateRoomStatus(rn, ROOM_STATUS.OCCUPIED)));
+  };
+
+  // Flips every physical room tied to this reservation to INSPECT the
+  // moment a guest is checked out — kicks off the housekeeping cycle in
+  // Room Cleaning Status, and immediately removes the room from the
+  // available pool in Reservation Management / Room Management until it
+  // comes all the way back through to Vacant.
+  const markRoomsNeedInspection = async (item) => {
+    const roomNumbers = getRoomNumbersForFolio(item).filter((rn) => rn !== 'Unassigned');
+    await Promise.all(roomNumbers.map((rn) => updateRoomStatus(rn, ROOM_STATUS.INSPECT)));
+  };
+
   const runStatusUpdate = async ({ item, newStatus, extraFields = {}, notifTitle, notifMessage, toastMessage, sideEffect }) => {
     setActingId(item.id);
     try {
@@ -147,18 +168,19 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
       });
 
       // Runs after the status update succeeds but is isolated in its own
-      // try/catch: a folio-creation failure shouldn't undo a check-in that
-      // already went through, and shouldn't block the guest notification
-      // either — it just surfaces a separate warning so staff know to
-      // create the folio manually if this ever fails.
+      // try/catch: a folio-creation or room-status failure shouldn't
+      // undo a check-in/check-out that already went through, and
+      // shouldn't block the guest notification either — it just
+      // surfaces a separate warning so staff know to fix it manually if
+      // this ever fails.
       if (sideEffect) {
         try {
           await sideEffect();
         } catch (sideEffectError) {
           console.error('Post-status-update step failed:', sideEffectError);
           notifyDialog(
-            'Check-in succeeded, but one step failed',
-            'The guest was checked in, but the billing folio could not be created automatically. Please create it manually from Billing Records.'
+            'Status updated, but one step failed',
+            'The reservation status changed, but a follow-up step (billing folio or room status) could not be completed automatically. Please check Billing Records and Room Management.'
           );
         }
       }
@@ -238,7 +260,11 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
           notifTitle: "You're Checked In! 🏨",
           notifMessage: `Welcome! You're checked in to your ${item.roomType} room. Enjoy your stay.`,
           toastMessage: `${getGuestName(item)} checked in`,
-          sideEffect: () => createFolioForCheckIn(item),
+          // Creates the billing folio AND flips the room(s) to Occupied.
+          // Both run together so a check-in always leaves billing and
+          // room status in sync; if either fails it's caught above and
+          // surfaced as a single "one step failed" warning.
+          sideEffect: () => Promise.all([createFolioForCheckIn(item), markRoomsOccupied(item)]),
         })
     );
   };
@@ -256,6 +282,9 @@ export default function AdminBookingsScreen({ onLogout, filterKey = 'reservation
           notifTitle: 'Thanks for Staying With Us! 👋',
           notifMessage: `You've been checked out of your ${item.roomType} room. We hope you enjoyed your stay!`,
           toastMessage: `${getGuestName(item)} checked out`,
+          // Kicks the room(s) into Inspect — the start of the
+          // housekeeping cycle in Room Cleaning Status.
+          sideEffect: () => markRoomsNeedInspection(item),
         })
     );
   };

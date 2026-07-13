@@ -6,15 +6,22 @@ import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatCurrency } from '../../utils/roomRates';
 
 /**
- * AdminDashboardScreen — overview of hotel operations: KPI cards, revenue
+ * FrontDeskDashboardScreen — overview of hotel operations: KPI cards, revenue
  * summary, and recent activity, computed live from the Firestore
- * "reservations" collection (same data AdminBookingsScreen reads).
+ * "reservations" collection (same data ReservationsScreen reads).
  *
- * Revenue is summed only from CONFIRMED ('upcoming') reservations using
- * totalAmount (subtotal + tax), since 'pending' reservations don't have
- * totalAmount yet (it's null until ReviewPayScreen confirms).
+ * Reservation lifecycle: pending -> upcoming -> checked-in -> checked-out
+ * (declined is a terminal dead-end from pending). A reservation counts
+ * toward revenue as soon as it's been confirmed by front desk (i.e. any
+ * status other than 'pending' or 'declined') — NOT only while it's
+ * sitting in 'upcoming'. Checking a guest in moves status forward to
+ * 'checked-in', so filtering revenue on status === 'upcoming' alone was
+ * dropping every currently-checked-in (and already checked-out) guest
+ * from the total the moment they actually arrived.
  */
-export default function AdminDashboardScreen() {
+const CONFIRMED_STATUSES = ['upcoming', 'checked-in', 'checked-out'];
+
+export default function FrontDeskDashboardScreen() {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -34,25 +41,36 @@ export default function AdminDashboardScreen() {
     return unsubscribe;
   }, []);
 
-  const confirmedBookings = bookings.filter((b) => b.status === 'upcoming');
+  const isSameDayAsToday = (value) => {
+    if (!value) return false;
+    try {
+      const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
+      if (isNaN(date.getTime())) return false;
+      return date.toDateString() === new Date().toDateString();
+    } catch {
+      return false;
+    }
+  };
+
+  const confirmedBookings = bookings.filter((b) => CONFIRMED_STATUSES.includes(b.status));
 
   const totalReservations = bookings.length;
   const totalRevenue = confirmedBookings.reduce((sum, b) => sum + (b.totalAmount || 0), 0);
 
-  const todayStr = new Date().toDateString();
-  const todaysCheckIns = confirmedBookings.filter((b) => {
-    try {
-      return new Date(b.checkIn).toDateString() === todayStr;
-    } catch {
-      return false;
-    }
+  // Today's Check-ins: guests actually checked in today — prefer the
+  // checkedInAt timestamp (written the moment staff tap "Check In Guest"
+  // in ReservationsScreen). Fall back to the planned checkIn date for
+  // older records that predate that field.
+  const todaysCheckIns = bookings.filter((b) => {
+    if (b.status !== 'checked-in' && b.status !== 'checked-out') return false;
+    return isSameDayAsToday(b.checkedInAt) || (!b.checkedInAt && isSameDayAsToday(b.checkIn));
   }).length;
-  const todaysCheckOuts = confirmedBookings.filter((b) => {
-    try {
-      return new Date(b.checkOut).toDateString() === todayStr;
-    } catch {
-      return false;
-    }
+
+  // Today's Check-outs: guests actually checked out today — prefer
+  // checkedOutAt, fall back to the planned checkOut date.
+  const todaysCheckOuts = bookings.filter((b) => {
+    if (b.status !== 'checked-out') return false;
+    return isSameDayAsToday(b.checkedOutAt) || (!b.checkedOutAt && isSameDayAsToday(b.checkOut));
   }).length;
 
   const recentActivity = bookings.slice(0, 5);

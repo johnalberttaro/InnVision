@@ -262,6 +262,33 @@ export async function getReceiptsForFolio(folioId) {
   });
 }
 
+/**
+ * Every receipt across all folios, newest first — powers the top-level
+ * "Receipts" sidebar screen (Receiptsscreen.jsx). Mirrors
+ * getAllBillingRecords: single-field orderBy, no composite index needed.
+ */
+export async function getAllReceipts() {
+  const snap = await getDocs(
+    query(collection(db, PAYMENTS), orderBy('paymentDate', 'desc'))
+  );
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * Client-side search across receiptNumber / guestName for the Receipts
+ * screen's search bar — same in-memory approach as searchBillingRecords,
+ * fine at prototype scale.
+ */
+export async function searchReceipts(searchTerm) {
+  const all = await getAllReceipts();
+  const lower = searchTerm.toLowerCase();
+  return all.filter(
+    (r) =>
+      r.receiptNumber?.toLowerCase().includes(lower) ||
+      r.guestName?.toLowerCase().includes(lower)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Outstanding Balances
 // ---------------------------------------------------------------------------
