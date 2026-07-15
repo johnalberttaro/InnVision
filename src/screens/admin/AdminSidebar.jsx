@@ -38,6 +38,14 @@ const MENU_SECTIONS = [
     ],
   },
   {
+    key: 'staff',
+    icon: '👥',
+    label: 'Staff',
+    subItems: [
+      { key: 'staff:accounts', label: 'Front Desk Accounts' },
+    ],
+  },
+  {
     key: 'reports',
     icon: '📈',
     label: 'Reports & Analytics',

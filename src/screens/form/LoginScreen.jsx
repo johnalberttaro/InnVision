@@ -8,6 +8,7 @@ import { signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../services/firebase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { resolveUserRole } from '../../utils/roleHelpers';
 
 export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, onBack }) {
   const [email, setEmail]               = useState('');
@@ -37,8 +38,8 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
       let role = 'guest';
       try {
         const guestDoc = await getDoc(doc(db, 'guests', user.uid));
-        if (guestDoc.exists() && guestDoc.data().role === 'admin') {
-          role = 'admin';
+        if (guestDoc.exists()) {
+          role = resolveUserRole(guestDoc.data());
         }
       } catch (roleLookupError) {
         // If the role lookup itself fails (e.g. offline), fail safe to

@@ -1,11 +1,14 @@
 import {
+  addDoc,
   collection,
   doc,
-  setDoc,
+  getDocs,
   query,
   orderBy,
   onSnapshot,
   serverTimestamp,
+  setDoc,
+  where,
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 
@@ -179,6 +182,45 @@ export async function updateRoomStatus(roomNumber, status, extra = {}) {
   await setDoc(
     doc(db, 'rooms', roomNumber),
     { status, ...extra, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
+}
+
+export async function createRoomType(data) {
+  const docRef = await addDoc(collection(db, 'roomTypes'), {
+    ...data,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return docRef.id;
+}
+
+export async function updateRoomType(roomTypeId, data) {
+  await setDoc(
+    doc(db, 'roomTypes', roomTypeId),
+    {
+      ...data,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+export async function deleteRoomType(roomTypeId) {
+  const roomsQuery = query(
+    collection(db, 'rooms'),
+    where('roomTypeId', '==', roomTypeId)
+  );
+  const roomsSnapshot = await getDocs(roomsQuery);
+  if (!roomsSnapshot.empty) {
+    const error = new Error('This room type cannot be deleted while rooms are assigned to it.');
+    error.code = 'room-type/has-assigned-rooms';
+    throw error;
+  }
+
+  await setDoc(
+    doc(db, 'roomTypes', roomTypeId),
+    { deletedAt: serverTimestamp() },
     { merge: true }
   );
 }

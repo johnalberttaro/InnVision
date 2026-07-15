@@ -67,6 +67,17 @@ function computeBillingStatus(totalAmountDue, amountPaid) {
 /**
  * Creates a guest folio. Called automatically by the check-in flow —
  * wire this into wherever a reservation transitions to "checked-in".
+ *
+ * If the reservation was paid online (paymentMode: 'online'), the folio
+ * is auto-settled immediately after creation via recordPayment(), using
+ * the reservation's eWalletProvider (e.g. 'gcash', 'maribank', 'gotyme')
+ * as the payment method — so front desk sees it as Paid with a receipt
+ * showing the e-wallet used, instead of Unpaid waiting to be collected.
+ *
+ * paymentMode/eWalletProvider can be passed in directly if the caller
+ * already has them; otherwise they're looked up from the reservation doc
+ * (reservationRef is expected to be the reservation's Firestore doc ID,
+ * matching the 'reservations' collection used elsewhere in the app).
  */
 export async function createBillingRecord({
   reservationRef,
@@ -78,6 +89,8 @@ export async function createBillingRecord({
   roomCharges,
   additionalCharges = 0,
   taxServiceCharges = 0,
+  paymentMode,
+  eWalletProvider,
 }) {
   const folioNumber = await getNextSequence('folioSeq', 'FOL');
   const totalAmountDue = roomCharges + additionalCharges + taxServiceCharges;
@@ -101,7 +114,41 @@ export async function createBillingRecord({
     updatedAt: serverTimestamp(),
   });
 
-  return { id: docRef.id, folioNumber };
+  const folioId = docRef.id;
+
+  // Fall back to reading the reservation doc if the caller didn't pass
+  // payment info explicitly.
+  if (paymentMode === undefined && reservationRef) {
+    try {
+      const resSnap = await getDoc(doc(db, 'reservations', reservationRef));
+      if (resSnap.exists()) {
+        const resData = resSnap.data();
+        paymentMode = resData.paymentMode;
+        eWalletProvider = resData.eWalletProvider;
+      }
+    } catch (err) {
+      console.error('Could not look up reservation payment info for auto-settlement:', err);
+    }
+  }
+
+  if (paymentMode === 'online' && totalAmountDue > 0) {
+    try {
+      await recordPayment({
+        folioId,
+        amount: totalAmountDue,
+        paymentMethod: eWalletProvider || 'online',
+        processedByUid: 'system',
+        processedByName: 'Online Payment (Auto)',
+      });
+    } catch (err) {
+      // Don't let an auto-settlement failure block folio creation — the
+      // folio still exists as Unpaid and front desk can record payment
+      // manually if this fails.
+      console.error(`Auto-settlement failed for folio ${folioId}:`, err);
+    }
+  }
+
+  return { id: folioId, folioNumber };
 }
 
 export async function getBillingRecord(folioId) {

@@ -3,6 +3,9 @@ import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'r
 import AdminSidebar from './AdminSidebar';
 import AdminDashboardScreen from './AdmindashboardScreen';
 import RoomTypesRatesScreen from './RoomTypeRatesScreen';
+import FrontDeskAccountsScreen from './FrontDeskAccountScreen';
+import OccupancyReportScreen from './OccupancyReportScreen';
+import RevenueReportScreen from './RevenueReportScreen';
 import { colors, spacing, fonts } from '../../utils/theme';
 
 const WIDE_BREAKPOINT = 1024;
@@ -70,7 +73,15 @@ function renderActiveScreen(activeKey) {
   if (activeKey === 'rooms:types') {
     return <RoomTypesRatesScreen />;
   }
-  // Reports & Analytics (SRS Transaction 6.2) — not built yet.
+  if (activeKey === 'staff:accounts') {
+    return <FrontDeskAccountsScreen />;
+  }
+  if (activeKey === 'reports:occupancy') {
+    return <OccupancyReportScreen />;
+  }
+  if (activeKey === 'reports:revenue') {
+    return <RevenueReportScreen />;
+  }
   return <PlaceholderScreen activeKey={activeKey} />;
 }
 

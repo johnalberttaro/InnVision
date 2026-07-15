@@ -1,32 +1,66 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
 import { collection, query, orderBy, onSnapshot, limit } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatCurrency } from '../../utils/roomRates';
+import { subscribeToRooms, ROOM_STATUS } from '../../utils/Roomsservice';
+
+import KpiCard from '../../components/dashboard/KpiCard';
+import OccupancyGauge from '../../components/dashboard/OccupancyGauge';
+import ReservationsTrendChart from '../../components/dashboard/ReservationsTrendChart';
+import GuestDossierModal from '../../components/dashboard/GuestDossierModal';
 
 /**
- * FrontDeskDashboardScreen — overview of hotel operations: KPI cards, revenue
- * summary, and recent activity, computed live from the Firestore
- * "reservations" collection (same data ReservationsScreen reads).
+ * FrontDeskDashboardScreen — overview of hotel operations: KPI cards
+ * (with trend vs. last week + sparklines), a real occupancy gauge driven
+ * by the "rooms" collection, a reservations trend chart, and recent
+ * activity with a day-by-day look-back (1-5 days back), each entry
+ * offering a guest dossier quick-view.
  *
  * Reservation lifecycle: pending -> upcoming -> checked-in -> checked-out
  * (declined is a terminal dead-end from pending). A reservation counts
  * toward revenue as soon as it's been confirmed by front desk (i.e. any
- * status other than 'pending' or 'declined') — NOT only while it's
- * sitting in 'upcoming'. Checking a guest in moves status forward to
- * 'checked-in', so filtering revenue on status === 'upcoming' alone was
- * dropping every currently-checked-in (and already checked-out) guest
- * from the total the moment they actually arrived.
+ * status other than 'pending' or 'declined').
+ *
+ * Props:
+ *  - onNavigate?: (key) => void       used for KPI-card drill-down; if
+ *    omitted, cards render as non-clickable (safe default for anyone
+ *    rendering this screen standalone without FrontDeskShell's router).
  */
 const CONFIRMED_STATUSES = ['upcoming', 'checked-in', 'checked-out'];
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-export default function FrontDeskDashboardScreen() {
+function toDate(value) {
+  if (!value) return null;
+  try {
+    const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
+    return isNaN(date.getTime()) ? null : date;
+  } catch {
+    return null;
+  }
+}
+
+function isSameCalendarDay(a, b) {
+  return a && b && a.toDateString() === b.toDateString();
+}
+
+function daysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d;
+}
+
+export default function FrontDeskDashboardScreen({ onNavigate }) {
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [rooms, setRooms] = useState([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [lookBackDays, setLookBackDays] = useState(1);
+  const [dossierReservation, setDossierReservation] = useState(null);
 
   useEffect(() => {
-    const bookingsQuery = query(collection(db, 'reservations'), orderBy('createdAt', 'desc'), limit(200));
+    const bookingsQuery = query(collection(db, 'reservations'), orderBy('createdAt', 'desc'), limit(500));
     const unsubscribe = onSnapshot(
       bookingsQuery,
       (snapshot) => {
@@ -41,15 +75,20 @@ export default function FrontDeskDashboardScreen() {
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = subscribeToRooms(
+      (data) => {
+        setRooms(data);
+        setRoomsLoading(false);
+      },
+      () => setRoomsLoading(false)
+    );
+    return unsubscribe;
+  }, []);
+
   const isSameDayAsToday = (value) => {
-    if (!value) return false;
-    try {
-      const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
-      if (isNaN(date.getTime())) return false;
-      return date.toDateString() === new Date().toDateString();
-    } catch {
-      return false;
-    }
+    const date = toDate(value);
+    return date ? isSameCalendarDay(date, new Date()) : false;
   };
 
   const confirmedBookings = bookings.filter((b) => CONFIRMED_STATUSES.includes(b.status));
@@ -57,28 +96,108 @@ export default function FrontDeskDashboardScreen() {
   const totalReservations = bookings.length;
   const totalRevenue = confirmedBookings.reduce((sum, b) => sum + (b.totalAmount || 0), 0);
 
-  // Today's Check-ins: guests actually checked in today — prefer the
-  // checkedInAt timestamp (written the moment staff tap "Check In Guest"
-  // in ReservationsScreen). Fall back to the planned checkIn date for
-  // older records that predate that field.
   const todaysCheckIns = bookings.filter((b) => {
     if (b.status !== 'checked-in' && b.status !== 'checked-out') return false;
     return isSameDayAsToday(b.checkedInAt) || (!b.checkedInAt && isSameDayAsToday(b.checkIn));
   }).length;
 
-  // Today's Check-outs: guests actually checked out today — prefer
-  // checkedOutAt, fall back to the planned checkOut date.
   const todaysCheckOuts = bookings.filter((b) => {
     if (b.status !== 'checked-out') return false;
     return isSameDayAsToday(b.checkedOutAt) || (!b.checkedOutAt && isSameDayAsToday(b.checkOut));
   }).length;
 
-  const recentActivity = bookings.slice(0, 5);
+  // ── Occupancy: occupied / total rooms, from the live "rooms" collection.
+  // "Occupied" here means ROOM_STATUS.OCCUPIED specifically (a guest is
+  // physically in the room right now) — reserved-but-not-arrived rooms are
+  // intentionally excluded, since that's a different signal than occupancy.
+  const totalRooms = rooms.length;
+  const occupiedRooms = rooms.filter((r) => r.status === ROOM_STATUS.OCCUPIED).length;
+  const occupancyPercent = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
+
+  // ── "vs last week" trend helpers — compares this week's count/sum
+  // against the prior 7-day window using createdAt.
+  function weekWindowCount(getterPredicate, offsetWeeks) {
+    const end = daysAgo(offsetWeeks * 7);
+    const start = daysAgo(offsetWeeks * 7 + 7);
+    return bookings.filter((b) => {
+      const created = toDate(b.createdAt);
+      if (!created) return false;
+      if (created < start || created >= end) return false;
+      return getterPredicate ? getterPredicate(b) : true;
+    });
+  }
+
+  function trendFor(getterPredicate, valueFn) {
+    const thisWeek = weekWindowCount(getterPredicate, 0);
+    const lastWeek = weekWindowCount(getterPredicate, 1);
+    const thisVal = valueFn ? thisWeek.reduce((s, b) => s + valueFn(b), 0) : thisWeek.length;
+    const lastVal = valueFn ? lastWeek.reduce((s, b) => s + valueFn(b), 0) : lastWeek.length;
+    if (lastVal === 0 && thisVal === 0) return { direction: 'flat', deltaLabel: 'No change' };
+    if (lastVal === 0) return { direction: 'up', deltaLabel: 'New this week' };
+    const pctChange = ((thisVal - lastVal) / lastVal) * 100;
+    if (Math.abs(pctChange) < 1) return { direction: 'flat', deltaLabel: 'Flat vs last wk' };
+    const direction = pctChange > 0 ? 'up' : 'down';
+    return { direction, deltaLabel: `${pctChange > 0 ? '+' : ''}${Math.round(pctChange)}% vs last wk` };
+  }
+
+  // ── Sparkline data: last 7 days, oldest -> newest.
+  function last7DaysSeries(getterPredicate, valueFn) {
+    const series = [];
+    for (let i = 6; i >= 0; i--) {
+      const dayStart = daysAgo(i);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+      const dayRows = bookings.filter((b) => {
+        const created = toDate(b.createdAt);
+        if (!created || created < dayStart || created >= dayEnd) return false;
+        return getterPredicate ? getterPredicate(b) : true;
+      });
+      series.push(valueFn ? dayRows.reduce((s, b) => s + valueFn(b), 0) : dayRows.length);
+    }
+    return series;
+  }
+
+  const reservationsTrend = trendFor(null, null);
+  const reservationsSparkline = last7DaysSeries(null, null);
+  const revenueTrend = trendFor((b) => CONFIRMED_STATUSES.includes(b.status), (b) => b.totalAmount || 0);
+  const revenueSparkline = last7DaysSeries((b) => CONFIRMED_STATUSES.includes(b.status), (b) => b.totalAmount || 0);
+
+  // ── Reservations trend chart data: upcoming vs pending, per day, last 7 days.
+  const trendChartDays = useMemo(() => {
+    const out = [];
+    for (let i = 6; i >= 0; i--) {
+      const dayStart = daysAgo(i);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart.getTime() + DAY_MS);
+      const dayRows = bookings.filter((b) => {
+        const created = toDate(b.createdAt);
+        return created && created >= dayStart && created < dayEnd;
+      });
+      out.push({
+        label: dayStart.toLocaleDateString(undefined, { weekday: 'short' }),
+        upcoming: dayRows.filter((b) => b.status === 'upcoming' || b.status === 'checked-in' || b.status === 'checked-out').length,
+        pending: dayRows.filter((b) => b.status === 'pending').length,
+      });
+    }
+    return out;
+  }, [bookings]);
+
+  // ── Recent activity: filtered to the selected look-back day (1-5 days ago).
+  const activityForSelectedDay = useMemo(() => {
+    const targetDate = daysAgo(lookBackDays - 1);
+    return bookings
+      .filter((b) => isSameCalendarDay(toDate(b.createdAt), targetDate))
+      .slice(0, 20);
+  }, [bookings, lookBackDays]);
 
   const getGuestName = (item) => {
     if (!item.guestDetails) return item.guestName || 'A guest';
     const { firstName, lastName } = item.guestDetails;
     return `${firstName || ''} ${lastName || ''}`.trim() || 'A guest';
+  };
+
+  const goTo = (key) => {
+    if (onNavigate) onNavigate(key);
   };
 
   if (loading) {
@@ -95,56 +214,129 @@ export default function FrontDeskDashboardScreen() {
       <Text style={styles.pageSubtitle}>Overview of hotel operations</Text>
 
       <View style={styles.kpiGrid}>
-        <KpiCard icon="📅" label="Total Reservations" value={String(totalReservations)} accent={colors.primary} />
-        <KpiCard icon="💰" label="Total Revenue" value={formatCurrency(totalRevenue)} accent={colors.accent} note="Confirmed bookings only" />
-        <KpiCard icon="🛎️" label="Today's Check-ins" value={String(todaysCheckIns)} accent={colors.primary} />
-        <KpiCard icon="🚪" label="Today's Check-outs" value={String(todaysCheckOuts)} accent={colors.accent} />
-        <KpiCard icon="🏨" label="Occupancy Rate" value="—" accent={colors.textMuted} note="Needs room inventory data" />
+        <KpiCard
+          icon="calendar-outline"
+          label="Total Reservations"
+          value={String(totalReservations)}
+          accent={colors.primary}
+          trend={reservationsTrend}
+          sparklineData={reservationsSparkline}
+          tooltip="All reservations ever created, regardless of status."
+          onPress={() => goTo('reservations:all')}
+        />
+        <KpiCard
+          icon="cash-outline"
+          label="Total Revenue"
+          value={formatCurrency(totalRevenue)}
+          accent={colors.accent}
+          trend={revenueTrend}
+          sparklineData={revenueSparkline}
+          note="Confirmed bookings only"
+          tooltip="Sum of confirmed, checked-in, and checked-out bookings. Pending and declined are excluded."
+          onPress={() => goTo('billing:records')}
+        />
+        <KpiCard
+          icon="log-in-outline"
+          label="Today's Check-ins"
+          value={String(todaysCheckIns)}
+          accent="#1E7B34"
+          tooltip="Guests checked in today."
+          onPress={() => goTo('reservations:checkins')}
+        />
+        <KpiCard
+          icon="log-out-outline"
+          label="Today's Check-outs"
+          value={String(todaysCheckOuts)}
+          accent="#B3261E"
+          tooltip="Guests checked out today."
+          onPress={() => goTo('reservations:checkouts')}
+        />
+        <KpiCard
+          icon="bed-outline"
+          label="Occupancy Rate"
+          accent={colors.primary}
+          tooltip={roomsLoading ? 'Loading room data…' : 'Rooms currently occupied by a guest, out of total rooms on the property. Reserved-but-not-arrived rooms are not counted as occupied.'}
+          onPress={() => goTo('rooms:availability')}
+          customVisual={
+            roomsLoading ? (
+              <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.md }} />
+            ) : (
+              <OccupancyGauge percent={occupancyPercent} occupied={occupiedRooms} total={totalRooms} color={colors.primary} />
+            )
+          }
+        />
+      </View>
+
+      <Text style={styles.sectionTitle}>Reservations Trend</Text>
+      <View style={styles.chartCard}>
+        <ReservationsTrendChart days={trendChartDays} />
       </View>
 
       <Text style={styles.sectionTitle}>Recent Activity</Text>
       <View style={styles.activityCard}>
-        {recentActivity.length === 0 ? (
-          <Text style={styles.emptyText}>No reservations yet.</Text>
+        {activityForSelectedDay.length === 0 ? (
+          <Text style={styles.emptyText}>
+            No reservations were created {lookBackDays === 1 ? 'today' : `${lookBackDays} days ago`}.
+          </Text>
         ) : (
-          recentActivity.map((booking, index) => (
+          activityForSelectedDay.map((booking, index) => (
             <View
               key={booking.id}
-              style={[styles.activityRow, index < recentActivity.length - 1 && styles.activityRowBorder]}
+              style={[styles.activityRow, index < activityForSelectedDay.length - 1 && styles.activityRowBorder]}
             >
               <View style={styles.activityIconBadge}>
                 <Text style={styles.activityIcon}>🛏️</Text>
               </View>
-              <View style={styles.activityTextWrap}>
+              <Pressable style={styles.activityTextWrap} onPress={() => setDossierReservation(booking)}>
                 <Text style={styles.activityTitle}>
                   {getGuestName(booking)} booked {booking.roomType || '(room pending)'}
                 </Text>
                 <Text style={styles.activitySubtitle}>
                   {booking.totals?.totalRooms ?? 0} Room{booking.totals?.totalRooms !== 1 ? 's' : ''} ·{' '}
-                  {booking.nights} night{booking.nights !== 1 ? 's' : ''}
+                  {booking.nights} night{booking.nights !== 1 ? 's' : ''} · Tap to view guest
                 </Text>
-              </View>
+              </Pressable>
               <Text style={styles.activityAmount}>
                 {booking.totalAmount != null ? formatCurrency(booking.totalAmount) : '—'}
               </Text>
             </View>
           ))
         )}
-      </View>
-    </ScrollView>
-  );
-}
 
-function KpiCard({ icon, label, value, accent, note }) {
-  return (
-    <View style={styles.kpiCard}>
-      <View style={[styles.kpiIconBadge, { backgroundColor: `${accent}1A` }]}>
-        <Text style={styles.kpiIcon}>{icon}</Text>
+        {/* Look-back day selector, deliberately placed at the BOTTOM of the
+            Recent Activity card (not above the list) per product direction. */}
+        <View style={styles.lookBackRow}>
+          <Text style={styles.lookBackLabel}>Look back:</Text>
+          {[1, 2, 3, 4, 5].map((n) => (
+            <Pressable
+              key={n}
+              onPress={() => setLookBackDays(n)}
+              style={[styles.lookBackPill, lookBackDays === n && styles.lookBackPillActive]}
+            >
+              <Text style={[styles.lookBackPillText, lookBackDays === n && styles.lookBackPillTextActive]}>{n}</Text>
+            </Pressable>
+          ))}
+          <Text style={styles.lookBackSuffix}>day{lookBackDays !== 1 ? 's' : ''} ago</Text>
+        </View>
       </View>
-      <Text style={styles.kpiLabel}>{label}</Text>
-      <Text style={[styles.kpiValue, { color: accent }]}>{value}</Text>
-      {note ? <Text style={styles.kpiNote}>{note}</Text> : null}
-    </View>
+
+      <GuestDossierModal
+        visible={!!dossierReservation}
+        reservation={dossierReservation}
+        onClose={() => setDossierReservation(null)}
+        onViewFullProfile={onNavigate ? (guest) => {
+          setDossierReservation(null);
+          // FrontDeskShell owns the actual guest-profile-open logic
+          // (setSelectedGuestId etc.) — this screen only asks it to
+          // navigate there via the shared onNavigate contract, passing
+          // guest.id in the key isn't part of that contract today, so we
+          // route to the Guest Records list as the safe default. Wire a
+          // dedicated onOpenGuestProfile prop from FrontDeskShell if you
+          // want this to jump straight to the guest's own detail screen.
+          onNavigate('guests:records');
+        } : undefined}
+      />
+    </ScrollView>
   );
 }
 
@@ -155,14 +347,18 @@ const styles = StyleSheet.create({
   pageTitle: { fontSize: 22, fontFamily: fonts.headingExtraBold, color: colors.primary },
   pageSubtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2, marginBottom: spacing.xl },
   kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginBottom: spacing.xxl },
-  kpiCard: { width: 200, backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg },
-  kpiIconBadge: { width: 40, height: 40, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.sm },
-  kpiIcon: { fontSize: 18 },
-  kpiLabel: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 },
-  kpiValue: { fontSize: 22, fontFamily: fonts.headingExtraBold },
-  kpiNote: { fontSize: 10, fontFamily: fonts.body, color: colors.textMuted, marginTop: 4 },
+
   sectionTitle: { fontSize: 16, fontFamily: fonts.headingBold, color: colors.text, marginBottom: spacing.md },
-  activityCard: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border },
+  chartCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    marginBottom: spacing.xxl,
+  },
+
+  activityCard: { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border },
   emptyText: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, padding: spacing.lg },
   activityRow: { flexDirection: 'row', alignItems: 'center', padding: spacing.lg },
   activityRowBorder: { borderBottomWidth: 1, borderBottomColor: colors.border },
@@ -172,4 +368,22 @@ const styles = StyleSheet.create({
   activityTitle: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
   activitySubtitle: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
   activityAmount: { fontSize: 13, fontFamily: fonts.headingBold, color: colors.accent },
+
+  lookBackRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    padding: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  lookBackLabel: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginRight: spacing.xs },
+  lookBackPill: {
+    width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.cardAlt, borderWidth: 1, borderColor: colors.border,
+  },
+  lookBackPillActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  lookBackPillText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text },
+  lookBackPillTextActive: { color: colors.white },
+  lookBackSuffix: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginLeft: spacing.xs },
 });

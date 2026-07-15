@@ -15,7 +15,7 @@ const WIDE_BREAKPOINT = 1024; // sidebar is fixed/always-visible above this
 const SIDEBAR_WIDTH = 264;
 
 // ─── Logo image ───────────────────────────────────────────────────────────
-const LOGO_SOURCE = null; // ← swap to require('../../../assets/logo.png')
+const LOGO_SOURCE = require('../../../assets/logo.png');
 // ─────────────────────────────────────────────────────────────────────────
 
 // Sidebar menu structure. Each top-level item can have `subItems`; tapping

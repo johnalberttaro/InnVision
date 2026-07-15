@@ -35,10 +35,20 @@ function formatDate(value) {
 
 const PAYMENT_METHOD_LABELS = {
   cash: 'Cash',
-  gcash: 'GCash',
   card: 'Card',
+  hotel: 'Pay at Hotel',
   pay_at_hotel: 'Pay at Hotel',
+  online: 'E-wallet',
+  gcash: 'GCash',
+  maya: 'Maya',
+  maribank: 'Maribank',
+  gotyme: 'GoTyme',
 };
+
+function paymentMethodLabel(method) {
+  if (!method) return '—';
+  return PAYMENT_METHOD_LABELS[method.toLowerCase()] || method;
+}
 
 export default function ReceiptsScreen() {
   const [receipts, setReceipts] = useState([]);
@@ -80,7 +90,7 @@ export default function ReceiptsScreen() {
         <Text style={styles.receiptNumber}>{item.receiptNumber}</Text>
         <Text style={styles.guestName}>{item.guestName}</Text>
         <Text style={styles.subInfo}>
-          {formatDate(item.paymentDate)} • {PAYMENT_METHOD_LABELS[item.paymentMethod] || item.paymentMethod}
+          {formatDate(item.paymentDate)} • {paymentMethodLabel(item.paymentMethod)}
         </Text>
       </View>
       <View style={styles.rowSide}>

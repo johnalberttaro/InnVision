@@ -279,31 +279,47 @@ function AvailabilitySection({ rooms }) {
   );
 }
 
+// The 4 statuses an admin sets directly from this screen. The 4
+// housekeeping sub-states (Inspect / Needs Cleaning Again / Start
+// Cleaning / In Progress) are intentionally excluded here — they're
+// already fully manageable from Housekeeping → Room Cleaning Status, and
+// exposing them as chips here too would let staff jump a room straight
+// into "In Progress" without going through the actual cleaning cycle.
+const ADMIN_STATUS_KEYS = [
+  ROOM_STATUS.OCCUPIED,
+  ROOM_STATUS.VACANT,
+  ROOM_STATUS.RESERVED,
+  ROOM_STATUS.MAINTENANCE,
+];
+
 function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
   const grouped = useMemo(() => {
     const byStatus = {};
-    Object.keys(STATUS_META).forEach((key) => { byStatus[key] = []; });
-    // Rooms whose status doesn't match any known STATUS_META key (missing
-    // field, stale data, a typo entered directly in Firestore) go here
-    // instead of silently vanishing from this screen — previously a room
-    // like this wouldn't appear under ANY group below, since only
-    // Object.keys(STATUS_META) gets rendered, leaving no way to fix it
-    // from here at all.
+    ADMIN_STATUS_KEYS.forEach((key) => { byStatus[key] = []; });
+    // Rooms currently moving through the housekeeping cycle — shown
+    // read-only below instead of dropped from this screen entirely, so
+    // it's still obvious where every room is even though this page
+    // isn't where you act on them.
+    const inCleaningCycle = [];
+    // Rooms whose status doesn't match any known STATUS_META key at all
+    // (missing field, stale data, a typo entered directly in Firestore).
     const unrecognized = [];
     rooms.forEach((room) => {
       if (byStatus[room.status]) {
         byStatus[room.status].push(room);
+      } else if (STATUS_META[room.status]) {
+        inCleaningCycle.push(room);
       } else {
         unrecognized.push(room);
       }
     });
-    return { byStatus, unrecognized };
+    return { byStatus, inCleaningCycle, unrecognized };
   }, [rooms]);
 
   return (
     <View>
-      <SectionIntro description="Current status of every room. Tap a status chip on any room to update it — the change is saved to Firestore immediately and reflected everywhere else in the system." />
-      {Object.keys(STATUS_META).map((statusKey) => {
+      <SectionIntro description="Current status of every room. Tap a status chip on any room to update it — the change is saved to Firestore immediately and reflected everywhere else in the system. Rooms mid-cleaning-cycle are managed from Housekeeping → Room Cleaning Status instead." />
+      {ADMIN_STATUS_KEYS.map((statusKey) => {
         const meta = STATUS_META[statusKey];
         const roomsInGroup = grouped.byStatus[statusKey] || [];
         return (
@@ -320,6 +336,7 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
                   key={room.roomNumber}
                   room={room}
                   editable
+                  chipOptions={ADMIN_STATUS_KEYS}
                   isUpdating={updatingRoomNumber === room.roomNumber}
                   onStatusChange={(status) => onStatusChange(room, status)}
                 />
@@ -328,6 +345,21 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
           </View>
         );
       })}
+
+      {grouped.inCleaningCycle.length > 0 && (
+        <View style={{ marginBottom: spacing.lg }}>
+          <View style={styles.statusGroupHeader}>
+            <View style={[styles.statusDot, { backgroundColor: '#d97706' }]} />
+            <Text style={styles.groupHeading}>In Housekeeping Cycle ({grouped.inCleaningCycle.length})</Text>
+          </View>
+          <Text style={styles.emptyText}>
+            Managed from Housekeeping → Room Cleaning Status, not here.
+          </Text>
+          {grouped.inCleaningCycle.map((room) => (
+            <RoomRow key={room.roomNumber} room={room} showStatus />
+          ))}
+        </View>
+      )}
 
       {grouped.unrecognized.length > 0 && (
         <View style={{ marginBottom: spacing.lg }}>
@@ -428,12 +460,12 @@ function SectionIntro({ description }) {
   );
 }
 
-function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, isUpdating, onStatusChange }) {
+function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, chipOptions, isUpdating, onStatusChange }) {
   const meta = statusMeta(room.status);
 
   const chipsToShow = onlyMaintenanceToggle
     ? [ROOM_STATUS.MAINTENANCE]
-    : Object.keys(STATUS_META);
+    : chipOptions || Object.keys(STATUS_META);
 
   return (
     <View style={styles.rowCard}>

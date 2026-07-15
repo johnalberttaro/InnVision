@@ -9,6 +9,8 @@ import {
   SafeAreaView,
   Alert,
   Image,
+  Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import RangeCalendar from '../../components/reservation/RangeCalendar';
@@ -22,40 +24,25 @@ const logo = require('../../../assets/logo.png');
 
 const initialRoom = () => ({ adults: 1, children: 0 });
 
+const DESKTOP_BREAKPOINT = 900;
+const CONTENT_MAX_WIDTH = 980;
+
+const TRUST_POINTS = [
+  { icon: 'shield-checkmark-outline', label: 'Best rate guaranteed', hint: 'Book direct, pay no more.' },
+  { icon: 'checkmark-circle-outline', label: 'Instant confirmation', hint: 'No waiting on an email back.' },
+  { icon: 'time-outline', label: 'Free cancellation', hint: 'Change your mind, change your dates.' },
+];
+
 /**
  * ReservationScreen — STAY DETAILS ONLY.
  *
- * MIGRATED TO CENTRALIZED THEME (useTheme()). Two intentional fixes made
- * during migration, not just a mechanical swap:
- *
- *  - `screen`'s background was `colors.primary`, a token meant to flip
- *    for buttons/headings — used as a full-bleed backdrop, it would have
- *    turned near-white in dark mode and swallowed the white logo/close
- *    chips. Changed to `colors.heroBackground`, the token intentionally
- *    kept a dark band in BOTH palettes (same one AboutScreen's header
- *    uses), so this immersive booking sheet keeps its look either way.
- *  - `closeText` sits on a chip that is deliberately always white
- *    (`colors.white`, literal in both palettes) against that now
- *    always-dark backdrop. Its text must therefore stay always dark too —
- *    using `colors.primary` here would flip to near-white in dark mode
- *    and vanish against the white chip. Pinned to `lightColors.primary`
- *    directly (bypassing the active theme on purpose) for this spot.
- *  - `logoBadge` no longer renders "IV" text — it now hosts the actual
- *    hotel logo image, same white badge treatment as `BrandHeader`.
- *
- * IMPORTANT: this screen no longer writes to Firestore. Nothing the guest
- * enters here (dates, rooms, guests) is an official reservation yet — it's
- * just in-progress local state. A Firestore document should only be
- * created once, at the moment the guest confirms on ReviewPayScreen. That
- * keeps "pending" reservations in the admin panel meaning "a guest
- * actually submitted a booking," not "someone opened the date picker."
- *
- * Props:
- *  - user:     Firebase auth user (still required — guest must be logged
- *              in to eventually book, checked here for a fast fail before
- *              they fill out the whole form)
- *  - onSearch: ({ checkIn, checkOut, nights, rooms, totals }) => void
- *  - onClose:  () => void
+ * DESKTOP PASS 2: the earlier fix (max-width + shadow) stopped the card
+ * from stretching, but left a large flat void beside it — a centered
+ * modal doesn't become a "page" just by capping its width. This pass
+ * splits wide layouts into two panels: a brand/trust panel (left) and
+ * the booking form (right), joined into a single card so the desktop
+ * view reads as one considered layout, not a floating dialog. Mobile is
+ * untouched — the brand panel only renders when isDesktop is true.
  */
 export default function ReservationScreen({ user, onSearch, onClose }) {
   const [checkIn, setCheckIn]   = useState(null);
@@ -67,7 +54,13 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
   const [errors, setErrors]     = useState({});
 
   const { colors, spacing, radius, fonts } = useTheme();
-  const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
+  const { width } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && width >= DESKTOP_BREAKPOINT;
+
+  const styles = useMemo(
+    () => getStyles(colors, spacing, radius, fonts, isDesktop),
+    [colors, spacing, radius, fonts, isDesktop]
+  );
 
   const totals = useMemo(() => {
     const totalRooms    = rooms.length;
@@ -111,9 +104,6 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
       return;
     }
 
-    // No Firestore write here. This is still just local, in-progress stay
-    // details — dates, rooms, guest counts. Nothing gets saved to the
-    // database until the guest actually confirms on ReviewPayScreen.
     onSearch({ checkIn, checkOut, nights, rooms, totals });
   };
 
@@ -133,73 +123,112 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
 
       {/* ── Header ───────────────────────────────────────────── */}
       <View style={styles.header}>
-        <View style={styles.logoBadge}>
-          <Image source={logo} style={styles.logoImage} resizeMode="contain" />
+        <View style={styles.headerInner}>
+          <View style={styles.logoBadge}>
+            <Image source={logo} style={styles.logoImage} resizeMode="contain" />
+          </View>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityLabel="Close">
+            <Ionicons name="close-outline" size={20} color={lightColors.primary} />
+            <Text style={styles.closeText}>Close</Text>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityLabel="Close">
-          <Ionicons name="close-outline" size={20} color={lightColors.primary} />
-          <Text style={styles.closeText}>Close</Text>
-        </TouchableOpacity>
       </View>
 
       {/* ── Content ──────────────────────────────────────────── */}
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Book Your Stay</Text>
-          <Text style={styles.cardSubtitle}>Select your dates and number of guests.</Text>
+        <View style={styles.shell}>
 
-          <Text style={styles.sectionLabel}>Stay Details</Text>
+          {/* Brand / trust panel — desktop only. Fills the space that
+              used to just be dark void, with real information instead
+              of decoration. */}
+          {isDesktop && (
+            <View style={styles.brandPanel}>
+              <View style={styles.brandPattern} pointerEvents="none" />
+              <View style={styles.brandContent}>
+                <Image source={logo} style={styles.brandLogo} resizeMode="contain" />
+                <Text style={styles.brandHeading}>A stay, sorted.</Text>
+                <Text style={styles.brandSubheading}>
+                  Pick your dates, tell us who's coming, and we'll hold the room.
+                </Text>
 
-          {/* Stay Dates */}
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>
-              Stay Dates <Text style={styles.required}>*</Text>
-            </Text>
-            <DropdownTrigger
-              icon="📅"
-              isOpen={showCalendar}
-              onPress={() => setShowCalendar(true)}
-              error={errors.dates || dateError}
+                <View style={styles.trustList}>
+                  {TRUST_POINTS.map((point) => (
+                    <View key={point.label} style={styles.trustRow}>
+                      <View style={styles.trustIconWrap}>
+                        <Ionicons name={point.icon} size={16} color={colors.white} />
+                      </View>
+                      <View style={styles.trustTextWrap}>
+                        <Text style={styles.trustLabel}>{point.label}</Text>
+                        <Text style={styles.trustHint}>{point.hint}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Form panel */}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Book Your Stay</Text>
+            <Text style={styles.cardSubtitle}>Select your dates and number of guests.</Text>
+
+            <Text style={styles.sectionLabel}>Stay Details</Text>
+
+            <View style={styles.fieldsRow}>
+              {/* Stay Dates */}
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>
+                  Stay Dates <Text style={styles.required}>*</Text>
+                </Text>
+                <DropdownTrigger
+                  icon="📅"
+                  isOpen={showCalendar}
+                  onPress={() => setShowCalendar(true)}
+                  error={errors.dates || dateError}
+                >
+                  <Text
+                    style={checkIn ? styles.pillValue : styles.pillPlaceholder}
+                    numberOfLines={1}
+                  >
+                    {dateSummaryLabel}
+                  </Text>
+                </DropdownTrigger>
+                {(errors.dates || dateError)
+                  ? <Text style={styles.errorText}>{errors.dates || dateError}</Text>
+                  : null}
+                {nights > 0 && !dateError
+                  ? <Text style={styles.nightsHint}>{nights} night{nights > 1 ? 's' : ''}</Text>
+                  : null}
+              </View>
+
+              {/* Guests & Rooms */}
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Guests & Rooms</Text>
+                <DropdownTrigger
+                  icon="👤"
+                  isOpen={showGuestSelector}
+                  onPress={() => setShowGuestSelector(true)}
+                >
+                  <Text style={styles.pillValue} numberOfLines={1}>
+                    {guestSummaryLabel}
+                  </Text>
+                </DropdownTrigger>
+              </View>
+            </View>
+
+            {/* CTA */}
+            <TouchableOpacity
+              style={styles.ctaButton}
+              onPress={handleSearch}
+              activeOpacity={0.85}
+              {...(Platform.OS === 'web' ? { onMouseEnter: () => {}, onMouseLeave: () => {} } : {})}
             >
-              <Text
-                style={checkIn ? styles.pillValue : styles.pillPlaceholder}
-                numberOfLines={1}
-              >
-                {dateSummaryLabel}
-              </Text>
-            </DropdownTrigger>
-            {(errors.dates || dateError)
-              ? <Text style={styles.errorText}>{errors.dates || dateError}</Text>
-              : null}
-            {nights > 0 && !dateError
-              ? <Text style={styles.nightsHint}>{nights} night{nights > 1 ? 's' : ''}</Text>
-              : null}
+              <Text style={styles.ctaText}>Check Rates & Availability</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.termsText}>*Terms and conditions apply.</Text>
           </View>
-
-          {/* Guests & Rooms */}
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>Guests & Rooms</Text>
-            <DropdownTrigger
-              icon="👤"
-              isOpen={showGuestSelector}
-              onPress={() => setShowGuestSelector(true)}
-            >
-              <Text style={styles.pillValue} numberOfLines={1}>
-                {guestSummaryLabel}
-              </Text>
-            </DropdownTrigger>
-          </View>
-
-          {/* CTA */}
-          <TouchableOpacity
-            style={styles.ctaButton}
-            onPress={handleSearch}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.ctaText}>Check Rates & Availability</Text>
-          </TouchableOpacity>
-
-          <Text style={styles.termsText}>*Terms and conditions apply.</Text>
         </View>
       </ScrollView>
 
@@ -246,7 +275,7 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
   );
 }
 
-function getStyles(colors, spacing, radius, fonts) {
+function getStyles(colors, spacing, radius, fonts, isDesktop) {
   return StyleSheet.create({
     screen: {
       flex: 1,
@@ -255,11 +284,16 @@ function getStyles(colors, spacing, radius, fonts) {
 
     /* Header */
     header: {
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+    },
+    headerInner: {
+      width: '100%',
+      maxWidth: isDesktop ? CONTENT_MAX_WIDTH : undefined,
+      marginHorizontal: isDesktop ? 'auto' : 0,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.md,
     },
     logoBadge: {
       width: 40,
@@ -270,10 +304,7 @@ function getStyles(colors, spacing, radius, fonts) {
       justifyContent: 'center',
       overflow: 'hidden',
     },
-    logoImage: {
-      width: 28,
-      height: 28,
-    },
+    logoImage: { width: 28, height: 28 },
     closeButton: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -282,11 +313,12 @@ function getStyles(colors, spacing, radius, fonts) {
       paddingHorizontal: spacing.md,
       borderRadius: 999,
       gap: spacing.xs,
+      ...Platform.select({ web: { cursor: 'pointer', transitionDuration: '150ms' } }),
     },
     closeText: {
       fontFamily: fonts.bodySemiBold,
       fontSize: 13,
-      color: lightColors.primary, // always-dark text on an always-white chip
+      color: lightColors.primary,
     },
 
     /* Scroll */
@@ -294,30 +326,118 @@ function getStyles(colors, spacing, radius, fonts) {
     scrollContent: {
       flexGrow: 1,
       justifyContent: 'center',
+      alignItems: 'center',
       padding: spacing.lg,
       paddingVertical: spacing.xl,
     },
 
-    /* Card */
-    card: {
-      backgroundColor: colors.card,
+    /* Shell — holds brand panel + card side by side on desktop */
+    shell: {
+      width: '100%',
+      maxWidth: isDesktop ? CONTENT_MAX_WIDTH : undefined,
+      flexDirection: isDesktop ? 'row' : 'column',
       borderRadius: radius.lg,
-      borderWidth: 0.5,
-      borderColor: colors.border,
+      overflow: 'hidden',
+      ...Platform.select({
+        web: { boxShadow: '0 24px 60px rgba(0, 0, 0, 0.35)' },
+        default: {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 10 },
+          shadowOpacity: 0.25,
+          shadowRadius: 20,
+          elevation: 8,
+        },
+      }),
+    },
+
+    /* Brand panel (desktop only) */
+    brandPanel: {
+      width: 320,
+      backgroundColor: colors.heroBackground,
       padding: spacing.xl,
+      justifyContent: 'center',
+      position: 'relative',
+      overflow: 'hidden',
+      borderRightWidth: 1,
+      borderRightColor: 'rgba(255,255,255,0.08)',
+    },
+    brandPattern: {
+      position: 'absolute',
+      top: -60,
+      right: -60,
+      width: 260,
+      height: 260,
+      borderRadius: 260,
+      borderWidth: 40,
+      borderColor: 'rgba(255,255,255,0.04)',
+    },
+    brandContent: { position: 'relative' },
+    brandLogo: {
+      width: 36,
+      height: 36,
+      marginBottom: spacing.lg,
+      tintColor: colors.white,
+    },
+    brandHeading: {
+      fontFamily: fonts.headingExtraBold,
+      fontSize: 26,
+      color: colors.white,
+      marginBottom: spacing.sm,
+    },
+    brandSubheading: {
+      fontFamily: fonts.body,
+      fontSize: 13,
+      lineHeight: 19,
+      color: 'rgba(255,255,255,0.65)',
+      marginBottom: spacing.xl,
+    },
+    trustList: { gap: spacing.md },
+    trustRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+    trustIconWrap: {
+      width: 28,
+      height: 28,
+      borderRadius: radius.sm,
+      backgroundColor: 'rgba(255,255,255,0.10)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 1,
+    },
+    trustTextWrap: { flex: 1 },
+    trustLabel: {
+      fontFamily: fonts.bodySemiBold,
+      fontSize: 13,
+      color: colors.white,
+      marginBottom: 2,
+    },
+    trustHint: {
+      fontFamily: fonts.body,
+      fontSize: 11.5,
+      lineHeight: 15,
+      color: 'rgba(255,255,255,0.55)',
+    },
+
+    /* Form panel */
+    card: {
+      flex: isDesktop ? 1 : undefined,
+      width: isDesktop ? undefined : '100%',
+      backgroundColor: colors.card,
+      borderWidth: isDesktop ? 0 : 0.5,
+      borderColor: colors.border,
+      borderRadius: isDesktop ? 0 : radius.lg,
+      padding: isDesktop ? spacing.xl * 1.4 : spacing.xl,
     },
     cardTitle: {
       fontFamily: fonts.headingExtraBold,
-      fontSize: 22,
+      fontSize: isDesktop ? 24 : 22,
       color: colors.primary,
-      textAlign: 'center',
+      textAlign: isDesktop ? 'left' : 'center',
       marginBottom: spacing.xs,
     },
     cardSubtitle: {
       fontFamily: fonts.body,
       fontSize: 13,
       color: colors.textMuted,
-      textAlign: 'center',
+      textAlign: isDesktop ? 'left' : 'center',
       marginBottom: spacing.xl,
     },
 
@@ -335,8 +455,14 @@ function getStyles(colors, spacing, radius, fonts) {
     },
 
     /* Fields */
+    fieldsRow: {
+      flexDirection: isDesktop ? 'row' : 'column',
+      alignItems: isDesktop ? 'flex-start' : 'stretch',
+      gap: spacing.md,
+    },
     fieldGroup: {
-      marginBottom: spacing.md,
+      flex: isDesktop ? 1 : undefined,
+      marginBottom: isDesktop ? 0 : spacing.md,
     },
     label: {
       fontFamily: fonts.bodyMedium,
@@ -373,9 +499,11 @@ function getStyles(colors, spacing, radius, fonts) {
       backgroundColor: colors.accent,
       borderRadius: radius.md,
       height: 48,
+      width: isDesktop ? 260 : undefined,
       alignItems: 'center',
       justifyContent: 'center',
-      marginTop: spacing.md,
+      marginTop: spacing.lg,
+      ...Platform.select({ web: { cursor: 'pointer', transitionDuration: '150ms' } }),
     },
     ctaText: {
       color: colors.onPrimary,
@@ -387,7 +515,7 @@ function getStyles(colors, spacing, radius, fonts) {
       fontFamily: fonts.body,
       fontSize: 10,
       color: colors.textMuted,
-      textAlign: 'right',
+      textAlign: isDesktop ? 'left' : 'right',
       marginTop: spacing.sm,
     },
 
@@ -400,6 +528,9 @@ function getStyles(colors, spacing, radius, fonts) {
     },
     modalSheet: {
       maxHeight: '85%',
+      maxWidth: isDesktop ? 480 : undefined,
+      width: isDesktop ? '100%' : undefined,
+      alignSelf: isDesktop ? 'center' : undefined,
     },
   });
 }

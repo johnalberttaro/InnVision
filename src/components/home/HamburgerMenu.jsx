@@ -1,7 +1,9 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, Modal, StyleSheet, SafeAreaView } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, StyleSheet, SafeAreaView, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, fonts } from '../../utils/theme';
+
+const logo = require('../../../assets/logo.png');
 
 /**
  * HamburgerMenu — full-screen slide-up menu for narrow/mobile screens.
@@ -72,7 +74,7 @@ export default function HamburgerMenu({
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <View style={styles.logoBadge}>
-              <Text style={styles.logoText}>IV</Text>
+              <Image source={logo} style={styles.logoImage} resizeMode="contain" />
             </View>
             <Text style={styles.title}>InnVision</Text>
           </View>
@@ -147,12 +149,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  logoText: {
-    fontFamily: fonts.headingExtraBold,
-    fontSize: 13,
-    color: colors.primary,
-    letterSpacing: -0.5,
+  logoImage: {
+    width: 22,
+    height: 22,
   },
   title: {
     fontSize: 18,

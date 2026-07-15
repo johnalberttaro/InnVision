@@ -29,12 +29,25 @@ function formatDateTime(value) {
   }
 }
 
+// Kept in sync with the map in Receiptsscreen.jsx — add new payment
+// methods to both places (or better, move this to a shared constants
+// file both screens import from).
 const PAYMENT_METHOD_LABELS = {
   cash: 'Cash',
-  gcash: 'GCash',
   card: 'Credit/Debit Card',
+  hotel: 'Pay at Hotel',
   pay_at_hotel: 'Pay at Hotel',
+  online: 'E-wallet',
+  gcash: 'GCash',
+  maya: 'Maya',
+  maribank: 'Maribank',
+  gotyme: 'GoTyme',
 };
+
+function paymentMethodLabel(method) {
+  if (!method) return '—';
+  return PAYMENT_METHOD_LABELS[method.toLowerCase()] || method;
+}
 
 // Matches getReferenceNumber() in Adminbookingsscreen.jsx and
 // formatReservationRef() in Billingrecorddetailscreen.jsx — the stored
@@ -46,7 +59,7 @@ function formatReservationRef(id) {
 }
 
 function buildReceiptHTML(receipt) {
-  const methodLabel = PAYMENT_METHOD_LABELS[receipt.paymentMethod] || receipt.paymentMethod;
+  const methodLabel = paymentMethodLabel(receipt.paymentMethod);
   return `
     <html>
       <head>
@@ -93,7 +106,7 @@ function buildReceiptHTML(receipt) {
 export default function ReceiptDetailModal({ visible, receipt, onClose }) {
   if (!receipt) return null;
 
-  const methodLabel = PAYMENT_METHOD_LABELS[receipt.paymentMethod] || receipt.paymentMethod;
+  const methodLabel = paymentMethodLabel(receipt.paymentMethod);
 
   const handlePrint = () => {
     if (Platform.OS !== 'web') {
