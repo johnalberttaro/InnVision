@@ -172,6 +172,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
                 <View style={wrapStyle('firstName')}>
                   <TextInput
                     style={inputStyle('firstName')}
+                    placeholder="Enter your first name"
                     placeholderTextColor={colors.disabled}
                     value={form.firstName}
                     onChangeText={v => update('firstName', v)}
@@ -189,6 +190,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
                 <View style={wrapStyle('lastName')}>
                   <TextInput
                     style={inputStyle('lastName')}
+                    placeholder="Enter your last name"
                     placeholderTextColor={colors.disabled}
                     value={form.lastName}
                     onChangeText={v => update('lastName', v)}
@@ -208,6 +210,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
               <View style={wrapStyle('email')}>
                 <TextInput
                   style={inputStyle('email')}
+                  placeholder="Enter your email address"
                   placeholderTextColor={colors.disabled}
                   value={form.email}
                   onChangeText={v => update('email', v)}
@@ -247,6 +250,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
               <View style={wrapStyle('password')}>
                 <TextInput
                   style={inputStyle('password')}
+                  placeholder="Create a password"
                   placeholderTextColor={colors.disabled}
                   value={form.password}
                   onChangeText={v => update('password', v)}
@@ -267,6 +271,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
               <View style={wrapStyle('confirmPassword')}>
                 <TextInput
                   style={inputStyle('confirmPassword')}
+                  placeholder="Re-enter your password"
                   placeholderTextColor={colors.disabled}
                   value={form.confirmPassword}
                   onChangeText={v => update('confirmPassword', v)}

@@ -4,18 +4,39 @@ import AdminSidebar from './AdminSidebar';
 import AdminDashboardScreen from './AdmindashboardScreen';
 import RoomTypesRatesScreen from './RoomTypeRatesScreen';
 import FrontDeskAccountsScreen from './FrontDeskAccountScreen';
+import FrontDeskStaffScreen from './FrontDeskStaffScreen';
 import OccupancyReportScreen from './OccupancyReportScreen';
 import RevenueReportScreen from './RevenueReportScreen';
+import FrontDeskDashboardScreen from '../frontdesk/FrontDeskDashboardScreen';
+import ReservationsScreen from '../frontdesk/ReservationsScreen';
+import RoomManagementScreen from '../frontdesk/RoomManagementScreen';
+import RoomCleaningStatusScreen from '../frontdesk/RoomCleaningStatusScreen';
+import GuestRecordsScreen from '../frontdesk/GuestRecordsScreen';
+import GuestDetailsScreen from '../frontdesk/GuestDetailsScreen';
+import GuestProfileTableScreen from '../frontdesk/GuestProfileTableScreen';
+import BillingRecordsScreen from '../frontdesk/BillingRecordsScreen';
+import BillingRecordDetailScreen from '../frontdesk/BillingRecordDetailScreen';
+import RecordPaymentModal from '../frontdesk/RecordPaymentModal';
+import PaymentsScreen from '../frontdesk/PaymentsScreen';
+import ReceiptsScreen from '../frontdesk/ReceiptsScreen';
 import { colors, spacing, fonts } from '../../utils/theme';
 
 const WIDE_BREAKPOINT = 1024;
 
 /**
  * AdminShell — top-level shell for the Admin Portal (superadmin role).
- * Mirrors frontdesk/FrontDeskShell.jsx: sidebar + routed content area +
- * mobile hamburger topbar. Covers SRS Module 6 (Admin Management):
- *  - 6.1 Manage Room Types & Rates → RoomTypesRatesScreen (built)
- *  - 6.2 Generate Occupancy & Revenue Reports → placeholder for now
+ *
+ * The Admin has the MOST access: it keeps its own admin-only sections
+ * (Room Types & Rates editor, Staff management, Reports) AND operates the
+ * entire Front Desk portal from inside the Admin Portal via the
+ * "Front Desk Operations" sidebar section. Those `fd:*` keys reuse the
+ * exact same screens the Front Desk staff use, so an admin can do
+ * everything a front desk member can — and more.
+ *
+ * The front-desk screens expect a `staffUid`/`staffName` acting identity
+ * (used for payment attribution, etc.). The admin acts under their own
+ * name; `staffUid` is left null since the admin isn't a front-desk auth
+ * user — payment attribution will show the admin name via `staffName`.
  */
 export default function AdminShell({ onLoggedOut, adminName }) {
   const [activeKey, setActiveKey] = useState('dashboard');
@@ -23,12 +44,57 @@ export default function AdminShell({ onLoggedOut, adminName }) {
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
 
+  const staffName = adminName || 'Administrator';
+  const staffUid = null;
+
+  const [selectedGuestId, setSelectedGuestId] = useState(null);
+  const [profileOrigin, setProfileOrigin] = useState('fd:guests:records');
+
+  const [selectedFolioId, setSelectedFolioId] = useState(null);
+  const [folioOrigin, setFolioOrigin] = useState('fd:billing:records');
+
+  const [paymentModalFolio, setPaymentModalFolio] = useState(null);
+  const [folioRefreshTick, setFolioRefreshTick] = useState(0);
+
   const handleNavigate = (key) => {
     if (key === 'logout') {
       onLoggedOut();
       return;
     }
+    // Leaving any detail view resets the transient selection state.
+    setSelectedGuestId(null);
+    setSelectedFolioId(null);
     setActiveKey(key);
+  };
+
+  const openGuestProfile = (guest) => {
+    setProfileOrigin(activeKey === 'fd:guests:profiles' ? 'fd:guests:profiles' : 'fd:guests:records');
+    setSelectedGuestId(guest.id);
+    setActiveKey('fd:guests:profile');
+  };
+
+  const closeGuestProfile = () => {
+    setSelectedGuestId(null);
+    setActiveKey(profileOrigin);
+  };
+
+  const openFolioDetail = (folio) => {
+    setFolioOrigin(activeKey.startsWith('fd:billing:') ? activeKey : 'fd:billing:records');
+    setSelectedFolioId(folio.id);
+    setActiveKey('fd:billing:detail');
+  };
+
+  const closeFolioDetail = () => {
+    setSelectedFolioId(null);
+    setActiveKey(folioOrigin);
+  };
+
+  const openPaymentModal = (folio) => setPaymentModalFolio(folio);
+  const closePaymentModal = () => setPaymentModalFolio(null);
+
+  const handlePaymentSuccess = () => {
+    setPaymentModalFolio(null);
+    setFolioRefreshTick((t) => t + 1);
   };
 
   return (
@@ -59,16 +125,41 @@ export default function AdminShell({ onLoggedOut, adminName }) {
         )}
 
         <View style={styles.screenContent}>
-          {renderActiveScreen(activeKey)}
+          {renderActiveScreen({
+            activeKey,
+            onNavigate: handleNavigate,
+            onLoggedOut,
+            staffName,
+            staffUid,
+            selectedGuestId,
+            openGuestProfile,
+            closeGuestProfile,
+            selectedFolioId,
+            openFolioDetail,
+            closeFolioDetail,
+            openPaymentModal,
+            folioRefreshTick,
+          })}
         </View>
       </View>
+
+      <RecordPaymentModal
+        visible={!!paymentModalFolio}
+        folio={paymentModalFolio}
+        staffUid={staffUid}
+        staffName={staffName}
+        onClose={closePaymentModal}
+        onSuccess={handlePaymentSuccess}
+      />
     </View>
   );
 }
 
-function renderActiveScreen(activeKey) {
+function renderActiveScreen(props) {
+  const { activeKey } = props;
+
   if (activeKey === 'dashboard') {
-    return <AdminDashboardScreen />;
+    return <AdminDashboardScreen onNavigate={props.onNavigate} />;
   }
   if (activeKey === 'rooms:types') {
     return <RoomTypesRatesScreen />;
@@ -76,12 +167,56 @@ function renderActiveScreen(activeKey) {
   if (activeKey === 'staff:accounts') {
     return <FrontDeskAccountsScreen />;
   }
+  if (activeKey === 'staff:frontdesk') {
+    return <FrontDeskStaffScreen />;
+  }
   if (activeKey === 'reports:occupancy') {
     return <OccupancyReportScreen />;
   }
   if (activeKey === 'reports:revenue') {
     return <RevenueReportScreen />;
   }
+
+  // ── Front Desk Operations (admin can do everything a front desk member can) ──
+  if (activeKey.startsWith('fd:reservations')) {
+    return <ReservationsScreen onLogout={props.onLoggedOut} filterKey={activeKey.replace('fd:', '')} />;
+  }
+  if (activeKey.startsWith('fd:rooms:')) {
+    const section = activeKey.split(':')[2];
+    return <RoomManagementScreen onLogout={props.onLoggedOut} section={section} />;
+  }
+  if (activeKey === 'fd:housekeeping:status') {
+    return <RoomCleaningStatusScreen onLogout={props.onLoggedOut} />;
+  }
+  if (activeKey === 'fd:guests:records') {
+    return <GuestRecordsScreen onSelectGuest={props.openGuestProfile} />;
+  }
+  if (activeKey === 'fd:guests:profiles') {
+    return <GuestProfileTableScreen onSelectGuest={props.openGuestProfile} />;
+  }
+  if (activeKey === 'fd:guests:profile') {
+    return <GuestDetailsScreen guestId={props.selectedGuestId} onBack={props.closeGuestProfile} />;
+  }
+  if (activeKey === 'fd:billing:records') {
+    return <BillingRecordsScreen onSelectRecord={props.openFolioDetail} />;
+  }
+  if (activeKey === 'fd:billing:payments') {
+    return <PaymentsScreen staffUid={props.staffUid} staffName={props.staffName} />;
+  }
+  if (activeKey === 'fd:billing:receipts') {
+    return <ReceiptsScreen />;
+  }
+  if (activeKey === 'fd:billing:detail') {
+    return (
+      <BillingRecordDetailScreen
+        key={`${props.selectedFolioId}-${props.folioRefreshTick}`}
+        folioId={props.selectedFolioId}
+        onBack={props.closeFolioDetail}
+        onRecordPayment={props.openPaymentModal}
+      />
+    );
+  }
+
   return <PlaceholderScreen activeKey={activeKey} />;
 }
 

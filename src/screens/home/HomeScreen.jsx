@@ -65,7 +65,7 @@ export default function HomeScreen({
       />
 
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-        <ImageCarousel />
+        <ImageCarousel onBookNow={onBookNow} />
 
         {/* ── About section ──────────────────────────────────────── */}
         <View style={styles.aboutSection}>

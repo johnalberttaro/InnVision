@@ -336,7 +336,7 @@ const styles = StyleSheet.create({
   pageSubtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
   errorBanner: { backgroundColor: colors.dangerBg, borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.lg },
   errorBannerText: { fontFamily: fonts.body, fontSize: 13, color: colors.danger },
-  successBanner: { backgroundColor: colors.accentBg, borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.lg },
+  successBanner: { backgroundColor: colors.accentTint, borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.lg },
   successBannerText: { fontFamily: fonts.body, fontSize: 13, color: colors.accent },
   staffCard: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.xl },
   sectionTitle: { fontSize: 16, fontFamily: fonts.headingBold, color: colors.text, marginBottom: spacing.md },

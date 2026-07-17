@@ -79,7 +79,7 @@ const TWO_COL_BREAKPOINT = 600;
  *  - onEditSearch: () => void
  *  - onReserve: (selectedRooms: Array<{roomNumber, roomTypeId, roomTypeName, ...}>) => void
  */
-export default function RoomSelectionScreen({ bookingDetails, onEditSearch, onReserve }) {
+export default function RoomSelectionScreen({ bookingDetails, onEditSearch, onReserve, onHomePress }) {
   const { width } = useWindowDimensions();
   const [roomTypes, setRoomTypes] = useState([]);
   const [rooms, setRooms] = useState([]);
@@ -198,7 +198,7 @@ export default function RoomSelectionScreen({ bookingDetails, onEditSearch, onRe
   if (!bookingDetails) {
     return (
       <View style={styles.container}>
-        <Brandheader />
+        <Brandheader onHomePress={onHomePress} />
         <Text style={styles.message}>No search details found.</Text>
       </View>
     );
@@ -220,7 +220,7 @@ export default function RoomSelectionScreen({ bookingDetails, onEditSearch, onRe
 
   return (
     <View style={styles.container}>
-      <Brandheader />
+      <Brandheader onHomePress={onHomePress} />
       <StepIndicator currentStep={1} />
 
       <ScrollView contentContainerStyle={styles.content}>

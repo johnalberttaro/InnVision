@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, Image, StyleSheet, Platform } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { useTheme } from '../../context/ThemeContext';
 
@@ -55,7 +55,7 @@ function hexToRgbTriplet(hex) {
  *     <ScrollView>...room cards...</ScrollView>
  *   </View>
  */
-export default function BrandHeader() {
+export default function BrandHeader({ onHomePress }) {
   const { colors, spacing, fonts, isDark } = useTheme();
   const styles = useMemo(() => getStyles(colors, spacing, fonts), [colors, spacing, fonts]);
   const overlayColor = `rgba(${hexToRgbTriplet(colors.background)},0.94)`;
@@ -74,12 +74,12 @@ export default function BrandHeader() {
             dark charcoal with the theme. */}
         <View style={[styles.tint, { backgroundColor: overlayColor }]} />
 
-        <View style={styles.content}>
+        <TouchableOpacity style={styles.content} activeOpacity={0.8} onPress={onHomePress}>
           <View style={styles.logoBadge}>
             <Image source={LOGO_SOURCE} style={styles.logoImage} resizeMode="contain" />
           </View>
           <Text style={styles.name}>InnVision</Text>
-        </View>
+        </TouchableOpacity>
       </BlurView>
     </View>
   );

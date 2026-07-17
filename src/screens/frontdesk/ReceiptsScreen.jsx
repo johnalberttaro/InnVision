@@ -3,7 +3,7 @@
 // across all folios. Tapping a row opens Receiptdetailmodal for
 // view/print/download.
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,9 @@ import {
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { getAllReceipts, searchReceipts } from '../../utils/BillingService';
 import ReceiptDetailModal from './ReceiptDetailModal';
+import Pagination from '../../components/shared/Pagination';
+
+const PAGE_SIZE = 5;
 
 function formatCurrency(amount) {
   return `₱${(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -57,6 +60,7 @@ export default function ReceiptsScreen() {
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState(null);
   const [selectedReceipt, setSelectedReceipt] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const loadReceipts = useCallback(async () => {
     try {
@@ -78,6 +82,17 @@ export default function ReceiptsScreen() {
     setLoading(true);
     loadReceipts();
   }, [loadReceipts]);
+
+  // Result set shape changes whenever the search term changes — jump back
+  // to page 1 so the user isn't stranded on a page that may no longer exist.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
+  const pagedReceipts = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return receipts.slice(start, start + PAGE_SIZE);
+  }, [receipts, currentPage]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -102,16 +117,30 @@ export default function ReceiptsScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Receipts</Text>
-      <Text style={styles.subtitle}>Every payment receipt generated across all folios</Text>
+      <View style={styles.headerRow}>
+        <View style={styles.headerText}>
+          <Text style={styles.title}>Receipts</Text>
+          <Text style={styles.subtitle}>Every payment receipt generated across all folios</Text>
+        </View>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by receipt # or guest name"
+          placeholderTextColor={colors.textMuted}
+          value={searchTerm}
+          onChangeText={setSearchTerm}
+        />
+      </View>
 
-      <TextInput
-        style={styles.searchInput}
-        placeholder="Search by receipt # or guest name"
-        placeholderTextColor={colors.textMuted}
-        value={searchTerm}
-        onChangeText={setSearchTerm}
-      />
+      {!loading && !error && receipts.length > 0 && (
+        <View style={styles.pageRow}>
+          <Pagination
+            currentPage={currentPage}
+            totalItems={receipts.length}
+            pageSize={PAGE_SIZE}
+            onPageChange={setCurrentPage}
+          />
+        </View>
+      )}
 
       {loading ? (
         <ActivityIndicator style={{ marginTop: 32 }} color={colors.primary} />
@@ -121,11 +150,11 @@ export default function ReceiptsScreen() {
         <Text style={styles.emptyText}>No receipts found.</Text>
       ) : (
         <FlatList
-          data={receipts}
+          data={pagedReceipts}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={{ paddingBottom: spacing.xl }}
+          contentContainerStyle={{ paddingBottom: spacing.sm }}
         />
       )}
 
@@ -140,8 +169,18 @@ export default function ReceiptsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: spacing.lg,
+  },
+  headerText: {
+    flex: 1,
+    paddingRight: spacing.md,
+  },
   title: { fontFamily: fonts.headingBold, fontSize: 24, color: colors.primary },
-  subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2, marginBottom: spacing.lg },
+  subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2 },
   searchInput: {
     backgroundColor: colors.white,
     borderWidth: 1,
@@ -150,8 +189,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     fontFamily: fonts.body,
-    fontSize: 14,
+    fontSize: 12,
     color: colors.text,
+    width: 260,
+    maxWidth: '45%',
+  },
+  pageRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
     marginBottom: spacing.lg,
   },
   row: {
@@ -166,7 +211,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   rowMain: { flex: 1, paddingRight: 10 },
-  receiptNumber: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.secondary || '#734A09', marginBottom: 2 },
+  receiptNumber: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.accent, marginBottom: 2 },
   guestName: { fontFamily: fonts.headingSemiBold, fontSize: 16, color: colors.text },
   subInfo: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: 2 },
   rowSide: { alignItems: 'flex-end' },

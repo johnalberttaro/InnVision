@@ -161,11 +161,14 @@ export default function App() {
   const goBackToSearch    = () => { setScreen('home'); setShowReservation(true); };
   const goToReviewPay     = (rooms) => { setSelectedRooms(rooms); setScreen('reviewPay'); };
   const goBackToRoomRates = () => setScreen('roomRates');
-
-  const handleConfirmed = () => {
+  const goHome = () => {
     setBookingDetails(null);
     setSelectedRooms(null);
     setScreen('home');
+  };
+
+  const handleConfirmed = () => {
+    goHome();
   };
 
   // My Reservations is guest-account-only (it reads the signed-in user's
@@ -207,6 +210,7 @@ export default function App() {
               isAuthenticated={!!user}
               user={user}
               onLogout={handleLogout}
+              onHomePress={goHome}
             />
           )}
 
@@ -286,6 +290,7 @@ export default function App() {
               bookingDetails={bookingDetails}
               onEditSearch={goBackToSearch}
               onReserve={goToReviewPay}
+              onHomePress={goHome}
             />
           )}
           {screen === 'reviewPay' && (
@@ -295,6 +300,7 @@ export default function App() {
               user={user}
               onBackToRooms={goBackToRoomRates}
               onConfirm={handleConfirmed}
+              onHomePress={goHome}
             />
           )}
 

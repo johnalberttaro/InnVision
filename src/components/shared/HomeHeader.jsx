@@ -61,6 +61,7 @@ export default function HomeHeader({
   onContactPress,
   onFindBooking,
   isAuthenticated,
+  onHomePress,
 }) {
   const { width } = useWindowDimensions();
   const isWideScreen = width >= WIDE_SCREEN_BREAKPOINT;
@@ -98,13 +99,13 @@ export default function HomeHeader({
         <View style={styles.content}>
 
           {/* ── Logo ─────────────────────────────────────────── */}
-          <View style={styles.logoRow}>
+          <TouchableOpacity style={styles.logoRow} activeOpacity={0.8} onPress={onHomePress}>
             <Image
               source={require('../../../assets/logo.png')}
               style={styles.logoImage}
             />
             <Text style={styles.name} numberOfLines={1}>InnVision</Text>
-          </View>
+          </TouchableOpacity>
 
           {/* ── Right side ───────────────────────────────────── */}
           <View style={styles.navRight}>
@@ -184,6 +185,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    // At narrow phone widths the logo + name + CTA + hamburger can
+    // overflow a non-wrapping row and clip the right-side CTA.
+    // Allow the row itself to wrap so nothing gets pushed off-screen.
+    flexWrap: 'wrap',
     paddingHorizontal: spacing.lg,
     paddingTop: CONTENT_PADDING_TOP,
     paddingBottom: CONTENT_PADDING_BOTTOM,
@@ -208,6 +213,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.headingExtraBold,
     color: colors.primary,
     letterSpacing: 0.3,
+    flexShrink: 1,
   },
 
   // Nav
@@ -215,6 +221,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    flexShrink: 1,
+    marginLeft: 'auto',
   },
   navLinks: {
     flexDirection: 'row',
@@ -243,6 +251,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
+    flexShrink: 1,
   },
   ctaBookNow: {
     backgroundColor: colors.step,

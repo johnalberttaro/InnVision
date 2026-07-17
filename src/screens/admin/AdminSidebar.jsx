@@ -15,7 +15,7 @@ const WIDE_BREAKPOINT = 1024; // sidebar is fixed/always-visible above this
 const SIDEBAR_WIDTH = 264;
 
 // ─── Logo image ───────────────────────────────────────────────────────────
-const LOGO_SOURCE = null; // ← swap to require('../../../assets/logo.png')
+const LOGO_SOURCE = require('../../../assets/logo.png');
 // ─────────────────────────────────────────────────────────────────────────
 
 // Admin Portal menu — covers SRS Module 6 (Admin Management):
@@ -43,6 +43,40 @@ const MENU_SECTIONS = [
     label: 'Staff',
     subItems: [
       { key: 'staff:accounts', label: 'Front Desk Accounts' },
+      { key: 'staff:frontdesk', label: 'Front Desk Roster' },
+    ],
+  },
+  {
+    key: 'fd',
+    icon: '🛎️',
+    label: 'Front Desk Operations',
+    // Admin can do everything a front desk staff member can — and more.
+    // These mirror the Front Desk portal's menu (prefixed `fd:` to avoid
+    // colliding with admin-only keys like `rooms:types`). Keys map 1:1 to
+    // the same screens the Front Desk uses, so the admin effectively
+    // operates the front desk from inside the Admin Portal.
+    subItems: [
+      { key: 'fd:reservations:all', label: 'View Reservations' },
+      { key: 'fd:reservations:pending', label: 'Pending Reservations' },
+      { key: 'fd:reservations:confirmed', label: 'Confirmed Reservations' },
+      { key: 'fd:reservations:checkins', label: 'Check-ins' },
+      { key: 'fd:reservations:checkouts', label: 'Check-outs' },
+      { key: 'fd:rooms:list', label: 'Room List' },
+      { key: 'fd:rooms:types', label: 'Room Types' },
+      { key: 'fd:rooms:availability', label: 'Room Availability' },
+      { key: 'fd:rooms:status', label: 'Room Status' },
+      { key: 'fd:rooms:maintenance', label: 'Room Maintenance' },
+      { key: 'fd:guests:profiles', label: 'Guest Profiles' },
+      { key: 'fd:guests:records', label: 'Guest Records' },
+      { key: 'fd:guests:requests', label: 'Special Requests' },
+      { key: 'fd:billing:records', label: 'Billing Records' },
+      { key: 'fd:billing:payments', label: 'Payments' },
+      { key: 'fd:billing:receipts', label: 'Receipts' },
+      { key: 'fd:billing:outstanding', label: 'Outstanding Balances' },
+      { key: 'fd:billing:transactions', label: 'Transaction History' },
+      { key: 'fd:housekeeping:schedule', label: 'Housekeeping Schedule' },
+      { key: 'fd:housekeeping:status', label: 'Room Cleaning Status' },
+      { key: 'fd:housekeeping:maintenance', label: 'Maintenance Requests' },
     ],
   },
   {

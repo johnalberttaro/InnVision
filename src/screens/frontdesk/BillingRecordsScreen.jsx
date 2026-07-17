@@ -4,7 +4,7 @@
 // onSelectRecord, which AdminShell uses to open the folio detail view
 // (same pattern as onSelectGuest -> guests:profile).
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,9 @@ import {
   searchBillingRecords,
   getBillingRecordsByStatus,
 } from '../../utils/BillingService';
+import Pagination from '../../components/shared/Pagination';
+
+const PAGE_SIZE = 5;
 
 // Reservation dates can arrive as Firestore Timestamps (have a .toDate()
 // method), ISO strings, or already-formatted strings — normalize all
@@ -56,6 +59,7 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
   const [error, setError] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const loadRecords = useCallback(async () => {
     try {
@@ -81,6 +85,18 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
     setLoading(true);
     loadRecords();
   }, [loadRecords]);
+
+  // Whenever the search term or filter changes, the underlying result set
+  // changes shape — jump back to page 1 so the user isn't stranded on a
+  // page number that may no longer exist for the new result set.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, activeFilter]);
+
+  const pagedRecords = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return records.slice(start, start + PAGE_SIZE);
+  }, [records, currentPage]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -121,37 +137,51 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Billing Records</Text>
-      <Text style={styles.subtitle}>Guest folios created automatically at check-in</Text>
+      <View style={styles.headerRow}>
+        <View style={styles.headerText}>
+          <Text style={styles.title}>Billing Records</Text>
+          <Text style={styles.subtitle}>Guest folios created automatically at check-in</Text>
+        </View>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by folio #, guest name, or room number"
+          placeholderTextColor={colors.textMuted}
+          value={searchTerm}
+          onChangeText={setSearchTerm}
+        />
+      </View>
 
-      <TextInput
-        style={styles.searchInput}
-        placeholder="Search by folio #, guest name, or room number"
-        placeholderTextColor={colors.textMuted}
-        value={searchTerm}
-        onChangeText={setSearchTerm}
-      />
-
-      <View style={styles.filterRow}>
-        {STATUS_FILTERS.map((f) => (
-          <TouchableOpacity
-            key={f.key}
-            style={[styles.filterChip, activeFilter === f.key && styles.filterChipActive]}
-            onPress={() => {
-              setSearchTerm('');
-              setActiveFilter(f.key);
-            }}
-          >
-            <Text
-              style={[
-                styles.filterChipText,
-                activeFilter === f.key && styles.filterChipTextActive,
-              ]}
+      <View style={styles.filterAndPageRow}>
+        <View style={styles.filterRow}>
+          {STATUS_FILTERS.map((f) => (
+            <TouchableOpacity
+              key={f.key}
+              style={[styles.filterChip, activeFilter === f.key && styles.filterChipActive]}
+              onPress={() => {
+                setSearchTerm('');
+                setActiveFilter(f.key);
+              }}
             >
-              {f.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+              <Text
+                style={[
+                  styles.filterChipText,
+                  activeFilter === f.key && styles.filterChipTextActive,
+                ]}
+              >
+                {f.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {!loading && !error && records.length > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            totalItems={records.length}
+            pageSize={PAGE_SIZE}
+            onPageChange={setCurrentPage}
+          />
+        )}
       </View>
 
       {loading ? (
@@ -162,11 +192,11 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
         <Text style={styles.emptyText}>No billing records found.</Text>
       ) : (
         <FlatList
-          data={records}
+          data={pagedRecords}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={{ paddingBottom: spacing.xl }}
+          contentContainerStyle={{ paddingBottom: spacing.sm }}
         />
       )}
     </View>
@@ -179,6 +209,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     padding: spacing.lg,
   },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: spacing.lg,
+  },
+  headerText: {
+    flex: 1,
+    paddingRight: spacing.md,
+  },
   title: {
     fontFamily: fonts.headingBold,
     fontSize: 24,
@@ -189,7 +229,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
     marginTop: 2,
-    marginBottom: spacing.lg,
   },
   searchInput: {
     backgroundColor: colors.white,
@@ -199,15 +238,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     fontFamily: fonts.body,
-    fontSize: 14,
+    fontSize: 12,
     color: colors.text,
-    marginBottom: spacing.md,
+    width: 260,
+    maxWidth: '45%',
+  },
+  filterAndPageRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: spacing.lg,
   },
   filterRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: spacing.lg,
   },
   filterChip: {
     paddingHorizontal: spacing.md,
@@ -247,7 +294,7 @@ const styles = StyleSheet.create({
   folioNumber: {
     fontFamily: fonts.bodySemiBold,
     fontSize: 12,
-    color: colors.secondary,
+    color: colors.accent,
     marginBottom: 2,
   },
   guestName: {

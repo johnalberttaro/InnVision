@@ -1,18 +1,165 @@
-rules_version='2'
+rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      // This rule allows anyone with your database reference to view, edit,
-      // and delete all data in your database. It is useful for getting
-      // started, but it is configured to expire after 30 days because it
-      // leaves your app open to attackers. At that time, all client
-      // requests to your database will be denied.
-      //
-      // Make sure to write security rules for your app before that time, or
-      // else all client requests to your database will be denied until you
-      // update your rules.
-      allow read, write: if request.time < timestamp.date(2026, 7, 25);
+
+    // ────────────────────────────────────────────────────────────────
+    // HELPERS
+    // ────────────────────────────────────────────────────────────────
+
+    // The caller's role, read from their own guests/{uid} profile.
+    // This is the single source of truth for authorization — clients
+    // CANNOT set their own role (see guests rule below), so a guest
+    // cannot self-promote to staff/admin.
+    function callerRole() {
+      return get(/databases/$(database)/documents/guests/$(request.auth.uid)).data.role;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isStaff() {
+      return isSignedIn() && callerRole() in ['admin', 'frontdesk'];
+    }
+
+    function isAdmin() {
+      return isSignedIn() && callerRole() == 'admin';
+    }
+
+    // True when the document being read/written belongs to the caller.
+    function isOwner() {
+      return isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // Fields a guest is allowed to write on their own profile. Role and
+    // other staff-only fields are explicitly NOT in this list.
+    function guestOwnedFields() {
+      return [
+        'firstName', 'lastName', 'email', 'phone', 'displayName',
+        'darkMode', 'updatedAt', 'nationality', 'idType', 'idNumber',
+        'vipTier', 'tags', 'staffNotes', 'source', 'linkedUid',
+        'createdAt', 'createdBy', 'status', 'cancelledAt'
+      ];
+    }
+
+    // Validate a guest-owned write against the allowed field list. On a
+    // create there is no existing resource, so only check incoming keys.
+    function guestWriteIsValid() {
+      return resource == null
+        ? request.resource.data.keys().hasOnly(guestOwnedFields())
+        : request.resource.data.diff(resource.data)
+              .affectedKeys().hasOnly(guestOwnedFields());
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // GUESTS  (profile documents, keyed by auth uid)
+    // ────────────────────────────────────────────────────────────────
+    match /guests/{uid} {
+      // Anyone authenticated can READ the guest directory (front desk
+      // needs names/emails; profiles are not secret at this scale).
+      allow read: if isSignedIn();
+
+      // A user may only write their OWN profile. The write must not
+      // touch `role`/`userRole`/`accessLevel`/`roleName`/`isAdmin`/
+      // `isFrontDesk`/`isStaff`/`inactive` — those are staff-managed
+      // and cannot be self-assigned — and may only modify fields in the
+      // guest-owned allow-list.
+      allow write: if isSignedIn()
+                    && request.auth.uid == uid
+                    && !('role' in request.resource.data)
+                    && !('userRole' in request.resource.data)
+                    && !('accessLevel' in request.resource.data)
+                    && !('roleName' in request.resource.data)
+                    && !('isAdmin' in request.resource.data)
+                    && !('isFrontDesk' in request.resource.data)
+                    && !('isStaff' in request.resource.data)
+                    && !('inactive' in request.resource.data)
+                    && guestWriteIsValid();
+
+      // Staff may write any profile (including role) — e.g. admin creates
+      // a front-desk account or deactivates one.
+      allow write: if isStaff();
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // RESERVATIONS
+    // ────────────────────────────────────────────────────────────────
+    match /reservations/{reservationId} {
+      // Guests see only their own; staff see everything.
+      allow read: if isStaff() || isOwner();
+
+      // Create: a signed-in user may create a reservation only for
+      // themselves (uid must match), and may NOT set the lifecycle
+      // status directly to a confirmed/checked-in state — it must start
+      // 'pending' and be advanced by staff.
+      allow create: if isSignedIn()
+                     && request.resource.data.uid == request.auth.uid
+                     && request.resource.data.status == 'pending';
+
+      // Update: a guest may only edit their OWN reservation. They may
+      // change guest details on a pending booking, or cancel it
+      // (pending/upcoming -> cancelled). They may NOT advance the
+      // lifecycle to upcoming/checked-in/checked-out — that is staff-only.
+      // Staff may update any reservation (incl. status changes).
+      allow update: if (isOwner()
+                        && request.resource.data.uid == resource.data.uid
+                        && (request.resource.data.status == 'cancelled'
+                            || (resource.data.status == 'pending'
+                                && request.resource.data.status == 'pending')))
+                    || (isStaff() && resource.data.uid == request.resource.data.uid);
+
+      allow delete: if isAdmin();
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // ROOMS  (inventory, keyed by room number) — staff write, all read
+    // ────────────────────────────────────────────────────────────────
+    match /rooms/{roomNumber} {
+      allow read: if isSignedIn();
+      allow write: if isStaff();
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // ROOM TYPES  (rates) — staff write, all read
+    // ────────────────────────────────────────────────────────────────
+    match /roomTypes/{roomTypeId} {
+      allow read: if isSignedIn();
+      allow write: if isStaff();
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // BILLING  (folios, payments, transactions) — staff only
+    // ────────────────────────────────────────────────────────────────
+    match /billingRecords/{id} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+
+    match /payments/{id} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+
+    match /transactions/{id} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+
+    match /counters/{docId} {
+      allow read: if isStaff();
+      allow write: if isStaff();
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // NOTIFICATIONS  — owner reads, system/staff writes
+    // ────────────────────────────────────────────────────────────────
+    match /notifications/{id} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isStaff()
+                     && request.resource.data.uid is string;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if isAdmin();
     }
   }
 }

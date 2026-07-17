@@ -119,7 +119,7 @@ const TWO_COL_BREAKPOINT = 680;
  *  - onBackToRooms:  () => void
  *  - onConfirm:      () => void
  */
-export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, onBackToRooms, onConfirm }) {
+export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, onBackToRooms, onConfirm, onHomePress }) {
   const { width } = useWindowDimensions();
   const isTwoCol  = width >= TWO_COL_BREAKPOINT;
 
@@ -137,6 +137,8 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   const [errors, setErrors]                   = useState({});
   const [focusedField, setFocusedField]       = useState(null);
   const [confirming, setConfirming]           = useState(false);
+  const [showSuccessState, setShowSuccessState] = useState(false);
+  const [successMessage, setSuccessMessage]   = useState('');
 
   // 'form' shows the guest-details form below; 'ewallet' swaps in
   // EwalletPaymentScreen. See docstring above.
@@ -186,6 +188,39 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   const tax      = Math.round(subtotal * TAX_RATE);
   const total    = subtotal + tax;
   const roomTypeSummary = selectedRooms.map((r) => r.roomTypeName || r.name).join(', ');
+
+  if (showSuccessState) {
+    return (
+      <View style={styles.container}>
+        <Brandheader onHomePress={onHomePress} />
+        <View style={styles.successOverlay}>
+          <TouchableOpacity style={styles.successHomeButton} onPress={onHomePress} activeOpacity={0.85}>
+            <Ionicons name="home-outline" size={16} color={colors.primary} />
+            <Text style={styles.successHomeButtonText}>Home</Text>
+          </TouchableOpacity>
+
+          <View style={styles.successCard}>
+            <View style={styles.successIconWrap}>
+              <Ionicons name="checkmark-circle" size={56} color={colors.primary} />
+            </View>
+            <Text style={styles.successTitle}>Reservation Submitted</Text>
+            <Text style={styles.successMessage}>{successMessage}</Text>
+
+            {reservationId && (
+              <View style={styles.resIdBadge}>
+                <Ionicons name="document-text-outline" size={13} color={colors.primary} />
+                <Text style={styles.resIdText}>Ref: #{reservationId.slice(0, 10).toUpperCase()}</Text>
+              </View>
+            )}
+
+            <TouchableOpacity style={styles.successPrimaryBtn} onPress={onHomePress} activeOpacity={0.85}>
+              <Text style={styles.successPrimaryBtnText}>Go to Home</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    );
+  }
 
   // ── Validation ───────────────────────────────────────────────────────
   // Note: eWallet choice is no longer validated here — it's chosen on
@@ -319,11 +354,8 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
       // caught internally and never affect the guest-facing flow below.
       await upsertGuestRecord();
 
-      Alert.alert(
-        'Reservation Submitted! 🎉',
-        `Thank you, ${firstName}! Your ${roomTypeSummary} room request for ${formatDate(checkIn)} – ${formatDate(checkOut)} has been sent to the hotel for confirmation.\n\nTotal: ${formatCurrency(total)}`,
-        [{ text: 'OK', onPress: onConfirm }]
-      );
+      setSuccessMessage(`Thank you, ${firstName}! Your ${roomTypeSummary} room request for ${formatDate(checkIn)} – ${formatDate(checkOut)} has been sent to the hotel for confirmation.\n\nTotal: ${formatCurrency(total)}`);
+      setShowSuccessState(true);
     } catch (err) {
       console.error('Confirm reservation error:', err);
       Alert.alert('Error', 'Could not submit your reservation. Please try again.');
@@ -378,7 +410,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
 
   return (
     <View style={styles.container}>
-      <Brandheader />
+      <Brandheader onHomePress={onHomePress} />
       <StepIndicator currentStep={2} />
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -647,6 +679,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
           <Appfooter />
         </View>
       </ScrollView>
+        
     </View>
   );
 }
@@ -742,6 +775,86 @@ function getStyles(colors, spacing, radius, fonts) {
 
     resIdBadge: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.md, backgroundColor: colors.primaryTint, borderRadius: radius.sm, padding: spacing.sm },
     resIdText:  { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.primary },
+
+    successOverlay: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: spacing.lg,
+      paddingTop: spacing.xxl,
+      position: 'relative',
+    },
+    successHomeButton: {
+      position: 'absolute',
+      top: spacing.lg,
+      right: spacing.lg,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.08,
+      shadowRadius: 6,
+      elevation: 2,
+    },
+    successHomeButtonText: {
+      color: colors.primary,
+      fontFamily: fonts.bodySemiBold,
+      fontSize: 13,
+    },
+    successCard: {
+      width: '100%',
+      maxWidth: 560,
+      backgroundColor: colors.card,
+      borderRadius: radius.xl,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: spacing.xl,
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.08,
+      shadowRadius: 16,
+      elevation: 4,
+    },
+    successIconWrap: {
+      marginBottom: spacing.md,
+    },
+    successTitle: {
+      fontSize: 22,
+      fontFamily: fonts.headingBold,
+      color: colors.text,
+      marginBottom: spacing.sm,
+      textAlign: 'center',
+    },
+    successMessage: {
+      fontSize: 14,
+      fontFamily: fonts.body,
+      color: colors.textMuted,
+      textAlign: 'center',
+      lineHeight: 22,
+      marginBottom: spacing.md,
+    },
+    successPrimaryBtn: {
+      marginTop: spacing.sm,
+      backgroundColor: colors.primary,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.lg,
+      borderRadius: radius.md,
+      minWidth: 180,
+      alignItems: 'center',
+    },
+    successPrimaryBtnText: {
+      color: colors.onPrimary,
+      fontFamily: fonts.bodySemiBold,
+      fontSize: 14,
+    },
 
     // Folded in from the old separate summaryStyles stylesheet
     summaryRow:   { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.xs + 2, borderBottomWidth: 0.5, borderBottomColor: colors.border },

@@ -43,6 +43,13 @@ const TRUST_POINTS = [
  * the booking form (right), joined into a single card so the desktop
  * view reads as one considered layout, not a floating dialog. Mobile is
  * untouched — the brand panel only renders when isDesktop is true.
+ *
+ * CENTERING PASS: scrollContent now uses flexGrow so the content
+ * container is at least as tall as the ScrollView, giving
+ * justifyContent/alignItems real space to center the shell within on
+ * both mobile and desktop. When the form is taller than the screen,
+ * flexGrow doesn't clip anything — the ScrollView still scrolls
+ * normally to reach the bottom CTA.
  */
 export default function ReservationScreen({ user, onSearch, onClose }) {
   const [checkIn, setCheckIn]   = useState(null);
@@ -217,12 +224,13 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
               </View>
             </View>
 
-            {/* CTA */}
+            {/* CTA — same on every platform. In Expo Go / native
+                (Platform.OS !== 'web') isDesktop is always false, so this
+                is the only submit path; never hide it there. */}
             <TouchableOpacity
               style={styles.ctaButton}
               onPress={handleSearch}
               activeOpacity={0.85}
-              {...(Platform.OS === 'web' ? { onMouseEnter: () => {}, onMouseLeave: () => {} } : {})}
             >
               <Text style={styles.ctaText}>Check Rates & Availability</Text>
             </TouchableOpacity>
@@ -324,6 +332,12 @@ function getStyles(colors, spacing, radius, fonts, isDesktop) {
     /* Scroll */
     scroll: { flex: 1 },
     scrollContent: {
+      // flexGrow makes the content container at least as tall as the
+      // ScrollView itself — that's what gives justifyContent/alignItems
+      // real space to center the shell within, on both mobile and
+      // desktop. When the form is taller than the screen, flexGrow
+      // doesn't clip anything: the container just grows past 100% and
+      // the ScrollView scrolls normally to reach the bottom CTA.
       flexGrow: 1,
       justifyContent: 'center',
       alignItems: 'center',
@@ -529,8 +543,11 @@ function getStyles(colors, spacing, radius, fonts, isDesktop) {
     modalSheet: {
       maxHeight: '85%',
       maxWidth: isDesktop ? 480 : undefined,
-      width: isDesktop ? '100%' : undefined,
-      alignSelf: isDesktop ? 'center' : undefined,
+      width: isDesktop ? '100%' : '100%',
+      backgroundColor: colors.card,
+      borderRadius: radius.lg,
+      overflow: 'hidden',
+      alignSelf: isDesktop ? 'center' : 'stretch',
     },
   });
 }

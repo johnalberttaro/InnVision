@@ -12,6 +12,7 @@ import {
   Alert,
 } from 'react-native';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { launchImageLibraryAsync, MediaTypeOptions } from 'expo-image-picker';
 import {
   subscribeToRoomTypes,
   createRoomType,
@@ -225,6 +226,7 @@ const EMPTY_FORM = {
   occupancy: '',
   floor: '',
   inclusionsText: '',
+  images: [],
 };
 
 function toFormState(roomType) {
@@ -239,6 +241,7 @@ function toFormState(roomType) {
     occupancy: roomType.occupancy || '',
     floor: roomType.floor || '',
     inclusionsText: (roomType.inclusions || []).join(', '),
+    images: Array.isArray(roomType.images) ? roomType.images.map((img) => ({ uri: img.uri, label: img.label || '' })) : [],
   };
 }
 
@@ -259,6 +262,30 @@ function RoomTypeFormModal({ visible, initialData, onClose, onSave }) {
   const setField = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     if (errors[key]) setErrors((prev) => ({ ...prev, [key]: null }));
+  };
+
+  // Pick one or more photos from the device library and append them as
+  // { uri } entries. expo-image-picker returns a local file:// URI — these
+  // are stored as-is on the room type doc (no Firebase Storage upload is
+  // wired up yet), so they persist as long as the doc is unchanged.
+  const pickImages = async () => {
+    try {
+      const result = await launchImageLibraryAsync({
+        mediaTypes: MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        quality: 0.7,
+        selectionLimit: 8,
+      });
+      if (result.canceled || !result.assets) return;
+      const picked = result.assets.map((asset) => ({ uri: asset.uri, label: '' }));
+      setForm((prev) => ({ ...prev, images: [...prev.images, ...picked].slice(0, 8) }));
+    } catch (err) {
+      console.error('Image picker failed:', err);
+    }
+  };
+
+  const removeImage = (index) => {
+    setForm((prev) => ({ ...prev, images: prev.images.filter((_, i) => i !== index) }));
   };
 
   const validate = () => {
@@ -298,6 +325,7 @@ function RoomTypeFormModal({ visible, initialData, onClose, onSave }) {
         occupancy: form.occupancy.trim(),
         floor: form.floor.trim(),
         inclusions,
+        images: form.images,
       });
     } catch (err) {
       Alert.alert('Error', err.message || 'Could not save this room type. Please try again.');
@@ -334,6 +362,37 @@ function RoomTypeFormModal({ visible, initialData, onClose, onSave }) {
             </View>
 
             <FormField label="Amenities (comma-separated)" value={form.inclusionsText} onChangeText={(v) => setField('inclusionsText', v)} placeholder="Free Wi-Fi, Air conditioning, Flat-screen TV" multiline />
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Room Images</Text>
+              <View style={styles.imageGrid}>
+                {form.images.map((img, i) => (
+                  <View key={i} style={styles.imageTile}>
+                    <Image source={{ uri: img.uri }} style={styles.imageThumb} resizeMode="cover" />
+                    <TouchableOpacity
+                      style={styles.imageRemove}
+                      onPress={() => removeImage(i)}
+                      accessibilityLabel="Remove image"
+                      activeOpacity={0.75}
+                    >
+                      <Text style={styles.imageRemoveText}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+                {form.images.length < 8 && (
+                  <TouchableOpacity
+                    style={styles.imageAddTile}
+                    onPress={pickImages}
+                    accessibilityLabel="Add room image"
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.imageAddIcon}>+</Text>
+                    <Text style={styles.imageAddText}>Add Photo</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <Text style={styles.imageHint}>Up to 8 photos. Picked from your device gallery.</Text>
+            </View>
 
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.cancelBtn} onPress={onClose} activeOpacity={0.75} disabled={saving}>
@@ -432,4 +491,35 @@ const styles = StyleSheet.create({
   saveBtn: { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: spacing.sm + 2, paddingHorizontal: spacing.lg, minWidth: 130, alignItems: 'center', justifyContent: 'center' },
   saveBtnText: { fontFamily: fonts.headingSemiBold, fontSize: 13, color: colors.white },
   buttonDisabled: { opacity: 0.7 },
+
+  /* Images */
+  imageGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.xs },
+  imageTile: { width: 76, height: 76, borderRadius: radius.md, overflow: 'hidden', borderWidth: 1, borderColor: colors.border },
+  imageThumb: { width: '100%', height: '100%' },
+  imageRemove: {
+    position: 'absolute',
+    top: 3,
+    right: 3,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageRemoveText: { color: colors.white, fontSize: 11, fontFamily: fonts.bodySemiBold },
+  imageAddTile: {
+    width: 76,
+    height: 76,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.border,
+    backgroundColor: colors.cardAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageAddIcon: { fontSize: 22, color: colors.textMuted, fontFamily: fonts.headingBold },
+  imageAddText: { fontSize: 9, color: colors.textMuted, fontFamily: fonts.bodySemiBold, marginTop: 2 },
+  imageHint: { fontFamily: fonts.body, fontSize: 11, color: colors.textMuted, marginTop: spacing.xs },
 });

@@ -63,7 +63,7 @@ const MENU_SECTIONS = [
     subItems: [
       { key: 'guests:profiles', label: 'Guest Profiles' },
       { key: 'guests:records', label: 'Guest Records' },
-      { key: 'guests:requests', label: 'Special Requests' },
+  
     ],
   },
   {
@@ -74,8 +74,7 @@ const MENU_SECTIONS = [
       { key: 'billing:records', label: 'Billing Records' },
       { key: 'billing:payments', label: 'Payments' },
       { key: 'billing:receipts', label: 'Receipts' },
-      { key: 'billing:outstanding', label: 'Outstanding Balances' },
-      { key: 'billing:transactions', label: 'Transaction History' },
+  
     ],
   },
   {
