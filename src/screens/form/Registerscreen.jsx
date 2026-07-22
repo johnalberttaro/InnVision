@@ -1,12 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image,
+  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 
 export default function RegisterScreen({ onRegister, onLoginPress }) {
@@ -18,6 +16,17 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
   const [focusedField, setFocusedField] = useState(null);
   const [loading, setLoading]           = useState(false);
   const [globalError, setGlobalError]   = useState('');
+
+  // Smooth entrance whenever this screen mounts — e.g. coming here from
+  // Login feels like a continuation, not an abrupt cut.
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(16)).current;
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 320, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 320, useNativeDriver: true }),
+    ]).start();
+  }, []);
 
   const update = (field, value) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -68,60 +77,53 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
     setGlobalError('');
 
     try {
-      // Step 1: Create Firebase Auth user
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        form.email.trim(),
-        form.password
-      );
-      const user = userCredential.user;
-
-      // Step 2: Set display name in Firebase Auth
-      await updateProfile(user, {
-        displayName: `${form.firstName.trim()} ${form.lastName.trim()}`,
+      // Create the Supabase Auth user. first_name/last_name/phone/display_name
+      // go in as user metadata — the on_auth_user_created trigger (see
+      // innvision_schema.sql) reads them and writes the matching `profiles`
+      // row automatically. No separate setDoc(doc(db,'guests',user.uid), ...)
+      // step needed the way Firestore required — that manual write is gone.
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: form.email.trim(),
+        password: form.password,
+        options: {
+          data: {
+            first_name: form.firstName.trim(),
+            last_name: form.lastName.trim(),
+            phone: form.phone.trim(),
+            display_name: `${form.firstName.trim()} ${form.lastName.trim()}`,
+          },
+        },
       });
+      if (signUpError) throw signUpError;
 
-      // Step 3: Save profile to Firestore (wrapped separately so auth still works if Firestore fails)
-      try {
-        await setDoc(doc(db, 'guests', user.uid), {
-          firstName:   form.firstName.trim(),
-          lastName:    form.lastName.trim(),
-          email:       form.email.trim(),
-          phone:       form.phone.trim(),
-          displayName: `${form.firstName.trim()} ${form.lastName.trim()}`,
-          createdAt:   serverTimestamp(),
-        });
-      } catch (firestoreErr) {
-        // Firestore save failed but auth succeeded — log it, don't block the user
-        console.warn('Firestore write failed (check rules):', firestoreErr.message);
-      }
-
-      // Success — pass user up to App.jsx
-      onRegister && onRegister(user);
+      // NOTE: if email confirmation is enabled in Supabase Auth settings
+      // (the default), `data.session` is null here — the user exists but
+      // isn't logged in until they click the confirmation link. onRegister
+      // below currently assumes an immediately-logged-in user, same as the
+      // old Firebase behavior. Decide whether to keep confirmation required
+      // (safer, standard) or disable it in Supabase for parity with the old
+      // flow — this changes what onRegister should do next.
+      onRegister && onRegister(data.user);
 
     } catch (err) {
-      // Show the raw Firebase error code in dev so you know what's happening
-      console.error('Registration error:', err.code, err.message);
+      console.error('Registration error:', err.message);
 
-      switch (err.code) {
-        case 'auth/email-already-in-use':
-          setGlobalError('This email is already registered. Please log in instead.');
-          break;
-        case 'auth/invalid-email':
-          setGlobalError('Please enter a valid email address.');
-          break;
-        case 'auth/weak-password':
-          setGlobalError('Password is too weak. Use at least 8 characters.');
-          break;
-        case 'auth/network-request-failed':
-          setGlobalError('Network error. Please check your internet connection.');
-          break;
-        case 'auth/operation-not-allowed':
-          setGlobalError('Email/password sign-up is not enabled. Please contact support.');
-          break;
-        default:
-          // Show the actual Firebase error message in the banner for easier debugging
-          setGlobalError(`Error: ${err.message}`);
+      // Supabase Auth errors don't carry Firebase-style `auth/xxx` codes —
+      // match on message content instead.
+      const msg = (err.message || '').toLowerCase();
+      if (msg.includes('already registered')) {
+        setGlobalError('This email is already registered. Please log in instead.');
+      } else if (msg.includes('invalid') && msg.includes('email')) {
+        setGlobalError('Please enter a valid email address.');
+      } else if (msg.includes('password') && (msg.includes('weak') || msg.includes('least'))) {
+        setGlobalError('Password is too weak. Use at least 8 characters.');
+      } else if (msg.includes('network')) {
+        setGlobalError('Network error. Please check your internet connection.');
+      } else if (msg.includes('signups not allowed') || msg.includes('email logins are disabled')) {
+        setGlobalError('Email/password sign-up is not enabled. Please contact support.');
+      } else {
+        // Show the actual Supabase error message in the banner for easier debugging
+        setGlobalError(`Error: ${err.message}`);
       }
     } finally {
       setLoading(false);
@@ -143,7 +145,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <View style={styles.card}>
+          <Animated.View style={[styles.card, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
 
             {/* Logo */}
             <View style={styles.logoBadge}>
@@ -170,6 +172,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
               <View style={[styles.fieldGroup, { flex: 1 }]}>
                 <Text style={styles.label}>First Name <Text style={styles.required}>*</Text></Text>
                 <View style={wrapStyle('firstName')}>
+                  <Ionicons name="person-outline" size={16} color={focusedField === 'firstName' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
                   <TextInput
                     style={inputStyle('firstName')}
                     placeholder="Enter your first name"
@@ -188,6 +191,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
               <View style={[styles.fieldGroup, { flex: 1 }]}>
                 <Text style={styles.label}>Last Name <Text style={styles.required}>*</Text></Text>
                 <View style={wrapStyle('lastName')}>
+                  <Ionicons name="person-outline" size={16} color={focusedField === 'lastName' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
                   <TextInput
                     style={inputStyle('lastName')}
                     placeholder="Enter your last name"
@@ -208,6 +212,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Email Address <Text style={styles.required}>*</Text></Text>
               <View style={wrapStyle('email')}>
+                <Ionicons name="mail-outline" size={18} color={focusedField === 'email' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
                 <TextInput
                   style={inputStyle('email')}
                   placeholder="Enter your email address"
@@ -229,6 +234,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Phone Number <Text style={styles.required}>*</Text></Text>
               <View style={wrapStyle('phone')}>
+                <Ionicons name="call-outline" size={18} color={focusedField === 'phone' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
                 <TextInput
                   style={inputStyle('phone')}
                   placeholderTextColor={colors.disabled}
@@ -248,6 +254,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Password <Text style={styles.required}>*</Text></Text>
               <View style={wrapStyle('password')}>
+                <Ionicons name="lock-closed-outline" size={18} color={focusedField === 'password' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
                 <TextInput
                   style={inputStyle('password')}
                   placeholder="Create a password"
@@ -269,6 +276,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Confirm Password <Text style={styles.required}>*</Text></Text>
               <View style={wrapStyle('confirmPassword')}>
+                <Ionicons name="lock-closed-outline" size={18} color={focusedField === 'confirmPassword' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
                 <TextInput
                   style={inputStyle('confirmPassword')}
                   placeholder="Re-enter your password"
@@ -305,7 +313,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
               <Text style={styles.loginButtonText}>Back to Log In</Text>
             </TouchableOpacity>
 
-          </View>
+          </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -316,7 +324,25 @@ const styles = StyleSheet.create({
   safe:   { flex: 1, backgroundColor: colors.cardAlt },
   flex:   { flex: 1 },
   scroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
-  card:   { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 0.5, borderColor: colors.border, padding: spacing.xxl, width: '100%', maxWidth: 420, alignItems: 'center' },
+
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.xxl,
+    width: '100%',
+    maxWidth: 420,
+    alignItems: 'center',
+    ...Platform.select({
+      web: { boxShadow: '0 20px 50px rgba(0,0,0,0.16)' },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.14,
+        shadowRadius: 24,
+        elevation: 8,
+      },
+    }),
+  },
 
   logoBadge: { width: 80, height: 80, borderRadius: radius.lg, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.lg, overflow: 'hidden' },
   logoImage: { width: 56, height: 56 },
@@ -331,21 +357,22 @@ const styles = StyleSheet.create({
   label:      { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.text, marginBottom: spacing.xs },
   required:   { color: colors.danger },
 
-  inputWrap:        { flexDirection: 'row', alignItems: 'center', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.sm },
-  inputWrapFocused: { borderColor: colors.text, backgroundColor: colors.card },
+  inputWrap:        { flexDirection: 'row', alignItems: 'center', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.sm, gap: spacing.xs },
+  inputWrapFocused: { borderColor: colors.primary, backgroundColor: colors.card },
   inputWrapError:   { borderColor: colors.danger,  backgroundColor: colors.dangerBg },
   inputWrapValid:   { borderColor: colors.primary, backgroundColor: colors.primaryTint },
-  input:            { flex: 1, height: 44, fontFamily: fonts.body, fontSize: 14, color: colors.text, outlineStyle: 'none' },
+  inputIcon:    { flexShrink: 0 },
+  input:            { flex: 1, height: 46, fontFamily: fonts.body, fontSize: 14, color: colors.text, outlineStyle: 'none' },
   checkIcon:    { fontSize: 13, color: colors.primary, fontFamily: fonts.bodySemiBold, marginLeft: spacing.xs },
-  eyeBtn:       { paddingLeft: spacing.sm, paddingVertical: spacing.xs },
+  eyeBtn:       { paddingLeft: spacing.xs, paddingVertical: spacing.xs },
   errorText:    { fontSize: 11, fontFamily: fonts.body, color: colors.danger, marginTop: 3 },
 
-  submitBtn:      { width: '100%', height: 44, borderRadius: radius.md, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },
+  submitBtn:      { width: '100%', height: 48, borderRadius: 999, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },
   submitText:     { fontFamily: fonts.headingSemiBold, fontSize: 15, color: colors.white, letterSpacing: 0.2 },
   buttonDisabled: { opacity: 0.7 },
 
   divider: { width: '100%', height: 0.5, backgroundColor: colors.border, marginVertical: spacing.lg },
 
-  loginButton:     { width: '100%', height: 44, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.accent, backgroundColor: colors.accentTint, alignItems: 'center', justifyContent: 'center' },
+  loginButton:     { width: '100%', height: 48, borderRadius: 999, borderWidth: 1.5, borderColor: colors.accent, backgroundColor: colors.accentTint, alignItems: 'center', justifyContent: 'center' },
   loginButtonText: { fontFamily: fonts.headingSemiBold, fontSize: 15, color: colors.accent, letterSpacing: 0.2 },
 });

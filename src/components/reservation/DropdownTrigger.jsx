@@ -14,8 +14,16 @@ import { useTheme } from '../../context/ThemeContext';
  *    stuck-white pill made that text invisible. Changed to `colors.card`
  *    so the pill flips along with everything else.
  *
+ * ENHANCED: icon now accepts a real icon element (e.g. an <Ionicons />
+ * node from ReservationScreen), not just an emoji string — rendering an
+ * arbitrary component inside a <Text> (the old behavior) is invalid in
+ * React Native and would break for anything but plain text. Still
+ * accepts a plain string for backward compatibility, wrapped in <Text>
+ * only in that case.
+ *
  * Props:
- *  - icon: string (emoji used as a lightweight icon, no asset needed)
+ *  - icon: React.ReactNode | string — an icon element, or (legacy) an
+ *    emoji string
  *  - children: content to render inside (text or a row of split labels)
  *  - isOpen: boolean (flips the chevron)
  *  - onPress: () => void
@@ -44,7 +52,7 @@ export default function DropdownTrigger({ icon, children, isOpen, onPress, error
           activeOpacity={0.85}
         >
           <View style={styles.iconBadge}>
-            <Text style={styles.icon}>{icon}</Text>
+            {typeof icon === 'string' ? <Text style={styles.icon}>{icon}</Text> : icon}
           </View>
           <View style={styles.content}>{children}</View>
           <Text style={[styles.chevron, isOpen && styles.chevronActive]}>{isOpen ? '▲' : '▼'}</Text>

@@ -1,53 +1,122 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import Svg, { Path, Circle } from 'react-native-svg';
-import { fonts } from '../../utils/theme';
+import Svg, { Circle } from 'react-native-svg';
+import { fonts, colors, spacing } from '../../utils/theme';
 
 /**
- * OccupancyGauge — semicircular gauge showing occupied / total rooms.
+ * OccupancyGauge — full circular progress ring showing occupied / total
+ * rooms, with the percentage and room count both inside the ring.
+ *
+ * REDESIGNED from a semicircular arc to a full circle — a full ring is a
+ * more universally understood "at a glance" pattern (the same mental
+ * model as an Apple Watch activity ring or a Fitbit goal ring: full
+ * circle = 100%, and how far around it's filled reads instantly without
+ * needing to read the number). It also uses the available square space
+ * in the KPI card better than a semicircle did, so everything can render
+ * larger.
+ *
+ * Also new: the ring's color now shifts automatically based on how full
+ * the hotel actually is, instead of always being one fixed brand color —
+ * this is what makes it "actionable" rather than just decorative. Front
+ * desk can read the SITUATION at a glance, not just the number:
+ *   - Under 50% occupied  -> calm green  ("plenty of availability")
+ *   - 50-79% occupied     -> steady charcoal/brand color ("normal")
+ *   - 80%+ occupied       -> amber       ("getting full, plan ahead")
+ * A `color` prop is still accepted for a fixed override if you ever want
+ * one, but the default (recommended) behavior is auto-thresholded.
  *
  * Props:
  *  - percent: number (0-100)
  *  - occupied: number
  *  - total: number
- *  - color: string        active arc color
- *  - trackColor: string   background arc color
- *  - size: number         overall width; height is size/2 + a bit for the label
+ *  - color: string | null   optional FIXED override; omit to use the
+ *                            auto occupancy-level color described above
+ *  - trackColor: string     background ring color
+ *  - size: number           overall diameter of the ring
  */
-export default function OccupancyGauge({ percent = 0, occupied = 0, total = 0, color = '#332B22', trackColor = '#E2D6C1', size = 92 }) {
+export default function OccupancyGauge({
+  percent = 0,
+  occupied = 0,
+  total = 0,
+  color = null,
+  trackColor = '#E2D6C1',
+  size = 108,
+}) {
   const clamped = Math.max(0, Math.min(100, percent));
-  const r = size / 2 - 8;
+
+  const levelColor =
+    color ||
+    (clamped >= 80 ? '#B36B00' /* amber — getting full */
+      : clamped >= 50 ? colors.primary /* steady, normal operation */
+      : '#1E7B34' /* green — plenty of availability */);
+
+  const levelLabel =
+    clamped >= 80 ? 'Nearly full'
+      : clamped >= 50 ? 'Steady'
+      : total > 0 ? 'Plenty of rooms'
+      : '';
+
+  const strokeWidth = 10;
+  const r = size / 2 - strokeWidth / 2;
   const cx = size / 2;
   const cy = size / 2;
-
-  const describeArc = (fraction) => {
-    // Semicircle from angle 180deg (left) to 0deg (right), sweeping through the top.
-    const startAngle = Math.PI; // 180deg
-    const endAngle = Math.PI - Math.PI * fraction; // sweeps clockwise toward 0deg
-    const startX = cx + r * Math.cos(startAngle);
-    const startY = cy + r * Math.sin(startAngle);
-    const endX = cx + r * Math.cos(endAngle);
-    const endY = cy + r * Math.sin(endAngle);
-    const largeArc = fraction > 0.5 ? 1 : 0;
-    return `M ${startX} ${startY} A ${r} ${r} 0 ${largeArc} 1 ${endX} ${endY}`;
-  };
+  const circumference = 2 * Math.PI * r;
+  const filled = circumference * (clamped / 100);
 
   return (
     <View style={styles.wrap}>
-      <Svg width={size} height={size / 2 + 10}>
-        <Path d={describeArc(1)} stroke={trackColor} strokeWidth={8} fill="none" strokeLinecap="round" />
-        {clamped > 0 && (
-          <Path d={describeArc(clamped / 100)} stroke={color} strokeWidth={8} fill="none" strokeLinecap="round" />
-        )}
-      </Svg>
-      <Text style={[styles.percentLabel, { color }]}>{total > 0 ? `${Math.round(clamped)}%` : '—'}</Text>
-      <Text style={styles.subLabel}>{total > 0 ? `${occupied} of ${total} rooms` : 'Needs room inventory data'}</Text>
+      <View style={{ width: size, height: size }}>
+        <Svg width={size} height={size}>
+          {/* Track — the full, unfilled ring */}
+          <Circle
+            cx={cx}
+            cy={cy}
+            r={r}
+            stroke={trackColor}
+            strokeWidth={strokeWidth}
+            fill="none"
+          />
+          {/* Progress — starts at 12 o'clock (rotated -90deg) and sweeps
+              clockwise, the standard reading direction for a progress ring */}
+          {clamped > 0 && (
+            <Circle
+              cx={cx}
+              cy={cy}
+              r={r}
+              stroke={levelColor}
+              strokeWidth={strokeWidth}
+              fill="none"
+              strokeLinecap="round"
+              strokeDasharray={`${filled} ${circumference}`}
+              strokeDashoffset={0}
+              rotation={-90}
+              origin={`${cx}, ${cy}`}
+            />
+          )}
+        </Svg>
+        {/* Percentage + room count, centered inside the ring */}
+        <View style={styles.centerLabel} pointerEvents="none">
+          <Text style={[styles.percentLabel, { color: levelColor }]}>
+            {total > 0 ? `${Math.round(clamped)}%` : '—'}
+          </Text>
+          <Text style={styles.roomsLabel}>{total > 0 ? `${occupied}/${total}` : 'No data'}</Text>
+        </View>
+      </View>
+      {!!levelLabel && (
+        <Text style={[styles.statusLabel, { color: levelColor }]}>{levelLabel}</Text>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: { alignItems: 'center' },
-  percentLabel: { fontSize: 20, fontFamily: fonts.headingExtraBold, marginTop: -6 },
-  subLabel: { fontSize: 10, fontFamily: fonts.body, color: '#8A7C64', marginTop: 2 },
+  centerLabel: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  percentLabel: { fontSize: 24, fontFamily: fonts.headingExtraBold },
+  roomsLabel: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: '#8A7C64', marginTop: 1 },
+  statusLabel: { fontSize: 11, fontFamily: fonts.bodySemiBold, marginTop: spacing.xs },
 });

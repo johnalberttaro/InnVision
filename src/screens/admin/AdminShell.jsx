@@ -11,12 +11,17 @@ import FrontDeskDashboardScreen from '../frontdesk/FrontDeskDashboardScreen';
 import ReservationsScreen from '../frontdesk/ReservationsScreen';
 import RoomManagementScreen from '../frontdesk/RoomManagementScreen';
 import RoomCleaningStatusScreen from '../frontdesk/RoomCleaningStatusScreen';
+import HousekeepingScheduleScreen from '../frontdesk/HousekeepingSchedule';
+import MaintenanceRequestScreen from '../frontdesk/MaintenanceRequest';
 import GuestRecordsScreen from '../frontdesk/GuestRecordsScreen';
 import GuestDetailsScreen from '../frontdesk/GuestDetailsScreen';
 import GuestProfileTableScreen from '../frontdesk/GuestProfileTableScreen';
+import InquiriesScreen from '../frontdesk/InquiriesScreen';
 import BillingRecordsScreen from '../frontdesk/BillingRecordsScreen';
 import BillingRecordDetailScreen from '../frontdesk/BillingRecordDetailScreen';
 import RecordPaymentModal from '../frontdesk/RecordPaymentModal';
+import DashboardNavbar from '../../components/shared/DashboardNavbar';
+import DashboardFooter from '../../components/shared/DashboardFooter';
 import PaymentsScreen from '../frontdesk/PaymentsScreen';
 import ReceiptsScreen from '../frontdesk/ReceiptsScreen';
 import { colors, spacing, fonts } from '../../utils/theme';
@@ -109,20 +114,12 @@ export default function AdminShell({ onLoggedOut, adminName }) {
       />
 
       <View style={styles.contentArea}>
-        {!isWide && (
-          <View style={styles.mobileTopBar}>
-            <TouchableOpacity
-              onPress={() => setMobileSidebarOpen(true)}
-              style={styles.menuButton}
-              accessibilityLabel="Open menu"
-            >
-              <View style={styles.menuLine} />
-              <View style={styles.menuLine} />
-              <View style={styles.menuLine} />
-            </TouchableOpacity>
-            <Text style={styles.mobileTopBarTitle}>InnVision Admin</Text>
-          </View>
-        )}
+        <DashboardNavbar
+          title="InnVision Admin"
+          isWide={isWide}
+          onMenuPress={() => setMobileSidebarOpen(true)}
+          onInquiriesPress={() => handleNavigate('fd:guests:inquiries')}
+        />
 
         <View style={styles.screenContent}>
           {renderActiveScreen({
@@ -141,6 +138,8 @@ export default function AdminShell({ onLoggedOut, adminName }) {
             folioRefreshTick,
           })}
         </View>
+
+        <DashboardFooter />
       </View>
 
       <RecordPaymentModal
@@ -185,14 +184,23 @@ function renderActiveScreen(props) {
     const section = activeKey.split(':')[2];
     return <RoomManagementScreen onLogout={props.onLoggedOut} section={section} />;
   }
+  if (activeKey === 'fd:housekeeping:schedule') {
+    return <HousekeepingScheduleScreen staffUid={props.staffUid} staffName={props.staffName} />;
+  }
   if (activeKey === 'fd:housekeeping:status') {
     return <RoomCleaningStatusScreen onLogout={props.onLoggedOut} />;
+  }
+  if (activeKey === 'fd:housekeeping:maintenance') {
+    return <MaintenanceRequestScreen staffUid={props.staffUid} staffName={props.staffName} />;
   }
   if (activeKey === 'fd:guests:records') {
     return <GuestRecordsScreen onSelectGuest={props.openGuestProfile} />;
   }
   if (activeKey === 'fd:guests:profiles') {
     return <GuestProfileTableScreen onSelectGuest={props.openGuestProfile} />;
+  }
+  if (activeKey === 'fd:guests:inquiries') {
+    return <InquiriesScreen />;
   }
   if (activeKey === 'fd:guests:profile') {
     return <GuestDetailsScreen guestId={props.selectedGuestId} onBack={props.closeGuestProfile} />;

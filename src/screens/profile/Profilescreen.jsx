@@ -16,71 +16,64 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-  doc,
-  setDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
-import {
-  updateProfile,
-  updatePassword,
-  reauthenticateWithCredential,
-  EmailAuthProvider,
-  verifyBeforeUpdateEmail,
-} from 'firebase/auth';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { auth, db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { useTheme } from '../../context/ThemeContext';
 import { formatDate } from '../../utils/dateHelpers';
 
 /**
  * ProfileScreen — Guest profile dashboard for InnVision.
  *
- * MIGRATED TO CENTRALIZED THEME (useTheme()) — this is the first screen
- * converted from the old static `import { colors } from utils/theme`
- * pattern. Styles are built by getStyles(colors) INSIDE the component
- * body (not at module scope) so they recompute whenever the active theme
- * changes, anywhere in the app.
+ * MIGRATED TO SUPABASE. Notes on what changed from the Firebase version:
  *
- * NEW IN THIS VERSION:
- *  - Personal Information (Contact/Gender/Address only) is editable
- *    in-place — no separate screen or modal. Name/email/username/status/
- *    registration date remain read-only, sourced from Firebase Auth.
- *  - Avatar upload via Firebase Storage + Firebase Auth updateProfile().
- *  - Change Password (reauth + updatePassword) and Change Email
- *    (reauth + verifyBeforeUpdateEmail) inline expanding forms.
- *  - 2FA toggle — UI/preference only for now (saved to Firestore),
- *    enforcement is a separate follow-up per current scope.
- *  - Dark Mode toggle — drives the app-wide ThemeProvider directly.
+ *  - `user` prop is now a Supabase Auth user object: `user.id` (not
+ *    `user.uid`), `user.created_at` / `user.last_sign_in_at` are top-level
+ *    ISO strings (not nested under `user.metadata`), and there's no
+ *    `user.displayName` / `user.photoURL` — those now live on the
+ *    `profiles` row instead, which this screen loads directly.
+ *
+ *  - contact / gender / address / photoURL / twoFactorEnabled used to
+ *    live on the Firestore `guests/{uid}` doc. In the new schema those
+ *    are columns on `profiles` instead — a `guests` row is now only
+ *    created when someone actually books a stay, so a freshly-registered
+ *    user with no bookings yet would have nowhere to store these
+ *    otherwise. Run the `alter table profiles add column ...` migration
+ *    before using this file.
+ *
+ *  - Avatar upload goes to Supabase Storage (bucket `avatars`, path
+ *    `{uid}/avatar.jpg`) instead of Firebase Storage. Needs the
+ *    `avatars` bucket + policies set up first.
+ *
+ *  - Reservation status comparison fixed: the old version compared
+ *    against `r.status === 'completed'`, but the reservations table's
+ *    status enum has no 'completed' value — every other screen in this
+ *    app uses 'checked-out'. That means Completed/History counts here
+ *    were effectively always zero in the live app. Now uses the same
+ *    current/history split as GuestRecordsScreen:
+ *      current = pending | upcoming | checked-in
+ *      history = checked-out | declined | cancelled
+ *
+ *  - Password change: Supabase has no direct "reauthenticateWithCredential"
+ *    API. This re-verifies the current password by calling
+ *    signInWithPassword with it first (throws if wrong), then calls
+ *    auth.updateUser({ password }).
+ *
+ *  - Email change: same reauth pattern, then auth.updateUser({ email }).
+ *    Supabase's default "secure email change" sends a confirmation to
+ *    BOTH the old and new address (configurable in Auth settings) —
+ *    slightly different UX than Firebase's single verifyBeforeUpdateEmail
+ *    link, worth trying once to see the actual email copy you get.
  *
  * Props:
- *  - user:       Firebase user object
+ *  - user:       Supabase Auth user object
  *  - onBookNow:  () => void
  *  - onLogout:   () => void
  *  - onBackPress:() => void
- *
- * (onEditProfile is no longer used — editing now happens in place on this
- * screen. Safe to remove from the caller whenever convenient.)
  */
 export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }) {
   const { width } = useWindowDimensions();
   const isWide    = width >= 768;
   const { colors, spacing, radius, fonts, isDark, setDarkMode } = useTheme();
   const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
-
-  const displayName = user?.displayName || 'Guest';
-  const email       = user?.email || '—';
-  const initials    = displayName
-    .split(' ')
-    .map(n => n[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
 
   const notify = (title, message) => {
     if (Platform.OS === 'web') {
@@ -90,52 +83,96 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
     }
   };
 
-  // ── Firestore: live reservations ─────────────────────────────────
+  // ── Supabase: profile row (identity + editable personal info) ──────
+  const [profile, setProfile] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+
+  useEffect(() => {
+    if (!user?.id) { setLoadingProfile(false); return; }
+
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      if (!cancelled) {
+        if (error) console.error('Supabase profile load error:', error);
+        setProfile(data || {});
+        setLoadingProfile(false);
+      }
+    })();
+
+    // Realtime updates — same live-listener behavior the Firestore
+    // onSnapshot version had.
+    const channel = supabase
+      .channel(`profile-${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${user.id}` },
+        (payload) => setProfile(payload.new)
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  const displayName = profile?.display_name
+    || [profile?.first_name, profile?.last_name].filter(Boolean).join(' ')
+    || 'Guest';
+  const email    = user?.email || '—';
+  // Contact falls back to the phone number captured at registration
+  // (profile.phone) until the person explicitly sets a separate contact
+  // number here — so registration data always shows up somewhere, instead
+  // of the two fields silently disagreeing.
+  const displayedContact = profile?.contact || profile?.phone || '';
+  const initials = displayName
+    .split(' ')
+    .map(n => n[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+
+  // ── Supabase: live reservations for this user ──────────────────────
   const [reservations, setReservations] = useState([]);
   const [loadingRes, setLoadingRes]     = useState(true);
 
   useEffect(() => {
-    if (!user?.uid) { setLoadingRes(false); return; }
+    if (!user?.id) { setLoadingRes(false); return; }
 
-    const q = query(
-      collection(db, 'reservations'),
-      where('uid', '==', user.uid),
-      orderBy('createdAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      setReservations(docs);
-      setLoadingRes(false);
-    }, (err) => {
-      console.error('Firestore reservations error:', err);
-      setLoadingRes(false);
-    });
-
-    return unsubscribe;
-  }, [user?.uid]);
-
-  // ── Firestore: guest profile doc (contact/gender/address/photoURL/2FA) ──
-  const [guestProfile, setGuestProfile] = useState({});
-  const [loadingProfile, setLoadingProfile] = useState(true);
-
-  useEffect(() => {
-    if (!user?.uid) { setLoadingProfile(false); return; }
-
-    const unsubscribe = onSnapshot(
-      doc(db, 'guests', user.uid),
-      (snapshot) => {
-        setGuestProfile(snapshot.data() || {});
-        setLoadingProfile(false);
-      },
-      (err) => {
-        console.error('Firestore guest profile error:', err);
-        setLoadingProfile(false);
+    let cancelled = false;
+    const loadReservations = async () => {
+      const { data, error } = await supabase
+        .from('reservations')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+      if (!cancelled) {
+        if (error) console.error('Supabase reservations error:', error);
+        setReservations(data || []);
+        setLoadingRes(false);
       }
-    );
+    };
+    loadReservations();
 
-    return unsubscribe;
-  }, [user?.uid]);
+    const channel = supabase
+      .channel(`profile-reservations-${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reservations', filter: `user_id=eq.${user.id}` },
+        () => loadReservations()
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
 
   // ── Personal Information: in-place edit mode ─────────────────────
   const [isEditingPersonal, setIsEditingPersonal] = useState(false);
@@ -144,9 +181,9 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
 
   const startEditingPersonal = () => {
     setPersonalDraft({
-      contact: guestProfile.contact || '',
-      gender: guestProfile.gender || '',
-      address: guestProfile.address || '',
+      contact: displayedContact,
+      gender: profile?.gender || '',
+      address: profile?.address || '',
     });
     setIsEditingPersonal(true);
   };
@@ -156,19 +193,21 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
   };
 
   const savePersonalInfo = async () => {
-    if (!user?.uid) return;
+    if (!user?.id) return;
     setSavingPersonal(true);
     try {
-      await setDoc(
-        doc(db, 'guests', user.uid),
-        {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
           contact: personalDraft.contact.trim(),
           gender: personalDraft.gender.trim(),
           address: personalDraft.address.trim(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+          // updated_at is handled automatically by the trg_profiles_updated_at
+          // trigger — no need to set it here.
+        })
+        .eq('id', user.id);
+      if (error) throw error;
+      setProfile((p) => ({ ...p, ...personalDraft }));
       setIsEditingPersonal(false);
     } catch (err) {
       console.error('Failed to save personal info:', err);
@@ -178,13 +217,9 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
     }
   };
 
-  // ── Avatar upload ──────────────────────────────────────────────────
+  // ── Avatar upload (Supabase Storage) ────────────────────────────────
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  // Local override so the new photo shows immediately, without waiting on
-  // the parent App.jsx's `user` object to refresh (updateProfile() doesn't
-  // trigger onAuthStateChanged, so the prop above stays stale otherwise).
-  const [localPhotoURL, setLocalPhotoURL] = useState(null);
-  const displayedPhotoURL = localPhotoURL || guestProfile.photoURL || user?.photoURL || null;
+  const displayedPhotoURL = profile?.photo_url || null;
 
   const handleAvatarPress = async () => {
     if (Platform.OS !== 'web') {
@@ -210,15 +245,27 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
       const response = await fetch(asset.uri);
       const blob = await response.blob();
 
-      const storage = getStorage();
-      const avatarRef = ref(storage, `avatars/${user.uid}.jpg`);
-      await uploadBytes(avatarRef, blob);
-      const downloadURL = await getDownloadURL(avatarRef);
+      // Path convention: avatars/{uid}/avatar.jpg — matches the
+      // avatars_owner_* storage policies, which check the folder name
+      // equals auth.uid().
+      const path = `${user.id}/avatar.jpg`;
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+      if (uploadError) throw uploadError;
 
-      await updateProfile(auth.currentUser, { photoURL: downloadURL });
-      await setDoc(doc(db, 'guests', user.uid), { photoURL: downloadURL, updatedAt: serverTimestamp() }, { merge: true });
+      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+      // Cache-bust so the new photo shows immediately even though the
+      // path/filename didn't change (upsert overwrote the same file).
+      const photoURL = `${urlData.publicUrl}?t=${Date.now()}`;
 
-      setLocalPhotoURL(downloadURL);
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ photo_url: photoURL })
+        .eq('id', user.id);
+      if (updateError) throw updateError;
+
+      setProfile((p) => ({ ...p, photo_url: photoURL }));
       notify('Done', 'Profile picture updated.');
     } catch (err) {
       console.error('Avatar upload failed:', err);
@@ -252,22 +299,31 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
       return;
     }
     if (newPassword !== confirmPassword) {
-      notify('Passwords don\'t match', 'New password and confirmation must match.');
+      notify("Passwords don't match", 'New password and confirmation must match.');
       return;
     }
 
     setSavingPassword(true);
     try {
-      const credential = EmailAuthProvider.credential(user.email, currentPassword);
-      await reauthenticateWithCredential(auth.currentUser, credential);
-      await updatePassword(auth.currentUser, newPassword);
+      // Supabase has no reauthenticateWithCredential — verify the current
+      // password by attempting a real sign-in with it first.
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: currentPassword,
+      });
+      if (verifyError) throw { ...verifyError, _step: 'verify' };
+
+      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+      if (updateError) throw { ...updateError, _step: 'update' };
+
       notify('Done', 'Your password has been updated.');
       resetPasswordForm();
     } catch (err) {
       console.error('Password change failed:', err);
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+      const msg = (err.message || '').toLowerCase();
+      if (err._step === 'verify' && msg.includes('invalid login credentials')) {
         notify('Incorrect password', 'Your current password is incorrect.');
-      } else if (err.code === 'auth/too-many-requests') {
+      } else if (err.status === 429 || msg.includes('rate limit')) {
         notify('Too many attempts', 'Please wait a moment before trying again.');
       } else {
         notify('Error', 'Could not update your password. Please try again.');
@@ -296,16 +352,27 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
     }
     setSavingEmail(true);
     try {
-      const credential = EmailAuthProvider.credential(user.email, emailPassword);
-      await reauthenticateWithCredential(auth.currentUser, credential);
-      await verifyBeforeUpdateEmail(auth.currentUser, newEmail);
-      notify('Verification sent', `Check ${newEmail} for a link to confirm this change. Your email will update once you click it.`);
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: emailPassword,
+      });
+      if (verifyError) throw { ...verifyError, _step: 'verify' };
+
+      const { error: updateError } = await supabase.auth.updateUser({ email: newEmail });
+      if (updateError) throw { ...updateError, _step: 'update' };
+
+      // With Supabase's default "secure email change" setting, a
+      // confirmation link goes to BOTH the old and new address, and the
+      // change only takes effect once both are clicked. Adjust this
+      // copy if you turn that setting off in Auth settings.
+      notify('Verification sent', `Check ${newEmail} (and your current inbox) for links to confirm this change.`);
       resetEmailForm();
     } catch (err) {
       console.error('Email change failed:', err);
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+      const msg = (err.message || '').toLowerCase();
+      if (err._step === 'verify' && msg.includes('invalid login credentials')) {
         notify('Incorrect password', 'Your current password is incorrect.');
-      } else if (err.code === 'auth/email-already-in-use') {
+      } else if (msg.includes('already registered') || msg.includes('already been registered')) {
         notify('Email in use', 'That email is already associated with another account.');
       } else {
         notify('Error', 'Could not update your email. Please try again.');
@@ -316,14 +383,19 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
   };
 
   // ── 2FA (UI/preference only — enforcement is a future step) ───────
-  const twoFactorEnabled = !!guestProfile.twoFactorEnabled;
+  const twoFactorEnabled = !!profile?.two_factor_enabled;
   const [savingTwoFactor, setSavingTwoFactor] = useState(false);
 
   const toggleTwoFactor = async (value) => {
-    if (!user?.uid) return;
+    if (!user?.id) return;
     setSavingTwoFactor(true);
     try {
-      await setDoc(doc(db, 'guests', user.uid), { twoFactorEnabled: value, updatedAt: serverTimestamp() }, { merge: true });
+      const { error } = await supabase
+        .from('profiles')
+        .update({ two_factor_enabled: value })
+        .eq('id', user.id);
+      if (error) throw error;
+      setProfile((p) => ({ ...p, two_factor_enabled: value }));
     } catch (err) {
       console.error('Failed to update 2FA preference:', err);
       notify('Error', 'Could not save this setting. Please try again.');
@@ -333,13 +405,20 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
   };
 
   // ── Derived summary counts ────────────────────────────────────────
-  const totalRes     = reservations.length;
-  const upcoming     = reservations.filter(r => r.status === 'pending' || r.status === 'upcoming').length;
-  const completed    = reservations.filter(r => r.status === 'completed').length;
-  const cancelled    = reservations.filter(r => r.status === 'cancelled').length;
+  // See file header note: fixed to match the status vocabulary every
+  // other screen in the app actually uses (checked-in/checked-out/
+  // declined), instead of the old 'completed' value that never matched
+  // anything real.
+  const CURRENT_STATUSES = ['pending', 'upcoming', 'checked-in'];
+  const HISTORY_STATUSES = ['checked-out', 'declined', 'cancelled'];
 
-  const currentRes   = reservations.filter(r => r.status === 'pending' || r.status === 'upcoming');
-  const historyRes   = reservations.filter(r => r.status === 'completed' || r.status === 'cancelled');
+  const totalRes  = reservations.length;
+  const upcoming  = reservations.filter(r => r.status === 'pending' || r.status === 'upcoming').length;
+  const completed = reservations.filter(r => r.status === 'checked-out').length;
+  const cancelled = reservations.filter(r => r.status === 'cancelled' || r.status === 'declined').length;
+
+  const currentRes = reservations.filter(r => CURRENT_STATUSES.includes(r.status));
+  const historyRes = reservations.filter(r => HISTORY_STATUSES.includes(r.status));
 
   const summaryCards = [
     { label: 'Total',     value: totalRes,  color: colors.primary, bg: colors.primaryTint },
@@ -350,10 +429,12 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
 
   const statusBadge = (status) => {
     const map = {
-      'pending':   { color: colors.accent,   bg: colors.accentTint  },
-      'upcoming':  { color: colors.primary,  bg: colors.primaryTint },
-      'completed': { color: '#2e7d32',       bg: '#e8f5e9'          },
-      'cancelled': { color: colors.danger,   bg: colors.dangerBg    },
+      'pending':     { color: colors.accent,   bg: colors.accentTint  },
+      'upcoming':    { color: colors.primary,  bg: colors.primaryTint },
+      'checked-in':  { color: colors.primary,  bg: colors.primaryTint },
+      'checked-out': { color: '#2e7d32',       bg: '#e8f5e9'          },
+      'declined':    { color: colors.danger,   bg: colors.dangerBg    },
+      'cancelled':   { color: colors.danger,   bg: colors.dangerBg    },
     };
     return map[status] || { color: colors.textMuted, bg: colors.cardAlt };
   };
@@ -501,9 +582,9 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
             </>
           ) : (
             <>
-              <InfoRow styles={styles} label="Contact" value={guestProfile.contact || 'Not set'} muted={!guestProfile.contact} />
-              <InfoRow styles={styles} label="Gender" value={guestProfile.gender || 'Not set'} muted={!guestProfile.gender} />
-              <InfoRow styles={styles} label="Address" value={guestProfile.address || 'Not set'} muted={!guestProfile.address} last />
+              <InfoRow styles={styles} label="Contact" value={displayedContact || 'Not set'} muted={!displayedContact} />
+              <InfoRow styles={styles} label="Gender" value={profile?.gender || 'Not set'} muted={!profile?.gender} />
+              <InfoRow styles={styles} label="Address" value={profile?.address || 'Not set'} muted={!profile?.address} last />
             </>
           )}
         </View>
@@ -513,13 +594,13 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
         <View style={styles.card}>
           <InfoRow styles={styles} label="Username" value={email.split('@')[0]} />
           <InfoRow styles={styles} label="Date registered" value={
-            user?.metadata?.creationTime
-              ? new Date(user.metadata.creationTime).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
+            user?.created_at
+              ? new Date(user.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
               : '—'
           } />
           <InfoRow styles={styles} label="Last login" value={
-            user?.metadata?.lastSignInTime
-              ? new Date(user.metadata.lastSignInTime).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
+            user?.last_sign_in_at
+              ? new Date(user.last_sign_in_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' })
               : '—'
           } />
           <View style={styles.infoRow}>
@@ -539,6 +620,7 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
           <EmptyState styles={styles} colors={colors} icon="calendar-outline" message="No current reservations." />
         ) : currentRes.map((r) => {
           const s = statusBadge(r.status);
+          const roomCount = Array.isArray(r.selected_rooms) ? r.selected_rooms.length : null;
           return (
             <View key={r.id} style={styles.resCard}>
               <View style={styles.resHeader}>
@@ -548,12 +630,12 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
                 </View>
               </View>
               <View style={styles.resGrid}>
-                <ResItem styles={styles} label="Room type" value={r.roomType || 'Not selected'} />
-                <ResItem styles={styles} label="Check-in" value={formatResDate(r.checkIn)} />
-                <ResItem styles={styles} label="Check-out" value={formatResDate(r.checkOut)} />
+                <ResItem styles={styles} label="Room type" value={r.room_type || 'Not selected'} />
+                <ResItem styles={styles} label="Check-in" value={formatResDate(r.check_in)} />
+                <ResItem styles={styles} label="Check-out" value={formatResDate(r.check_out)} />
                 <ResItem styles={styles} label="Nights" value={r.nights ? `${r.nights} night${r.nights > 1 ? 's' : ''}` : '—'} />
-                <ResItem styles={styles} label="Rooms" value={r.totals?.totalRooms ? `${r.totals.totalRooms}` : '—'} />
-                <ResItem styles={styles} label="Guests" value={r.totals?.totalGuests ? `${r.totals.totalGuests}` : '—'} />
+                <ResItem styles={styles} label="Rooms" value={roomCount != null ? `${roomCount}` : '—'} />
+                <ResItem styles={styles} label="Guests" value={r.guest_count != null ? `${r.guest_count}` : '—'} />
               </View>
             </View>
           );
@@ -576,9 +658,9 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
                 </View>
               </View>
               <View style={styles.resGrid}>
-                <ResItem styles={styles} label="Room type" value={r.roomType || '—'} />
+                <ResItem styles={styles} label="Room type" value={r.room_type || '—'} />
                 <ResItem styles={styles} label="Duration" value={r.nights ? `${r.nights} night${r.nights > 1 ? 's' : ''}` : '—'} />
-                <ResItem styles={styles} label="Total" value={r.totalAmount ? `₱${r.totalAmount.toLocaleString()}` : '—'} />
+                <ResItem styles={styles} label="Total" value={r.total_amount ? `₱${Number(r.total_amount).toLocaleString()}` : '—'} />
               </View>
             </View>
           );

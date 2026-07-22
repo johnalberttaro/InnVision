@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,14 +12,21 @@ import {
   useColorScheme,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, fonts, radius } from '../../utils/theme';
 
 /**
  * ContactUsScreen — hotel info, inquiry form, map placeholder, social
- * links, and FAQ. Saves inquiries to Firestore's `contactMessages`
- * collection.
+ * links, and FAQ. Saves inquiries to Supabase's `contact_messages` table.
+ *
+ * MIGRATED TO SUPABASE. Per an earlier decision, only a logged-in user
+ * can submit an inquiry (matches the contact_messages_insert_own RLS
+ * policy, which requires an authenticated session and auth.uid() =
+ * user_id) — this screen didn't previously receive a `user` prop, so it
+ * now fetches the current user itself via supabase.auth.getUser() (same
+ * self-contained pattern as MyReservationsScreen.jsx) rather than
+ * requiring an App.jsx change. If nobody's logged in, the form shows a
+ * "please log in" message instead of submitting.
  *
  * Dark mode: follows the device's OS-level dark mode setting via
  * useColorScheme(). Brand colors (primary/accent/hero) come from theme.js
@@ -99,9 +106,14 @@ export default function ContactUsScreen({ onBack }) {
 
   const [errors, setErrors]     = useState({});
   const [submitting, setSubmitting] = useState(false);
-  const [submitStatus, setSubmitStatus] = useState(null); // 'success' | 'error' | null
+  const [submitStatus, setSubmitStatus] = useState(null); // 'success' | 'error' | 'signed-out' | null
 
   const [openFaq, setOpenFaq] = useState(null);
+
+  const [currentUser, setCurrentUser] = useState(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setCurrentUser(data?.user || null));
+  }, []);
 
   const validate = () => {
     const next = {};
@@ -121,17 +133,23 @@ export default function ContactUsScreen({ onBack }) {
     setSubmitStatus(null);
     if (!validate()) return;
 
+    if (!currentUser?.id) {
+      setSubmitStatus('signed-out');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await addDoc(collection(db, 'contactMessages'), {
-        fullName: fullName.trim(),
+      const { error } = await supabase.from('contact_messages').insert({
+        user_id: currentUser.id,
+        name: fullName.trim(),
         email: email.trim(),
         phone: phone.trim(),
         subject: subject.trim(),
         message: message.trim(),
         status: 'new',
-        createdAt: serverTimestamp(),
       });
+      if (error) throw error;
 
       setSubmitStatus('success');
       setFullName('');
@@ -246,6 +264,14 @@ export default function ContactUsScreen({ onBack }) {
                   <Ionicons name="checkmark-circle" size={18} color="#1E7B34" />
                   <Text style={styles.successBannerText}>
                     Thanks! Your message has been sent — we'll get back to you soon.
+                  </Text>
+                </View>
+              )}
+              {submitStatus === 'signed-out' && (
+                <View style={styles.errorBanner}>
+                  <Ionicons name="log-in-outline" size={18} color={colors.danger} />
+                  <Text style={styles.errorBannerText}>
+                    Please log in to your account before sending an inquiry.
                   </Text>
                 </View>
               )}

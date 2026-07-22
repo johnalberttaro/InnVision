@@ -2,6 +2,11 @@
 // "Receipts" sidebar item — browsable list of every receipt generated
 // across all folios. Tapping a row opens Receiptdetailmodal for
 // view/print/download.
+//
+// ENHANCED: added a KPI row (Total Collected, Receipts Today) computed
+// from a separate always-unfiltered fetch, and turned the plain "View →"
+// text link into a proper icon+text affordance matching KpiCard's "View
+// details" pattern used elsewhere.
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -14,10 +19,12 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { getAllReceipts, searchReceipts } from '../../utils/BillingService';
 import ReceiptDetailModal from './ReceiptDetailModal';
 import Pagination from '../../components/shared/Pagination';
+import KpiCard from '../../components/dashboard/KpiCard';
 
 const PAGE_SIZE = 5;
 
@@ -62,6 +69,20 @@ export default function ReceiptsScreen() {
   const [selectedReceipt, setSelectedReceipt] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
 
+  // Separate from `receipts` (which reflects the current search) — this
+  // always holds every receipt, so the KPI row stays accurate no matter
+  // what the list below is currently searched for.
+  const [allReceiptsForKpis, setAllReceiptsForKpis] = useState([]);
+
+  const loadKpiData = useCallback(async () => {
+    try {
+      const data = await getAllReceipts();
+      setAllReceiptsForKpis(data);
+    } catch (err) {
+      console.error('Failed to load receipts KPI data:', err);
+    }
+  }, []);
+
   const loadReceipts = useCallback(async () => {
     try {
       setError(null);
@@ -81,7 +102,8 @@ export default function ReceiptsScreen() {
   useEffect(() => {
     setLoading(true);
     loadReceipts();
-  }, [loadReceipts]);
+    loadKpiData();
+  }, [loadReceipts, loadKpiData]);
 
   // Result set shape changes whenever the search term changes — jump back
   // to page 1 so the user isn't stranded on a page that may no longer exist.
@@ -97,7 +119,18 @@ export default function ReceiptsScreen() {
   const onRefresh = () => {
     setRefreshing(true);
     loadReceipts();
+    loadKpiData();
   };
+
+  // ── KPIs ───────────────────────────────────────────────────────────────
+  const totalCollected = useMemo(
+    () => allReceiptsForKpis.reduce((sum, r) => sum + (r.amountPaid || 0), 0),
+    [allReceiptsForKpis]
+  );
+  const receiptsTodayCount = useMemo(() => {
+    const today = new Date().toDateString();
+    return allReceiptsForKpis.filter((r) => r.paymentDate && new Date(r.paymentDate).toDateString() === today).length;
+  }, [allReceiptsForKpis]);
 
   const renderItem = ({ item }) => (
     <TouchableOpacity style={styles.row} activeOpacity={0.7} onPress={() => setSelectedReceipt(item)}>
@@ -110,7 +143,10 @@ export default function ReceiptsScreen() {
       </View>
       <View style={styles.rowSide}>
         <Text style={styles.amount}>{formatCurrency(item.amountPaid)}</Text>
-        <Text style={styles.viewLink}>View →</Text>
+        <View style={styles.viewLinkWrap}>
+          <Text style={styles.viewLink}>View</Text>
+          <Ionicons name="chevron-forward" size={13} color={colors.primary} />
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -128,6 +164,23 @@ export default function ReceiptsScreen() {
           placeholderTextColor={colors.textMuted}
           value={searchTerm}
           onChangeText={setSearchTerm}
+        />
+      </View>
+
+      <View style={styles.kpiRow}>
+        <KpiCard
+          icon="wallet-outline"
+          label="Total Collected"
+          value={formatCurrency(totalCollected)}
+          accent="#1E7A3D"
+          note="Across all receipts"
+        />
+        <KpiCard
+          icon="receipt-outline"
+          label="Receipts Today"
+          value={String(receiptsTodayCount)}
+          accent={colors.primary}
+          note="Payments recorded today"
         />
       </View>
 
@@ -194,6 +247,7 @@ const styles = StyleSheet.create({
     width: 260,
     maxWidth: '45%',
   },
+  kpiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginBottom: spacing.lg },
   pageRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -216,6 +270,7 @@ const styles = StyleSheet.create({
   subInfo: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: 2 },
   rowSide: { alignItems: 'flex-end' },
   amount: { fontFamily: fonts.headingSemiBold, fontSize: 15, color: colors.text, marginBottom: 4 },
+  viewLinkWrap: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   viewLink: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.primary },
   errorText: { fontFamily: fonts.body, color: '#B3261E', marginTop: spacing.xl, textAlign: 'center' },
   emptyText: { fontFamily: fonts.body, color: colors.textMuted, marginTop: spacing.xl, textAlign: 'center' },

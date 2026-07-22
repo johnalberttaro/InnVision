@@ -9,14 +9,7 @@ import {
   Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  doc,
-  collection,
-  query,
-  where,
-  onSnapshot,
-} from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatDate } from '../../utils/dateHelpers';
 import { formatCurrency } from '../../utils/roomRates';
@@ -24,7 +17,7 @@ import { formatCurrency } from '../../utils/roomRates';
 /**
  * GuestDetailScreen — opened by tapping a card in Guest Records (or Guest
  * Profiles). Shows ONE guest's reservation summary (every reservation
- * that guest has made, live from Firestore) and each reservation's
+ * that guest has made, live from Supabase) and each reservation's
  * special request notes.
  *
  * This is intentionally separate from GuestProfilesTableScreen, which
@@ -34,10 +27,11 @@ import { formatCurrency } from '../../utils/roomRates';
  * Guest Records to redirect into the Profiles table instead of a detail
  * view).
  *
- * Firestore reads:
- *  - "guests/{guestId}" — identity fields (same shape as GuestRecordsScreen)
- *  - "reservations" where uid == guest.linkedUid — every reservation tied
- *    to this guest, including its `specialRequests` field (if any)
+ * MIGRATED TO SUPABASE.
+ *  - guests/{guestId} → guests table row by id
+ *  - reservations where uid == guest.linkedUid → reservations where
+ *    user_id == guest.linkedUid (linkedUid is guests.user_id under the
+ *    hood, same camelCase mapping GuestRecordsScreen uses)
  *
  * If the guest has no linkedUid (a walk-in / staff-entered guest with no
  * account), there is nothing to join against, so the reservation list is
@@ -45,7 +39,7 @@ import { formatCurrency } from '../../utils/roomRates';
  * GuestRecordsScreen.
  *
  * Props:
- *  - guestId: string — Firestore doc id in the "guests" collection
+ *  - guestId: string — the guests table row's id (uuid)
  *  - onBack: () => void
  */
 
@@ -78,22 +72,54 @@ export default function GuestDetailScreen({ guestId, onBack }) {
   const [guestLoading, setGuestLoading] = useState(true);
   const [reservationsLoading, setReservationsLoading] = useState(true);
 
+  const guestToCamel = (row) => ({
+    id: row.id,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    email: row.email,
+    phone: row.phone,
+    linkedUid: row.user_id,
+    photoURL: row.photo_url,
+  });
+
+  const reservationToCamel = (row) => ({
+    id: row.id,
+    status: row.status,
+    roomType: row.room_type,
+    checkIn: row.check_in,
+    checkOut: row.check_out,
+    totalAmount: row.total_amount,
+    guestDetails: row.guest_details,
+    createdAt: row.created_at,
+  });
+
   // ── Load guest identity ─────────────────────────────────────────────
   useEffect(() => {
     if (!guestId) return;
     setGuestLoading(true);
-    const unsub = onSnapshot(
-      doc(db, 'guests', guestId),
-      (snap) => {
-        setGuest(snap.exists() ? { id: snap.id, ...snap.data() } : null);
-        setGuestLoading(false);
-      },
-      (error) => {
+
+    const loadGuest = async () => {
+      const { data, error } = await supabase
+        .from('guests')
+        .select('*')
+        .eq('id', guestId)
+        .maybeSingle();
+      if (error) {
         console.error('Failed to load guest:', error);
         setGuestLoading(false);
+        return;
       }
-    );
-    return unsub;
+      setGuest(data ? guestToCamel(data) : null);
+      setGuestLoading(false);
+    };
+    loadGuest();
+
+    const channel = supabase
+      .channel(`guest-detail-${guestId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'guests', filter: `id=eq.${guestId}` }, loadGuest)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, [guestId]);
 
   // ── Load this guest's reservations (once we know linkedUid) ────────
@@ -105,28 +131,29 @@ export default function GuestDetailScreen({ guestId, onBack }) {
       return;
     }
     setReservationsLoading(true);
-    const reservationsQuery = query(collection(db, 'reservations'), where('uid', '==', linkUid));
-    const unsub = onSnapshot(
-      reservationsQuery,
-      (snapshot) => {
-        const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-        // Newest first — Firestore `where` queries without a matching
-        // composite index can't also `orderBy` here safely, so sort
-        // client-side instead of adding another index requirement.
-        rows.sort((a, b) => {
-          const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
-          const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
-          return bTime - aTime;
-        });
-        setReservations(rows);
-        setReservationsLoading(false);
-      },
-      (error) => {
+
+    const loadReservations = async () => {
+      const { data, error } = await supabase
+        .from('reservations')
+        .select('*')
+        .eq('user_id', linkUid)
+        .order('created_at', { ascending: false });
+      if (error) {
         console.error('Failed to load reservations for guest detail:', error);
         setReservationsLoading(false);
+        return;
       }
-    );
-    return unsub;
+      setReservations((data || []).map(reservationToCamel));
+      setReservationsLoading(false);
+    };
+    loadReservations();
+
+    const channel = supabase
+      .channel(`guest-detail-reservations-${linkUid}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations', filter: `user_id=eq.${linkUid}` }, loadReservations)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, [guest?.linkedUid]);
 
   const stats = useMemo(() => {

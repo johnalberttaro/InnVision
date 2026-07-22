@@ -1,16 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Modal, Pressable, Image, ActivityIndicator, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatCurrency } from '../../utils/roomRates';
 
 /**
  * GuestDossierModal — quick-view panel opened from a Recent Activity row.
  *
+ * MIGRATED TO SUPABASE.
+ *
  * ASSUMPTION (flagged for the team, not silently invented): the `guests`
- * collection has no loyaltyStatus/preferences/lastStayNotes fields today.
+ * table has no loyaltyStatus/preferences/lastStayNotes columns today.
  * "Loyalty status" here is COMPUTED from real total-stays count (a simple
  * tier, not stored data) so nothing shown is fabricated. Preferences and
  * dedicated "last stay notes" aren't tracked anywhere yet, so that
@@ -21,9 +22,9 @@ import { formatCurrency } from '../../utils/roomRates';
  * Props:
  *  - visible: boolean
  *  - onClose: () => void
- *  - reservation: the activity-row reservation doc that triggered this
- *    (used for uid lookup + as an immediate fallback while the guests
- *    collection query resolves)
+ *  - reservation: the activity-row reservation object that triggered this
+ *    (used for a uid lookup + as an immediate fallback while the guests
+ *    table query resolves)
  */
 function loyaltyTier(totalStays) {
   if (totalStays >= 5) return { label: 'VIP', color: '#B08D2B', bg: '#FBF1D6' };
@@ -57,18 +58,33 @@ export default function GuestDossierModal({ visible, onClose, reservation, onVie
           }
           return;
         }
-        const guestsQ = query(collection(db, 'guests'), where('linkedUid', '==', uid));
-        const resQ = query(collection(db, 'reservations'), where('uid', '==', uid));
-        const [guestSnap, resSnap] = await Promise.all([getDocs(guestsQ), getDocs(resQ)]);
+
+        const [guestResult, resResult] = await Promise.all([
+          supabase.from('guests').select('*').eq('user_id', uid).maybeSingle(),
+          supabase.from('reservations').select('*').eq('user_id', uid).order('created_at', { ascending: false }),
+        ]);
         if (cancelled) return;
 
-        const guestDoc = guestSnap.docs[0] ? { id: guestSnap.docs[0].id, ...guestSnap.docs[0].data() } : null;
-        const resRows = resSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        resRows.sort((a, b) => {
-          const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
-          const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
-          return bTime - aTime;
-        });
+        if (guestResult.error) console.error('Failed to load guest for dossier:', guestResult.error);
+        if (resResult.error) console.error('Failed to load reservations for dossier:', resResult.error);
+
+        const guestRow = guestResult.data;
+        const guestDoc = guestRow
+          ? {
+              id: guestRow.id,
+              firstName: guestRow.first_name,
+              lastName: guestRow.last_name,
+              photoURL: guestRow.photo_url,
+            }
+          : null;
+
+        const resRows = (resResult.data || []).map((r) => ({
+          id: r.id,
+          status: r.status,
+          totalAmount: r.total_amount,
+          guestDetails: r.guest_details,
+          createdAt: r.created_at,
+        }));
 
         setGuest(guestDoc);
         setReservations(resRows);

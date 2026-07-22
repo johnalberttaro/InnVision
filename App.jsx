@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, StatusBar, Modal, ActivityIndicator, View } from 'react-native';
+import { StyleSheet, StatusBar, Modal } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { Baloo2_800ExtraBold } from '@expo-google-fonts/baloo-2/800ExtraBold';
@@ -9,9 +9,7 @@ import { Baloo2_500Medium } from '@expo-google-fonts/baloo-2/500Medium';
 import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
 import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
 import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from './src/services/firebase';
+import { supabase } from './src/services/supabase';
 
 import HomeScreen           from './src/screens/home/HomeScreen';
 import LoginScreen          from './src/screens/form/LoginScreen';
@@ -26,24 +24,48 @@ import RoomSelectionScreen  from './src/screens/roomRates/RoomSelectionScreen';
 import ReviewPayScreen      from './src/screens/reviewPay/ReviewPayScreen';
 import FrontDeskShell       from './src/screens/frontdesk/FrontDeskShell';
 import AdminShell           from './src/screens/admin/AdminShell';
-import { fonts, colors }    from './src/utils/theme';
+import LoadingScreen        from './src/screens/LoadingScreen';
+import { fonts }            from './src/utils/theme';
 import { ThemeProvider }    from './src/context/ThemeContext';
-import { resolveUserRole }  from './src/utils/roleHelpers';
 
 /**
- * NOTE ON DARK MODE ROLLOUT:
- * ThemeProvider now wraps the whole app, and its `userId` prop is kept in
- * sync with the current Firebase user below — this is what lets the dark
- * mode preference load from Firestore/cache and apply globally.
+ * MIGRATED TO SUPABASE AUTH. This file was missed during the original
+ * migration pass — every individual screen (LoginScreen, RegisterScreen,
+ * etc.) was moved over, but App.jsx's own session-state management was
+ * never touched, meaning:
+ *   - The Firebase onAuthStateChanged listener here never fired (nobody
+ *     signs in via Firebase anymore), so this always fell through to
+ *     `setScreen('home')` on every load — session persistence across a
+ *     page reload / app restart was silently broken. Login only
+ *     "worked" in testing because LoginScreen calls onLogin() directly
+ *     on a fresh sign-in, which is a different code path than restoring
+ *     an existing session.
+ *   - The role lookup queried Firestore's `guests/{uid}` doc via
+ *     resolveUserRole() — completely disconnected from the new Supabase
+ *     `profiles.role` enum.
+ *   - ThemeProvider's `userId={user?.uid}` was passing `undefined` the
+ *     whole time, since a Supabase user has `.id`, not `.uid`.
  *
- * However, only screens that individually call useTheme() (instead of the
- * old static `import { colors } from utils/theme`) will actually respond
- * to it. ProfileScreen is migrated. Every other screen listed above still
- * uses the old static import and will keep rendering in light mode until
- * it's migrated the same way — that's expected, not a bug, and each
- * screen can be migrated independently without breaking the others.
- * AdminShell is new but was still built against the static import, so add
- * it to this migration backlog too.
+ * Now: supabase.auth.getSession() checks for an existing session once on
+ * startup (the actual fix for the reload problem), and
+ * supabase.auth.onAuthStateChange() keeps `user` in sync afterward, only
+ * re-resolving the role/route on real SIGNED_IN / SIGNED_OUT events (not
+ * every background token refresh, which would otherwise yank someone
+ * back to their role's home screen mid-navigation for no reason).
+ * handleLogin() is left in place as the fast, direct path LoginScreen
+ * already uses (it does its own role lookup and calls onLogin directly)
+ * — the two don't conflict, they just mean a fresh login's role gets
+ * resolved twice (once directly, once via the listener), which is
+ * harmless.
+ *
+ * STILL OUTSTANDING (flagged, not fixed here — out of scope for this
+ * pass): ThemeContext.js itself still reads/writes dark-mode preference
+ * via Firestore (`doc(db, 'guests', userId)`), which is now backed by
+ * Supabase user IDs that don't exist in that Firestore collection at
+ * all — dark mode persistence is non-functional until that file gets
+ * its own Supabase migration pass. `firebase.js` therefore still can't
+ * be deleted yet; ThemeContext.js is the one remaining thing that needs
+ * it.
  *
  * NOTE ON SAFE AREA:
  * SafeAreaView/SafeAreaProvider now come from 'react-native-safe-area-context'
@@ -60,14 +82,11 @@ import { resolveUserRole }  from './src/utils/roleHelpers';
  * `SafeAreaView` from 'react-native' directly rather than going through
  * this provider — that's a known remaining cleanup item, not yet migrated.
  *
- * NOTE ON FRONT DESK / ADMIN SPLIT (resolved):
- * `resolveUserRole()` in `src/utils/roleHelpers.js` normalizes the Firestore
- * `guests/{uid}` document (via a `role`/`userRole`/`accessLevel`/`roleName`
- * string field, or legacy boolean flags like `isAdmin`/`isFrontDesk`) into
- * one of `'admin' | 'frontdesk' | 'guest'`. Both the auth-state listener
- * below and `handleLogin` use it to route users to `AdminShell`,
- * `FrontDeskShell`, or the guest-facing `home` screen respectively. See
- * that file for the full mapping/aliases.
+ * NOTE ON FRONT DESK / ADMIN SPLIT:
+ * profiles.role is a real Postgres enum ('admin' | 'frontdesk' | 'guest')
+ * now, set at signup by the on_auth_user_created trigger and defaulting
+ * to 'guest' — no more resolveUserRole() guessing across differently-
+ * shaped legacy fields the way the Firestore `guests` docs needed.
  */
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -80,37 +99,74 @@ export default function App() {
     [fonts.bodySemiBold]:     Inter_600SemiBold,
   });
 
-  // ── Firebase auth state ─────────────────────────────────────────────
+  // ── Supabase auth state ─────────────────────────────────────────────
   const [user, setUser]               = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
+  // Keeps LoadingScreen visible for at least 5 seconds, regardless of how
+  // fast fonts/auth actually resolve underneath it — without this, the
+  // branded loading screen could flash by in well under a second on a
+  // fast connection, defeating the point of having one.
+  const [minLoadTimeElapsed, setMinLoadTimeElapsed] = useState(false);
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
+    const timer = setTimeout(() => setMinLoadTimeElapsed(true), 3000);
+    return () => clearTimeout(timer);
+  }, []);
 
-      if (firebaseUser) {
-        // Re-run the same role lookup LoginScreen does on every auth-state
-        // resolution (not just fresh logins), so a page refresh — which
-        // silently restores the existing Firebase session — still routes
-        // staff back into the Front Desk portal instead of falling back
-        // to the default 'home' screen.
-        let role = 'guest';
-        try {
-          const guestDoc = await getDoc(doc(db, 'guests', firebaseUser.uid));
-          role = resolveUserRole(guestDoc.exists() ? guestDoc.data() : null);
-        } catch (roleLookupError) {
-          console.warn('Role lookup failed on session restore, defaulting to guest:', roleLookupError);
-        }
+  useEffect(() => {
+    let mounted = true;
 
-        const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : 'home';
-        setScreen(nextScreen);
-      } else {
+    const resolveRoleAndRoute = async (sessionUser) => {
+      if (!sessionUser) {
         setScreen('home');
+        return;
       }
+      let role = 'guest';
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', sessionUser.id)
+          .single();
+        if (error) throw error;
+        if (data?.role) role = data.role;
+      } catch (roleLookupError) {
+        console.warn('Role lookup failed on session restore, defaulting to guest:', roleLookupError);
+      }
+      const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : 'home';
+      setScreen(nextScreen);
+    };
 
-      setAuthLoading(false);
+    // Checks for an existing session ONCE on startup — this is the actual
+    // fix for the reload-logs-you-out problem: without this, `user` only
+    // ever gets set by handleLogin() at the moment of a fresh sign-in.
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      const sessionUser = data?.session?.user || null;
+      setUser(sessionUser);
+      resolveRoleAndRoute(sessionUser).finally(() => {
+        if (mounted) setAuthLoading(false);
+      });
     });
-    return unsubscribe;
+
+    // Keeps `user` in sync with sign-in/sign-out afterward. Only
+    // re-resolves the role/route on actual SIGNED_IN / SIGNED_OUT
+    // events — Supabase also fires this listener on background token
+    // refreshes, which shouldn't reroute someone away from wherever
+    // they currently are.
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!mounted) return;
+      const sessionUser = session?.user || null;
+      setUser(sessionUser);
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+        resolveRoleAndRoute(sessionUser);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      authListener?.subscription?.unsubscribe();
+    };
   }, []);
 
   // ── Screen state ────────────────────────────────────────────────────
@@ -122,15 +178,15 @@ export default function App() {
   const [selectedRooms, setSelectedRooms]     = useState(null);
 
   // ── Auth handlers ───────────────────────────────────────────────────
-  const handleLogin = (firebaseUser, role) => {
-    setUser(firebaseUser);
+  const handleLogin = (supabaseUser, role) => {
+    setUser(supabaseUser);
     const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : 'home';
     setScreen(nextScreen);
   };
 
   const handleRegister = async () => {
     try {
-      await signOut(auth);
+      await supabase.auth.signOut();
     } catch (e) {
       console.warn('Sign out after register failed:', e.message);
     }
@@ -140,7 +196,7 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await signOut(auth);
+      await supabase.auth.signOut();
       setUser(null);
       setScreen('home');
     } catch (e) {
@@ -172,20 +228,18 @@ export default function App() {
   };
 
   // My Reservations is guest-account-only (it reads the signed-in user's
-  // email to pull their bookings) — bounce unauthenticated taps to login
+  // id to pull their bookings) — bounce unauthenticated taps to login
   // instead of opening the screen with nothing to show.
   const goToMyReservations = () => setScreen(user ? 'myReservations' : 'login');
 
   // ── Loading gate ────────────────────────────────────────────────────
-  if (!fontsLoaded || authLoading) {
+  if (!fontsLoaded || authLoading || !minLoadTimeElapsed) {
     return (
       <SafeAreaProvider>
-        <ThemeProvider userId={user?.uid}>
+        <ThemeProvider userId={user?.id}>
           <SafeAreaView style={styles.safeArea}>
             <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={colors.primary} />
-            </View>
+            <LoadingScreen />
           </SafeAreaView>
         </ThemeProvider>
       </SafeAreaProvider>
@@ -194,7 +248,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider userId={user?.uid}>
+      <ThemeProvider userId={user?.id}>
         <SafeAreaView style={styles.safeArea}>
           <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
 
@@ -218,7 +272,7 @@ export default function App() {
           {screen === 'admin' && (
             <AdminShell
               onLoggedOut={handleLogout}
-              adminName={user?.displayName || user?.email || 'Administrator'}
+              adminName={user?.user_metadata?.display_name || user?.email || 'Administrator'}
             />
           )}
 
@@ -226,9 +280,9 @@ export default function App() {
           {screen === 'frontdesk' && (
             <FrontDeskShell
               onLoggedOut={handleLogout}
-              staffName={user?.displayName || user?.email || 'Front Desk Staff'}
+              staffName={user?.user_metadata?.display_name || user?.email || 'Front Desk Staff'}
               staffRole="Front Desk"
-              staffUid={user?.uid}
+              staffUid={user?.id}
             />
           )}
 
@@ -305,7 +359,8 @@ export default function App() {
           )}
 
           {/* ── Reservation modal ─────────────────────────────────── */}
-          {/* user prop added so ReservationScreen can tag the Firestore doc */}
+          {/* user prop added so ReservationScreen can tag the reservation
+              row with this user's id */}
           <Modal
             visible={showReservation}
             animationType="slide"
@@ -328,10 +383,5 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#ffffff',
-  },
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });

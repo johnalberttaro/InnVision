@@ -1,12 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image,
+  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { auth } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
+
+// Where Supabase sends the user after they click the reset link in their
+// email. MUST also be added to Supabase Dashboard → Authentication → URL
+// Configuration → Redirect URLs, or the reset link will be rejected.
+// TODO: replace with your actual deployed web URL / deep link scheme.
+const PASSWORD_RESET_REDIRECT_URL = 'https://your-app-domain.example.com/reset-password';
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -19,6 +24,17 @@ export default function ForgotPasswordScreen({ onLoginPress }) {
   const [cooldown, setCooldown] = useState(0);
 
   const timerRef = useRef(null);
+
+  // Smooth entrance whenever this screen mounts — e.g. coming here from
+  // Login feels like a continuation, not an abrupt cut.
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(16)).current;
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 320, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 320, useNativeDriver: true }),
+    ]).start();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -52,24 +68,23 @@ export default function ForgotPasswordScreen({ onLoginPress }) {
     setError('');
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, value.trim());
+      // Supabase already doesn't reveal whether the email exists — it
+      // returns success either way for security, same end behavior the
+      // old auth/user-not-found branch was manually faking.
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(value.trim(), {
+        redirectTo: PASSWORD_RESET_REDIRECT_URL,
+      });
+      if (resetError) throw resetError;
       setSent(true);
       startCooldown();
     } catch (e) {
-      switch (e.code) {
-        case 'auth/user-not-found':
-          // Don't reveal if email exists — show success anyway (security best practice)
-          setSent(true);
-          startCooldown();
-          break;
-        case 'auth/invalid-email':
-          setError('Please enter a valid email address.');
-          break;
-        case 'auth/too-many-requests':
-          setError('Too many attempts. Please wait a bit before trying again.');
-          break;
-        default:
-          setError('Something went wrong. Please try again.');
+      const msg = (e.message || '').toLowerCase();
+      if (msg.includes('invalid') && msg.includes('email')) {
+        setError('Please enter a valid email address.');
+      } else if (e.status === 429 || msg.includes('rate limit') || msg.includes('too many')) {
+        setError('Too many attempts. Please wait a bit before trying again.');
+      } else {
+        setError('Something went wrong. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -94,7 +109,7 @@ export default function ForgotPasswordScreen({ onLoginPress }) {
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <View style={styles.card}>
+          <Animated.View style={[styles.card, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
 
             {/* Logo */}
             <View style={styles.logoBadge}>
@@ -194,7 +209,7 @@ export default function ForgotPasswordScreen({ onLoginPress }) {
               <Text style={styles.secondaryButtonText}>Back to Log In</Text>
             </TouchableOpacity>
 
-          </View>
+          </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -205,7 +220,25 @@ const styles = StyleSheet.create({
   safe:   { flex: 1, backgroundColor: colors.cardAlt },
   flex:   { flex: 1 },
   scroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
-  card:   { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 0.5, borderColor: colors.border, padding: spacing.xxl, width: '100%', maxWidth: 420, alignItems: 'center' },
+
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.xxl,
+    width: '100%',
+    maxWidth: 420,
+    alignItems: 'center',
+    ...Platform.select({
+      web: { boxShadow: '0 20px 50px rgba(0,0,0,0.16)' },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.14,
+        shadowRadius: 24,
+        elevation: 8,
+      },
+    }),
+  },
 
   logoBadge: { width: 80, height: 80, borderRadius: radius.lg, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.lg, overflow: 'hidden' },
   logoImage: { width: 56, height: 56 },
@@ -215,15 +248,15 @@ const styles = StyleSheet.create({
 
   fieldGroup:       { width: '100%', marginBottom: spacing.md },
   label:            { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.text, marginBottom: spacing.xs },
-  inputWrap:        { flexDirection: 'row', alignItems: 'center', height: 44, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.md, gap: spacing.sm },
-  inputWrapFocused: { borderColor: colors.text, backgroundColor: colors.card },
+  inputWrap:        { flexDirection: 'row', alignItems: 'center', height: 46, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.md, gap: spacing.sm },
+  inputWrapFocused: { borderColor: colors.primary, backgroundColor: colors.card },
   inputWrapError:   { borderColor: colors.danger,  backgroundColor: colors.dangerBg },
   inputIcon:        { flexShrink: 0 },
   input:            { flex: 1, fontFamily: fonts.body, fontSize: 14, color: colors.text, outlineStyle: 'none' },
   hintText:         { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: spacing.xs, lineHeight: 18 },
   errorText:        { fontFamily: fonts.body, fontSize: 12, color: colors.danger, marginTop: spacing.xs },
 
-  primaryButton:     { width: '100%', height: 44, borderRadius: radius.md, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginTop: spacing.xs },
+  primaryButton:     { width: '100%', height: 48, borderRadius: 999, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginTop: spacing.xs },
   primaryButtonText: { fontFamily: fonts.headingSemiBold, fontSize: 15, color: colors.white, letterSpacing: 0.2 },
   buttonDisabled:    { opacity: 0.7 },
 
@@ -250,6 +283,6 @@ const styles = StyleSheet.create({
 
   divider: { width: '100%', height: 0.5, backgroundColor: colors.border, marginVertical: spacing.lg },
 
-  secondaryButton:     { width: '100%', height: 44, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.accent, backgroundColor: colors.accentTint, alignItems: 'center', justifyContent: 'center' },
+  secondaryButton:     { width: '100%', height: 48, borderRadius: 999, borderWidth: 1.5, borderColor: colors.accent, backgroundColor: colors.accentTint, alignItems: 'center', justifyContent: 'center' },
   secondaryButtonText: { fontFamily: fonts.headingSemiBold, fontSize: 15, color: colors.accent, letterSpacing: 0.2 },
 });

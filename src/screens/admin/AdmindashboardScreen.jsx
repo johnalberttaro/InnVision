@@ -1,12 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
-import { collection, query, orderBy, onSnapshot, where, getDocs, limit } from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatCurrency } from '../../utils/roomRates';
 import { subscribeToRooms, isAvailable, ROOM_STATUS, statusMeta } from '../../utils/Roomsservice';
 import { getOutstandingBalances } from '../../utils/BillingService';
-import { resolveUserRole } from '../../utils/roleHelpers';
 
 import KpiCard from '../../components/dashboard/KpiCard';
 import OccupancyGauge from '../../components/dashboard/OccupancyGauge';
@@ -72,6 +70,12 @@ function buildTrend(current, previous, formatter) {
  * ReservationsTrendChart, GuestDossierModal) so the admin and front desk
  * visuals stay consistent.
  *
+ * MIGRATED TO SUPABASE. Staff count now queries `profiles` directly
+ * (role = 'frontdesk' and active = true) instead of the old
+ * resolveUserRole() guessing logic against Firestore `guests` docs that
+ * had inconsistently-shaped role fields — profiles.role is a real
+ * Postgres enum now, so no guessing is needed.
+ *
  * KPI cards show a "vs last week" trend delta and support drill-down
  * navigation via onNavigate (e.g. Outstanding Balances -> billing screen).
  */
@@ -83,34 +87,68 @@ export default function AdminDashboardScreen({ onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [dossierReservation, setDossierReservation] = useState(null);
 
+  // Maps a Postgres reservations row (snake_case) to the same camelCase
+  // shape the Firestore version used.
+  const reservationToCamel = (row) => ({
+    id: row.id,
+    uid: row.user_id, // needed by GuestDossierModal's guest lookup
+    guestDetails: row.guest_details,
+    checkIn: row.check_in,
+    checkOut: row.check_out,
+    nights: row.nights,
+    selectedRooms: row.selected_rooms,
+    roomType: row.room_type,
+    totalAmount: row.total_amount,
+    status: row.status,
+    guestCount: row.guest_count,
+    createdAt: row.created_at,
+  });
+
   useEffect(() => {
-    const bookingsQuery = query(collection(db, 'reservations'), orderBy('createdAt', 'desc'), limit(200));
-    const unsubBookings = onSnapshot(
-      bookingsQuery,
-      (snapshot) => {
-        setBookings(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-        setLoading(false);
-      },
-      (error) => {
+    const loadBookings = async () => {
+      const { data, error } = await supabase
+        .from('reservations')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (error) {
         console.error('Failed to load dashboard bookings:', error);
         setLoading(false);
+        return;
       }
-    );
+      setBookings((data || []).map(reservationToCamel));
+      setLoading(false);
+    };
+    loadBookings();
+    const bookingsChannel = supabase
+      .channel('dashboard-reservations')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, loadBookings)
+      .subscribe();
+
     const unsubRooms = subscribeToRooms(setRooms, (error) =>
       console.error('Failed to load dashboard rooms:', error)
     );
 
-    // Active front-desk staff (admin-only metric).
-    const unsubStaff = onSnapshot(
-      query(collection(db, 'guests'), orderBy('createdAt', 'desc')),
-      (snapshot) => {
-        const count = snapshot.docs
-          .map((d) => d.data())
-          .filter((g) => resolveUserRole(g) === 'frontdesk' && g.role !== 'inactive').length;
-        setStaffCount(count);
-      },
-      (err) => console.error('Failed to load staff count:', err)
-    );
+    // Active front-desk staff (admin-only metric). profiles.role is a
+    // real enum now, so this is a direct filter instead of the old
+    // resolveUserRole() guessing logic.
+    const loadStaffCount = async () => {
+      const { count, error } = await supabase
+        .from('profiles')
+        .select('id', { count: 'exact', head: true })
+        .eq('role', 'frontdesk')
+        .eq('active', true);
+      if (error) {
+        console.error('Failed to load staff count:', error);
+        return;
+      }
+      setStaffCount(count ?? 0);
+    };
+    loadStaffCount();
+    const staffChannel = supabase
+      .channel('dashboard-staff')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, loadStaffCount)
+      .subscribe();
 
     // Outstanding (unpaid / partially paid) balances — admin money view.
     getOutstandingBalances()
@@ -121,9 +159,9 @@ export default function AdminDashboardScreen({ onNavigate }) {
       .catch((err) => console.error('Failed to load outstanding balances:', err));
 
     return () => {
-      unsubBookings();
+      supabase.removeChannel(bookingsChannel);
       unsubRooms();
-      unsubStaff();
+      supabase.removeChannel(staffChannel);
     };
   }, []);
 
@@ -280,7 +318,7 @@ export default function AdminDashboardScreen({ onNavigate }) {
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Current Occupancy</Text>
           <View style={styles.gaugeWrap}>
-            <OccupancyGauge percent={occupancyPercent} occupied={occupiedRooms} total={totalRooms} color={colors.primary} />
+            <OccupancyGauge percent={occupancyPercent} occupied={occupiedRooms} total={totalRooms} />
           </View>
         </View>
 
@@ -336,7 +374,7 @@ export default function AdminDashboardScreen({ onNavigate }) {
                   {getGuestName(booking)} booked {booking.roomType || '(room pending)'}
                 </Text>
                 <Text style={styles.activitySubtitle}>
-                  {booking.totals?.totalRooms ?? 0} Room{booking.totals?.totalRooms !== 1 ? 's' : ''} ·{' '}
+                  {booking.selectedRooms?.length ?? 0} Room{booking.selectedRooms?.length !== 1 ? 's' : ''} ·{' '}
                   {booking.nights} night{booking.nights !== 1 ? 's' : ''} · {formatDateLabel(booking.checkIn)}
                 </Text>
               </View>

@@ -11,18 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  collection,
-  addDoc,
-  doc,
-  getDoc,
-  query,
-  where,
-  getDocs,
-  updateDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import Brandheader from '../../components/shared/Brandheader';
 import Appfooter from '../../components/shared/Appfooter';
 import StepIndicator from '../../components/shared/StepIndicator';
@@ -52,13 +41,20 @@ const TWO_COL_BREAKPOINT = 680;
  *    used `colors.white` while sitting on `colors.primary` (which flips)
  *    — changed to `onPrimary`.
  *
+ * MIGRATED TO SUPABASE. `user` is now a Supabase Auth user (user.id, not
+ * user.uid). Also fixed the guest-duplication bug: upsertGuestRecord()
+ * used to query-then-insert by a linkedUid field that registration never
+ * actually set, silently creating a second guest row on every user's
+ * first booking. It now does a single upsert() against guests.user_id,
+ * which has a real UNIQUE constraint — see upsertGuestRecord() below.
+ *
  * GUEST RECORD UPSERT: confirming a reservation also creates-or-updates
- * a matching document in the "guests" collection, linked by
- * `linkedUid === user.uid`. See upsertGuestRecord() below for details.
+ * a matching row in the "guests" table, linked by guests.user_id. See
+ * upsertGuestRecord() below for details.
  *
  * E-WALLET PAYMENT STEP (added): when Payment Mode is "Pay Online", the
  * "Confirm Reservation" button becomes "Pay Now". Tapping it does NOT
- * write to Firestore directly — instead ReviewPayScreen swaps its own
+ * write to Supabase directly — instead ReviewPayScreen swaps its own
  * content for <EwalletPaymentScreen>, a dedicated sub-view (own file,
  * src/screens/booking/EwalletPaymentScreen.jsx) where the guest picks
  * GCash / Maya / GoTyme / Maribank and taps Proceed. This is a local
@@ -69,7 +65,7 @@ const TWO_COL_BREAKPOINT = 680;
  * EwalletPaymentScreen is presentation-only: once its mock "processing"
  * delay finishes, it calls back via onConfirmPayment(walletId), which
  * this screen uses to set `eWallet` and immediately call
- * submitReservation() — the actual (and only) Firestore write still
+ * submitReservation() — the actual (and only) Supabase write still
  * happens here, same as the Pay at Hotel path.
  *
  * This is a MOCK payment step — no real gateway integration exists for
@@ -82,7 +78,7 @@ const TWO_COL_BREAKPOINT = 680;
  * "Pay at Hotel" is unaffected — it still calls submitReservation()
  * directly with paymentStatus: 'unpaid'.
  *
- * This is the ONLY place in the mobile app that creates a Firestore
+ * This is the ONLY place in the mobile app that creates a Supabase
  * reservation document. Nothing before this point (dates, room selection,
  * guest form fields) is saved — it's all local, in-progress state passed
  * down as props. The document is created here, once, when the guest's
@@ -126,8 +122,8 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   const { colors, spacing, radius, fonts } = useTheme();
   const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
 
-  const [firstName, setFirstName]             = useState(user?.displayName?.split(' ')[0] || '');
-  const [lastName, setLastName]               = useState(user?.displayName?.split(' ').slice(1).join(' ') || '');
+  const [firstName, setFirstName]             = useState('');
+  const [lastName, setLastName]               = useState('');
   const [email, setEmail]                     = useState(user?.email || '');
   const [phone, setPhone]                     = useState('');
   const [specialRequests, setSpecialRequests] = useState('');
@@ -144,34 +140,38 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   // EwalletPaymentScreen. See docstring above.
   const [paymentStep, setPaymentStep] = useState('form');
 
-  // Only set once the reservation has actually been created in Firestore
+  // Only set once the reservation has actually been created in Supabase
   // (i.e. after a successful addDoc below). Used only for the reference
   // badge — nothing before confirm should imply a saved record exists.
   const [reservationId, setReservationId] = useState(null);
 
-  // The initial firstName/lastName state above is a rough guess (split
-  // user.displayName on the first space), which breaks for multi-word
-  // first names like "John Albert" — it would show "John" / "Albert
-  // Tabasa" instead of "John Albert" / "Tabasa". guests/{uid} stores
-  // these correctly as separate fields (set at registration), so fetch
-  // and overwrite the guess with the real values once available.
+  // profiles.first_name/last_name are reliably split (set at
+  // registration by the on_auth_user_created trigger reading signup
+  // metadata) — no more guessing by splitting a single displayName
+  // string, which broke for multi-word first names like "John Albert"
+  // (would have shown "John" / "Albert Tabasa" instead of "John Albert" /
+  // "Tabasa"). Also prefills phone, which the old version left blank.
   useEffect(() => {
-    if (!user?.uid) return;
+    if (!user?.id) return;
     let cancelled = false;
     (async () => {
       try {
-        const guestSnap = await getDoc(doc(db, 'guests', user.uid));
-        if (!cancelled && guestSnap.exists()) {
-          const data = guestSnap.data();
-          if (data.firstName) setFirstName(data.firstName);
-          if (data.lastName) setLastName(data.lastName);
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('first_name, last_name, phone')
+          .eq('id', user.id)
+          .single();
+        if (!cancelled && !error && data) {
+          if (data.first_name) setFirstName(data.first_name);
+          if (data.last_name) setLastName(data.last_name);
+          if (data.phone) setPhone(data.phone);
         }
       } catch (err) {
-        console.warn('Failed to load guest profile for name prefill, keeping displayName guess:', err);
+        console.warn('Failed to load profile for name prefill:', err);
       }
     })();
     return () => { cancelled = true; };
-  }, [user?.uid]);
+  }, [user?.id]);
 
   if (!bookingDetails || !selectedRooms || selectedRooms.length === 0) {
     return (
@@ -241,113 +241,99 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
     return Object.keys(e).length === 0;
   };
 
-  // Creates or updates this guest's entry in the "guests" collection so
-  // the booking shows up on the admin Guest Records screen. Runs after
-  // the reservation itself has already been saved — failure here is
-  // logged but never blocks or fails the guest's actual booking.
+  // Creates or updates this guest's entry in the "guests" table so the
+  // booking shows up on the admin Guest Records screen. Runs after the
+  // reservation itself has already been saved — failure here is logged
+  // but never blocks or fails the guest's actual booking.
+  //
+  // FIXED BUG carried over from the Firestore version: the old code
+  // queried for an existing guest by linkedUid and addDoc'd a new one if
+  // none was found — but registration created a guests/{uid} doc WITHOUT
+  // a linkedUid field, so that query always came up empty on a user's
+  // first booking, creating a second, duplicate guest record every time.
+  // guests.user_id now has a UNIQUE constraint, so a single upsert with
+  // onConflict is both simpler and structurally correct — it can't
+  // create a duplicate even if called repeatedly.
   const upsertGuestRecord = async () => {
     try {
-      const existingQuery = query(collection(db, 'guests'), where('linkedUid', '==', user.uid));
-      const existingSnap = await getDocs(existingQuery);
-
-      if (existingSnap.empty) {
-        await addDoc(collection(db, 'guests'), {
-          firstName: firstName.trim(),
-          lastName:  lastName.trim(),
-          email:     email.trim(),
-          phone:     phone.trim(),
-          source:    'Mobile App',
-          linkedUid: user.uid,
-          nationality: null,
-          idType:      null,
-          idNumber:    null,
-          vipTier:     null,
-          tags:        [],
-          staffNotes:  null,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          createdBy: 'guest-booking',
-        });
-      } else {
-        // Returning guest — refresh contact info in case it changed,
-        // but never touch staff-only fields (vipTier, tags, staffNotes,
-        // source) that this booking flow has no business overwriting.
-        const existingDocRef = existingSnap.docs[0].ref;
-        await updateDoc(existingDocRef, {
-          firstName: firstName.trim(),
-          lastName:  lastName.trim(),
-          email:     email.trim(),
-          phone:     phone.trim(),
-          updatedAt: serverTimestamp(),
-        });
-      }
+      const { error } = await supabase
+        .from('guests')
+        .upsert(
+          {
+            user_id: user.id,
+            first_name: firstName.trim(),
+            last_name: lastName.trim(),
+            email: email.trim(),
+            phone: phone.trim(),
+            source: 'Mobile App',
+            created_by: 'guest-booking',
+          },
+          { onConflict: 'user_id' }
+        );
+      if (error) throw error;
     } catch (err) {
       console.warn('Failed to upsert guest record (reservation still succeeded):', err);
     }
   };
 
-  // Actually writes the reservation to Firestore. Called either directly
+  // Actually writes the reservation to Supabase. Called either directly
   // (Pay at Hotel) or after EwalletPaymentScreen's onConfirmPayment fires
   // (Pay Online). Assumes validate() has already passed, and for online
   // payments that `eWallet` has already been set by handleEwalletConfirm.
   const submitReservation = async () => {
     setConfirming(true);
     try {
-      const docRef = await addDoc(collection(db, 'reservations'), {
-        uid:        user.uid,
-        guestEmail: email.trim(),
-        // Flat guestName kept for any admin views that don't drill into
-        // guestDetails; guestDetails is the source of truth.
-        guestName:  `${firstName.trim()} ${lastName.trim()}`.trim(),
-        guestDetails: {
-          firstName: firstName.trim(),
-          lastName:  lastName.trim(),
-          email:     email.trim(),
-          phone:     phone.trim(),
-          specialRequests: specialRequests.trim(),
-        },
-        phone: phone.trim(),
+      const { data: inserted, error } = await supabase
+        .from('reservations')
+        .insert({
+          user_id: user.id,
+          guest_email: email.trim(),
+          guest_details: {
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            email: email.trim(),
+            phone: phone.trim(),
+            specialRequests: specialRequests.trim(),
+          },
 
-        checkIn:  checkIn.toISOString(),
-        checkOut: checkOut.toISOString(),
-        nights,
-        rooms:  rooms || null,
-        totals,
+          check_in: checkIn.toISOString(),
+          check_out: checkOut.toISOString(),
+          nights,
+          guest_count: totals?.totalGuests ?? null,
 
-        // selectedRooms: one entry per physical room in this reservation.
-        // roomType is kept as a simple comma-joined string for any admin
-        // views that don't drill into selectedRooms.
-        selectedRooms: selectedRooms.map((r) => ({
-          roomNumber: r.roomNumber ?? null,
-          roomTypeId: r.roomTypeId ?? r.id ?? null,
-          roomTypeName: r.roomTypeName || r.name,
-          price: r.price ?? null,
-        })),
-        roomType: roomTypeSummary,
+          // selected_rooms: one entry per physical room in this
+          // reservation. room_type is kept as a simple comma-joined
+          // string for any admin views that don't drill into
+          // selected_rooms.
+          selected_rooms: selectedRooms.map((r) => ({
+            roomNumber: r.roomNumber ?? null,
+            roomTypeId: r.roomTypeId ?? r.id ?? null,
+            roomTypeName: r.roomTypeName || r.name,
+            price: r.price ?? null,
+          })),
+          room_type: roomTypeSummary,
 
-        subtotal,
-        tax,
-        totalAmount: total,
-        paymentMode,
-        // 'paid' only when the mock e-wallet step actually completed;
-        // read by BillingService.createBillingRecordFromReservation() at
-        // check-in to auto-settle the folio. See its docstring for how.
-        paymentStatus: paymentMode === 'online' && eWallet ? 'paid' : 'unpaid',
-        // Mock only — no real gateway is wired in. Recorded purely for
-        // reference/display and to pick the right paymentMethod on the
-        // auto-generated receipt at check-in.
-        eWalletProvider: paymentMode === 'online' ? eWallet : null,
+          subtotal,
+          tax,
+          total_amount: total,
+          payment_mode: paymentMode,
+          // 'paid' only when the mock e-wallet step actually completed;
+          // read by BillingService at check-in to auto-settle the folio.
+          payment_status: paymentMode === 'online' && eWallet ? 'paid' : 'unpaid',
+          // Mock only — no real gateway is wired in. Recorded purely for
+          // reference/display and to pick the right paymentMethod on the
+          // auto-generated receipt at check-in.
+          ewallet_provider: paymentMode === 'online' ? eWallet : null,
 
-        // 'pending' → awaits admin approval on the Pending Reservations
-        // screen (✓ moves it to 'upcoming', ✕ moves it to 'declined').
-        // This stays 'pending' regardless of payment mode — a mock
-        // e-wallet payment never bypasses admin review.
-        status: 'pending',
+          // 'pending' → awaits admin approval on the Pending Reservations
+          // screen (✓ moves it to 'upcoming', ✕ moves it to 'declined').
+          status: 'pending',
+        })
+        .select('id')
+        .single();
+      if (error) throw error;
 
-        createdAt: serverTimestamp(),
-      });
-
-      setReservationId(docRef.id);
+      setReservationId(inserted.id);
 
       // Guest Records upsert — see upsertGuestRecord() docstring above.
       // Runs after the reservation write succeeds; its own errors are

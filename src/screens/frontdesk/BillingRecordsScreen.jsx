@@ -3,6 +3,15 @@
 // Entry point into the Billing Management module — tapping a row calls
 // onSelectRecord, which AdminShell uses to open the folio detail view
 // (same pattern as onSelectGuest -> guests:profile).
+//
+// ENHANCED: added a KPI row (Outstanding Balance, Unpaid Folios, Fully
+// Paid) using the same KpiCard component as the Housekeeping/dashboard
+// screens — computed from a separate always-unfiltered fetch, so the
+// KPIs stay stable regardless of whatever search/filter is currently
+// applied to the list below. Room numbers are now colored badges (same
+// convention as ReservationsScreen/HousekeepingSchedule) instead of
+// plain text buried in a subtitle line, and each row gets a colored
+// left-border accent matching its billing status.
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -15,6 +24,7 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, fonts } from '../../utils/theme';
 import {
   getAllBillingRecords,
@@ -22,6 +32,7 @@ import {
   getBillingRecordsByStatus,
 } from '../../utils/BillingService';
 import Pagination from '../../components/shared/Pagination';
+import KpiCard from '../../components/dashboard/KpiCard';
 
 const PAGE_SIZE = 5;
 
@@ -47,9 +58,9 @@ const STATUS_FILTERS = [
 ];
 
 const STATUS_STYLE = {
-  paid: { bg: '#E5F3EA', text: '#1E7A3D', label: 'Paid' },
-  partially_paid: { bg: '#FCF1DC', text: '#8A5B00', label: 'Partially Paid' },
-  unpaid: { bg: '#FBE7E7', text: '#B3261E', label: 'Unpaid' },
+  paid: { bg: '#E5F3EA', text: '#1E7A3D', accent: '#1E7A3D', label: 'Paid' },
+  partially_paid: { bg: '#FCF1DC', text: '#8A5B00', accent: '#C99400', label: 'Partially Paid' },
+  unpaid: { bg: '#FBE7E7', text: '#B3261E', accent: '#B3261E', label: 'Unpaid' },
 };
 
 export default function BillingRecordsScreen({ onSelectRecord }) {
@@ -60,6 +71,20 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
   const [activeFilter, setActiveFilter] = useState('all');
   const [error, setError] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+
+  // Separate from `records` (which reflects the current search/filter) —
+  // this always holds every folio, so the KPI row stays accurate no
+  // matter what the list below is currently filtered to.
+  const [allRecordsForKpis, setAllRecordsForKpis] = useState([]);
+
+  const loadKpiData = useCallback(async () => {
+    try {
+      const data = await getAllBillingRecords();
+      setAllRecordsForKpis(data);
+    } catch (err) {
+      console.error('Failed to load billing KPI data:', err);
+    }
+  }, []);
 
   const loadRecords = useCallback(async () => {
     try {
@@ -84,7 +109,8 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
   useEffect(() => {
     setLoading(true);
     loadRecords();
-  }, [loadRecords]);
+    loadKpiData();
+  }, [loadRecords, loadKpiData]);
 
   // Whenever the search term or filter changes, the underlying result set
   // changes shape — jump back to page 1 so the user isn't stranded on a
@@ -101,7 +127,24 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
   const onRefresh = () => {
     setRefreshing(true);
     loadRecords();
+    loadKpiData();
   };
+
+  // ── KPIs ───────────────────────────────────────────────────────────────
+  const outstandingTotal = useMemo(
+    () => allRecordsForKpis
+      .filter((r) => r.billingStatus !== 'paid')
+      .reduce((sum, r) => sum + (r.remainingBalance || 0), 0),
+    [allRecordsForKpis]
+  );
+  const unpaidCount = useMemo(
+    () => allRecordsForKpis.filter((r) => r.billingStatus === 'unpaid').length,
+    [allRecordsForKpis]
+  );
+  const paidCount = useMemo(
+    () => allRecordsForKpis.filter((r) => r.billingStatus === 'paid').length,
+    [allRecordsForKpis]
+  );
 
   const renderStatusBadge = (status) => {
     const style = STATUS_STYLE[status] || STATUS_STYLE.unpaid;
@@ -112,28 +155,41 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
     );
   };
 
-  const renderItem = ({ item }) => (
-    <TouchableOpacity
-      style={styles.row}
-      activeOpacity={0.7}
-      onPress={() => onSelectRecord(item)}
-    >
-      <View style={styles.rowMain}>
-        <Text style={styles.folioNumber}>{item.folioNumber}</Text>
-        <Text style={styles.guestName}>{item.guestName}</Text>
-        <Text style={styles.subInfo}>
-          Room {Array.isArray(item.roomNumbers) ? item.roomNumbers.join(', ') : item.roomNumbers}
-          {'  •  '}
-          {item.checkInDate ? formatDate(item.checkInDate) : ''} – {item.checkOutDate ? formatDate(item.checkOutDate) : ''}
-        </Text>
-      </View>
-      <View style={styles.rowSide}>
-        <Text style={styles.balanceLabel}>Balance</Text>
-        <Text style={styles.balanceAmount}>₱{item.remainingBalance?.toFixed(2)}</Text>
-        {renderStatusBadge(item.billingStatus)}
-      </View>
-    </TouchableOpacity>
-  );
+  const renderItem = ({ item }) => {
+    const statusStyle = STATUS_STYLE[item.billingStatus] || STATUS_STYLE.unpaid;
+    const roomNumbers = Array.isArray(item.roomNumbers) ? item.roomNumbers : [item.roomNumbers].filter(Boolean);
+
+    return (
+      <TouchableOpacity
+        style={[styles.row, { borderLeftColor: statusStyle.accent }]}
+        activeOpacity={0.7}
+        onPress={() => onSelectRecord(item)}
+      >
+        <View style={styles.rowMain}>
+          <Text style={styles.folioNumber}>{item.folioNumber}</Text>
+          <Text style={styles.guestName}>{item.guestName}</Text>
+
+          <View style={styles.roomBadgeRow}>
+            {roomNumbers.map((rn) => (
+              <View key={rn} style={styles.roomBadge}>
+                <Ionicons name="key-outline" size={11} color={colors.white} />
+                <Text style={styles.roomBadgeText}>Room {rn}</Text>
+              </View>
+            ))}
+          </View>
+
+          <Text style={styles.subInfo}>
+            {item.checkInDate ? formatDate(item.checkInDate) : ''} – {item.checkOutDate ? formatDate(item.checkOutDate) : ''}
+          </Text>
+        </View>
+        <View style={styles.rowSide}>
+          <Text style={styles.balanceLabel}>Balance</Text>
+          <Text style={styles.balanceAmount}>₱{item.remainingBalance?.toFixed(2)}</Text>
+          {renderStatusBadge(item.billingStatus)}
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -148,6 +204,30 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
           placeholderTextColor={colors.textMuted}
           value={searchTerm}
           onChangeText={setSearchTerm}
+        />
+      </View>
+
+      <View style={styles.kpiRow}>
+        <KpiCard
+          icon="cash-outline"
+          label="Outstanding Balance"
+          value={`₱${outstandingTotal.toFixed(2)}`}
+          accent={outstandingTotal > 0 ? '#B3261E' : '#1E7A3D'}
+          note="Unpaid + partially paid"
+        />
+        <KpiCard
+          icon="alert-circle-outline"
+          label="Unpaid Folios"
+          value={String(unpaidCount)}
+          accent={unpaidCount > 0 ? '#B3261E' : '#1E7A3D'}
+          note="No payment recorded yet"
+        />
+        <KpiCard
+          icon="checkmark-circle-outline"
+          label="Fully Paid"
+          value={String(paidCount)}
+          accent="#1E7A3D"
+          note="Out of all folios"
         />
       </View>
 
@@ -276,6 +356,12 @@ const styles = StyleSheet.create({
   filterChipTextActive: {
     color: colors.white,
   },
+  kpiRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.md,
+    marginBottom: spacing.lg,
+  },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -286,6 +372,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: colors.border,
+    borderLeftWidth: 4, // color set inline per-row via STATUS_STYLE().accent
   },
   rowMain: {
     flex: 1,
@@ -308,6 +395,17 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
   },
+  roomBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  roomBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: colors.primary,
+    borderRadius: 999,
+    paddingVertical: 2,
+    paddingHorizontal: spacing.sm,
+  },
+  roomBadgeText: { fontSize: 10, fontFamily: fonts.headingSemiBold, color: colors.white },
   rowSide: {
     alignItems: 'flex-end',
   },

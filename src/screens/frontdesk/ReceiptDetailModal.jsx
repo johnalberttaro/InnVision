@@ -1,193 +1,173 @@
-// Receiptdetailmodal.jsx
-// Displays a single receipt's full details with Print and Download
-// actions. Print/Download use the browser's native capabilities and only
-// work on web (Platform.OS === 'web') — native iOS/Android would need a
-// library like expo-print, which isn't part of this project yet.
+// Recordpaymentmodal.jsx
+// Overlay modal for recording a payment against a folio. Used from both
+// Billingrecorddetailscreen's "Record Payment" button and (eventually)
+// Paymentsscreen's folio list — one shared form for both entry points.
 
-import React from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import {
+  Modal,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+} from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { recordPayment } from '../../utils/BillingService';
+
+const PAYMENT_METHODS = [
+  { key: 'cash', label: 'Cash', icon: 'cash-outline' },
+  { key: 'gcash', label: 'GCash', icon: 'phone-portrait-outline' },
+  { key: 'card', label: 'Credit/Debit Card', icon: 'card-outline' },
+  { key: 'pay_at_hotel', label: 'Pay at Hotel', icon: 'business-outline' },
+];
 
 function formatCurrency(amount) {
   return `₱${(amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function formatDateTime(value) {
-  if (!value) return '—';
-  try {
-    const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
-    if (isNaN(date.getTime())) return String(value);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  } catch {
-    return String(value);
-  }
-}
-
-// Kept in sync with the map in Receiptsscreen.jsx — add new payment
-// methods to both places (or better, move this to a shared constants
-// file both screens import from).
-const PAYMENT_METHOD_LABELS = {
-  cash: 'Cash',
-  card: 'Credit/Debit Card',
-  hotel: 'Pay at Hotel',
-  pay_at_hotel: 'Pay at Hotel',
-  online: 'E-wallet',
-  gcash: 'GCash',
-  maya: 'Maya',
-  maribank: 'Maribank',
-  gotyme: 'GoTyme',
-};
-
-function paymentMethodLabel(method) {
-  if (!method) return '—';
-  return PAYMENT_METHOD_LABELS[method.toLowerCase()] || method;
-}
-
-// Matches getReferenceNumber() in Adminbookingsscreen.jsx and
-// formatReservationRef() in Billingrecorddetailscreen.jsx — the stored
-// reservationRef is the raw Firestore doc id, but every screen displays
-// it as RES- + first 8 chars, uppercased.
-function formatReservationRef(id) {
-  if (!id) return '—';
-  return `RES-${id.slice(0, 8).toUpperCase()}`;
-}
-
-function buildReceiptHTML(receipt) {
-  const methodLabel = paymentMethodLabel(receipt.paymentMethod);
-  return `
-    <html>
-      <head>
-        <meta charset="utf-8" />
-        <title>${receipt.receiptNumber}</title>
-        <style>
-          body { font-family: -apple-system, Helvetica, Arial, sans-serif; padding: 40px; color: #1A1A1A; }
-          .header { border-bottom: 3px solid #093173; padding-bottom: 16px; margin-bottom: 24px; }
-          .hotel-name { font-size: 22px; font-weight: 800; color: #093173; }
-          .receipt-title { font-size: 14px; color: #734A09; font-weight: 600; margin-top: 4px; }
-          .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
-          .label { color: #666; font-size: 13px; }
-          .value { font-weight: 600; font-size: 13px; }
-          .amount-row { margin-top: 16px; padding: 16px; background: #FAF6EF; border-radius: 8px; }
-          .amount-value { font-size: 24px; font-weight: 800; color: #093173; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div class="hotel-name">InnVision</div>
-          <div class="receipt-title">Payment Receipt — ${receipt.receiptNumber}</div>
-        </div>
-        <div class="row"><span class="label">Guest Name</span><span class="value">${receipt.guestName || '—'}</span></div>
-        <div class="row"><span class="label">Reservation Ref</span><span class="value">${formatReservationRef(receipt.reservationRef)}</span></div>
-        <div class="row"><span class="label">Payment Date</span><span class="value">${formatDateTime(receipt.paymentDate)}</span></div>
-        <div class="row"><span class="label">Payment Method</span><span class="value">${methodLabel}</span></div>
-        <div class="row"><span class="label">Remaining Balance</span><span class="value">${formatCurrency(receipt.remainingBalanceAfter)}</span></div>
-        <div class="row"><span class="label">Processed By</span><span class="value">${receipt.processedByName || '—'}</span></div>
-        <div class="amount-row">
-          <div class="label">Amount Paid</div>
-          <div class="amount-value">${formatCurrency(receipt.amountPaid)}</div>
-        </div>
-      </body>
-    </html>
-  `;
-}
-
 /**
  * Props:
  *  - visible: boolean
- *  - receipt: object | null
- *  - onClose: () => void
+ *  - folio: object | null      the billingRecords doc (needs id, guestName, remainingBalance)
+ *  - staffUid: string          currently signed-in admin's uid, stamped on the payment
+ *  - staffName: string         currently signed-in admin's display name
+ *  - onClose: () => void       dismiss without recording anything
+ *  - onSuccess: (result) => void   called after a successful recordPayment() call
  */
-export default function ReceiptDetailModal({ visible, receipt, onClose }) {
-  if (!receipt) return null;
+export default function RecordPaymentModal({ visible, folio, staffUid, staffName, onClose, onSuccess }) {
+  const [amount, setAmount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
 
-  const methodLabel = paymentMethodLabel(receipt.paymentMethod);
-
-  const handlePrint = () => {
-    if (Platform.OS !== 'web') {
-      window?.alert
-        ? window.alert('Printing is only available on web right now.')
-        : console.warn('Printing is only available on web right now.');
-      return;
+  // Reset form state each time the modal opens for a (possibly different) folio.
+  useEffect(() => {
+    if (visible) {
+      setAmount('');
+      setPaymentMethod('cash');
+      setError(null);
+      setSubmitting(false);
     }
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-    printWindow.document.write(buildReceiptHTML(receipt));
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
+  }, [visible, folio?.id]);
+
+  if (!folio) return null;
+
+  const remainingBalance = folio.remainingBalance || 0;
+  const parsedAmount = parseFloat(amount);
+  const isValidAmount = !isNaN(parsedAmount) && parsedAmount > 0 && parsedAmount <= remainingBalance;
+
+  const handlePayFullBalance = () => {
+    setAmount(remainingBalance.toFixed(2));
   };
 
-  const handleDownload = () => {
-    if (Platform.OS !== 'web') {
-      window?.alert
-        ? window.alert('Downloading is only available on web right now.')
-        : console.warn('Downloading is only available on web right now.');
+  const handleSubmit = async () => {
+    if (!isValidAmount) {
+      setError(
+        parsedAmount > remainingBalance
+          ? `Amount can't exceed the remaining balance of ${formatCurrency(remainingBalance)}.`
+          : 'Enter a valid payment amount.'
+      );
       return;
     }
-    const html = buildReceiptHTML(receipt);
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${receipt.receiptNumber}.html`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    setSubmitting(true);
+    setError(null);
+    try {
+      const result = await recordPayment({
+        folioId: folio.id,
+        amount: parsedAmount,
+        paymentMethod,
+        processedByUid: staffUid || null,
+        processedByName: staffName || 'Front Desk Staff',
+      });
+      onSuccess && onSuccess(result);
+    } catch (err) {
+      console.error('Failed to record payment:', err);
+      setError(err.message || 'Could not record this payment. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <View style={styles.card}>
-          <Text style={styles.hotelName}>InnVision</Text>
-          <Text style={styles.receiptTitle}>Payment Receipt</Text>
-          <Text style={styles.receiptNumber}>{receipt.receiptNumber}</Text>
+          <Text style={styles.title}>Record Payment</Text>
+          <Text style={styles.subtitle}>{folio.guestName} • {folio.folioNumber}</Text>
 
-          <View style={styles.divider} />
-
-          <DetailRow label="Guest Name" value={receipt.guestName} />
-          <DetailRow label="Reservation Ref" value={formatReservationRef(receipt.reservationRef)} />
-          <DetailRow label="Payment Date" value={formatDateTime(receipt.paymentDate)} />
-          <DetailRow label="Payment Method" value={methodLabel} />
-          <DetailRow label="Remaining Balance" value={formatCurrency(receipt.remainingBalanceAfter)} />
-          <DetailRow label="Processed By" value={receipt.processedByName} />
-
-          <View style={styles.amountBox}>
-            <Text style={styles.amountLabel}>Amount Paid</Text>
-            <Text style={styles.amountValue}>{formatCurrency(receipt.amountPaid)}</Text>
+          <View style={styles.balanceRow}>
+            <Text style={styles.balanceLabel}>Remaining Balance</Text>
+            <Text style={styles.balanceAmount}>{formatCurrency(remainingBalance)}</Text>
           </View>
+
+          <Text style={styles.fieldLabel}>Payment Amount</Text>
+          <View style={styles.amountRow}>
+            <TextInput
+              style={styles.amountInput}
+              placeholder="0.00"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="decimal-pad"
+              value={amount}
+              onChangeText={(text) => {
+                setAmount(text);
+                setError(null);
+              }}
+            />
+            <TouchableOpacity style={styles.fullBalanceButton} onPress={handlePayFullBalance}>
+              <Text style={styles.fullBalanceButtonText}>Full Balance</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.fieldLabel}>Payment Method</Text>
+          <View style={styles.methodGrid}>
+            {PAYMENT_METHODS.map((m) => (
+              <TouchableOpacity
+                key={m.key}
+                style={[styles.methodChip, paymentMethod === m.key && styles.methodChipActive]}
+                onPress={() => setPaymentMethod(m.key)}
+              >
+                <Ionicons
+                  name={m.icon}
+                  size={18}
+                  color={paymentMethod === m.key ? colors.white : colors.textMuted}
+                  style={styles.methodIcon}
+                />
+                <Text
+                  style={[
+                    styles.methodChipText,
+                    paymentMethod === m.key && styles.methodChipTextActive,
+                  ]}
+                >
+                  {m.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {error && <Text style={styles.errorText}>{error}</Text>}
 
           <View style={styles.actionsRow}>
-            <TouchableOpacity style={styles.secondaryButton} onPress={handlePrint}>
-              <Text style={styles.secondaryButtonText}>🖨️ Print</Text>
+            <TouchableOpacity style={styles.cancelButton} onPress={onClose} disabled={submitting}>
+              <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.secondaryButton} onPress={handleDownload}>
-              <Text style={styles.secondaryButtonText}>⬇️ Download</Text>
+            <TouchableOpacity
+              style={[styles.submitButton, (!isValidAmount || submitting) && styles.submitButtonDisabled]}
+              onPress={handleSubmit}
+              disabled={!isValidAmount || submitting}
+            >
+              {submitting ? (
+                <ActivityIndicator color={colors.white} size="small" />
+              ) : (
+                <Text style={styles.submitButtonText}>Confirm Payment</Text>
+              )}
             </TouchableOpacity>
           </View>
-
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Text style={styles.closeButtonText}>Close</Text>
-          </TouchableOpacity>
         </View>
       </View>
     </Modal>
-  );
-}
-
-function DetailRow({ label, value }) {
-  return (
-    <View style={styles.detailRow}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value ?? '—'}</Text>
-    </View>
   );
 }
 
@@ -206,28 +186,58 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg || 16,
     padding: spacing.lg,
   },
-  hotelName: { fontFamily: fonts.headingExtraBold, fontSize: 20, color: colors.primary },
-  receiptTitle: {
-    fontFamily: fonts.bodySemiBold,
-    fontSize: 13,
-    color: colors.secondary || '#734A09',
-    marginTop: 2,
-  },
-  receiptNumber: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
-  detailLabel: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted },
-  detailValue: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.text, textAlign: 'right' },
-  amountBox: {
-    marginTop: spacing.md,
+  title: { fontFamily: fonts.headingExtraBold, fontSize: 20, color: colors.primary },
+  subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2, marginBottom: spacing.md },
+  balanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     backgroundColor: colors.background,
     borderRadius: radius.sm,
     padding: spacing.md,
+    marginBottom: spacing.md,
   },
-  amountLabel: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted },
-  amountValue: { fontFamily: fonts.headingExtraBold, fontSize: 24, color: colors.primary, marginTop: 2 },
-  actionsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
-  secondaryButton: {
+  balanceLabel: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted },
+  balanceAmount: { fontFamily: fonts.headingSemiBold, fontSize: 17, color: colors.primary },
+  fieldLabel: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.text, marginBottom: 6 },
+  amountRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+  amountInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    fontFamily: fonts.body,
+    fontSize: 16,
+    color: colors.text,
+  },
+  fullBalanceButton: {
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    backgroundColor: colors.primaryTint,
+  },
+  fullBalanceButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.primary },
+  methodGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
+  methodChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 20,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  methodChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  methodIcon: { marginBottom: 2 },
+  methodChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.textMuted },
+  methodChipTextActive: { color: colors.white },
+  errorText: { fontFamily: fonts.body, fontSize: 12, color: '#B3261E', marginBottom: spacing.sm },
+  actionsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  cancelButton: {
     flex: 1,
     paddingVertical: spacing.sm + 2,
     borderRadius: radius.md,
@@ -235,13 +245,14 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     alignItems: 'center',
   },
-  secondaryButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.text },
-  closeButton: {
-    marginTop: spacing.sm,
+  cancelButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.textMuted },
+  submitButton: {
+    flex: 2,
     paddingVertical: spacing.sm + 2,
     borderRadius: radius.md,
     backgroundColor: colors.primary,
     alignItems: 'center',
   },
-  closeButtonText: { fontFamily: fonts.headingSemiBold, fontSize: 13, color: colors.white },
+  submitButtonDisabled: { opacity: 0.5 },
+  submitButtonText: { fontFamily: fonts.headingSemiBold, fontSize: 13, color: colors.white },
 });

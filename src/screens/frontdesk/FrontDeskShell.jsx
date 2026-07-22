@@ -5,14 +5,19 @@ import FrontDeskDashboardScreen from './FrontDeskDashboardScreen';
 import ReservationsScreen from './ReservationsScreen';
 import RoomManagementScreen from './RoomManagementScreen';
 import RoomCleaningStatusScreen from './RoomCleaningStatusScreen';
+import HousekeepingScheduleScreen from './HousekeepingSchedule';
+import MaintenanceRequestScreen from './MaintenanceRequest';
 import GuestRecordsScreen from './GuestRecordsScreen';
 import GuestDetailsScreen from './GuestDetailsScreen';
 import GuestProfileTableScreen from './GuestProfileTableScreen';
+import InquiriesScreen from './InquiriesScreen';
 import BillingRecordsScreen from './BillingRecordsScreen';
 import BillingRecordDetailScreen from './BillingRecordDetailScreen';
 import RecordPaymentModal from './RecordPaymentModal';
 import PaymentsScreen from './PaymentsScreen';
 import ReceiptsScreen from './ReceiptsScreen';
+import DashboardNavbar from '../../components/shared/DashboardNavbar';
+import DashboardFooter from '../../components/shared/DashboardFooter';
 import { colors, spacing, fonts } from '../../utils/theme';
 
 const WIDE_BREAKPOINT = 1024;
@@ -123,20 +128,12 @@ export default function FrontDeskShell({ onLoggedOut, staffName, staffRole, staf
       />
 
       <View style={styles.contentArea}>
-        {!isWide && (
-          <View style={styles.mobileTopBar}>
-            <TouchableOpacity
-              onPress={() => setMobileSidebarOpen(true)}
-              style={styles.menuButton}
-              accessibilityLabel="Open menu"
-            >
-              <View style={styles.menuLine} />
-              <View style={styles.menuLine} />
-              <View style={styles.menuLine} />
-            </TouchableOpacity>
-            <Text style={styles.mobileTopBarTitle}>InnVision Front Desk</Text>
-          </View>
-        )}
+        <DashboardNavbar
+          title="InnVision Front Desk"
+          isWide={isWide}
+          onMenuPress={() => setMobileSidebarOpen(true)}
+          onInquiriesPress={() => handleNavigate('guests:inquiries')}
+        />
 
         <View style={styles.screenContent}>
           {renderActiveScreen(
@@ -154,6 +151,8 @@ export default function FrontDeskShell({ onLoggedOut, staffName, staffRole, staf
             staffName
           )}
         </View>
+
+        <DashboardFooter />
       </View>
 
       <RecordPaymentModal
@@ -192,18 +191,27 @@ function renderActiveScreen(
     const section = activeKey.split(':')[1];
     return <RoomManagementScreen onLogout={onLoggedOut} section={section} />;
   }
-  // Housekeeping — only 'housekeeping:status' is wired so far (it's the
-  // same underlying feature as RoomCleaningStatusScreen). Schedule and
-  // Maintenance Requests still fall through to the placeholder until
-  // those screens are built.
+  // Housekeeping — 'housekeeping:status' is the same underlying feature
+  // as RoomCleaningStatusScreen. 'housekeeping:schedule' now routes to
+  // the real staff-assignment task board. Maintenance Requests still
+  // falls through to the placeholder until that screen is built.
+  if (activeKey === 'housekeeping:schedule') {
+    return <HousekeepingScheduleScreen staffUid={staffUid} staffName={staffName} />;
+  }
   if (activeKey === 'housekeeping:status') {
     return <RoomCleaningStatusScreen onLogout={onLoggedOut} />;
+  }
+  if (activeKey === 'housekeeping:maintenance') {
+    return <MaintenanceRequestScreen staffUid={staffUid} staffName={staffName} />;
   }
   if (activeKey === 'guests:records') {
     return <GuestRecordsScreen onSelectGuest={openGuestProfile} />;
   }
   if (activeKey === 'guests:profiles') {
     return <GuestProfileTableScreen onSelectGuest={openGuestProfile} />;
+  }
+  if (activeKey === 'guests:inquiries') {
+    return <InquiriesScreen />;
   }
   if (activeKey === 'guests:profile') {
     return <GuestDetailsScreen guestId={selectedGuestId} onBack={closeGuestProfile} />;

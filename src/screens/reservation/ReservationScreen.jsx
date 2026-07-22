@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Alert,
   Image,
   Platform,
+  Animated,
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,7 +18,6 @@ import RangeCalendar from '../../components/reservation/RangeCalendar';
 import GuestRoomSelector from '../../components/reservation/GuestRoomSelector';
 import DropdownTrigger from '../../components/reservation/DropdownTrigger';
 import { useTheme } from '../../context/ThemeContext';
-import { lightColors } from '../../utils/theme';
 import { formatDate, isCheckOutValid, nightsBetween } from '../../utils/dateHelpers';
 
 const logo = require('../../../assets/logo.png');
@@ -35,6 +35,24 @@ const TRUST_POINTS = [
 
 /**
  * ReservationScreen — STAY DETAILS ONLY.
+ *
+ * ENHANCED: five concrete fixes/upgrades over the previous version:
+ *  1. FIXED DARK-MODE BUG: the close button hardcoded `lightColors.primary`
+ *     instead of reading from useTheme()'s `colors` — every other color on
+ *     this screen already flips correctly in dark mode, this one didn't.
+ *  2. Emoji icons (📅 👤) replaced with real Ionicons (calendar-outline,
+ *     people-outline) — every other screen in the app uses vector icons;
+ *     this was the one remaining holdout.
+ *  3. CTA button changed from a rounded rectangle to the full pill shape
+ *     (borderRadius: 999) used everywhere else in the app now (Book Now,
+ *     Sign In to Book Your Stay, the auth screens' buttons, etc.).
+ *  4. Added the same fade+slide-in mount animation used on the auth
+ *     screens, for consistency — this modal now eases in instead of
+ *     appearing instantly.
+ *  5. Trust points (Best rate guaranteed / Instant confirmation / Free
+ *     cancellation) used to only render on the desktop brand panel —
+ *     mobile users never saw that reassurance at all. Added a compact
+ *     horizontal version above the CTA on mobile.
  *
  * DESKTOP PASS 2: the earlier fix (max-width + shadow) stopped the card
  * from stretching, but left a large flat void beside it — a centered
@@ -68,6 +86,17 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
     () => getStyles(colors, spacing, radius, fonts, isDesktop),
     [colors, spacing, radius, fonts, isDesktop]
   );
+
+  // Smooth entrance, matching the same fade+slide-in pattern the auth
+  // screens use — this modal now eases in instead of appearing instantly.
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(16)).current;
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 320, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 320, useNativeDriver: true }),
+    ]).start();
+  }, []);
 
   const totals = useMemo(() => {
     const totalRooms    = rooms.length;
@@ -135,7 +164,7 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
             <Image source={logo} style={styles.logoImage} resizeMode="contain" />
           </View>
           <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityLabel="Close">
-            <Ionicons name="close-outline" size={20} color={lightColors.primary} />
+            <Ionicons name="close-outline" size={20} color={colors.primary} />
             <Text style={styles.closeText}>Close</Text>
           </TouchableOpacity>
         </View>
@@ -143,7 +172,7 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
 
       {/* ── Content ──────────────────────────────────────────── */}
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.shell}>
+        <Animated.View style={[styles.shell, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
 
           {/* Brand / trust panel — desktop only. Fills the space that
               used to just be dark void, with real information instead
@@ -189,7 +218,7 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
                   Stay Dates <Text style={styles.required}>*</Text>
                 </Text>
                 <DropdownTrigger
-                  icon="📅"
+                  icon={<Ionicons name="calendar-outline" size={16} color={colors.textMuted} />}
                   isOpen={showCalendar}
                   onPress={() => setShowCalendar(true)}
                   error={errors.dates || dateError}
@@ -213,7 +242,7 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Guests & Rooms</Text>
                 <DropdownTrigger
-                  icon="👤"
+                  icon={<Ionicons name="people-outline" size={16} color={colors.textMuted} />}
                   isOpen={showGuestSelector}
                   onPress={() => setShowGuestSelector(true)}
                 >
@@ -223,6 +252,21 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
                 </DropdownTrigger>
               </View>
             </View>
+
+            {/* Mobile trust row — the desktop brand panel already shows
+                these; mobile never did, so this compact version gives
+                mobile users the same reassurance in one line instead of
+                the full sidebar treatment. */}
+            {!isDesktop && (
+              <View style={styles.mobileTrustRow}>
+                {TRUST_POINTS.map((point) => (
+                  <View key={point.label} style={styles.mobileTrustItem}>
+                    <Ionicons name={point.icon} size={14} color={colors.accent} />
+                    <Text style={styles.mobileTrustLabel} numberOfLines={2}>{point.label}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
 
             {/* CTA — same on every platform. In Expo Go / native
                 (Platform.OS !== 'web') isDesktop is always false, so this
@@ -237,7 +281,7 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
 
             <Text style={styles.termsText}>*Terms and conditions apply.</Text>
           </View>
-        </View>
+        </Animated.View>
       </ScrollView>
 
       {/* ── Calendar Modal ────────────────────────────────────── */}
@@ -326,7 +370,7 @@ function getStyles(colors, spacing, radius, fonts, isDesktop) {
     closeText: {
       fontFamily: fonts.bodySemiBold,
       fontSize: 13,
-      color: lightColors.primary,
+      color: colors.primary,
     },
 
     /* Scroll */
@@ -508,10 +552,29 @@ function getStyles(colors, spacing, radius, fonts, isDesktop) {
       marginTop: spacing.xs,
     },
 
+    /* Mobile trust row */
+    mobileTrustRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+      marginTop: spacing.sm,
+      paddingTop: spacing.md,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    mobileTrustItem: { flex: 1, alignItems: 'center', gap: 4 },
+    mobileTrustLabel: {
+      fontFamily: fonts.bodyMedium,
+      fontSize: 10.5,
+      color: colors.textMuted,
+      textAlign: 'center',
+      lineHeight: 13,
+    },
+
     /* CTA */
     ctaButton: {
       backgroundColor: colors.accent,
-      borderRadius: radius.md,
+      borderRadius: 999,
       height: 48,
       width: isDesktop ? 260 : undefined,
       alignItems: 'center',

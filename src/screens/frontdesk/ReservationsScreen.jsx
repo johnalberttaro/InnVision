@@ -6,44 +6,25 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Alert,
-  Platform,
+  Modal,
 } from 'react-native';
-import {
-  collection,
-  doc,
-  addDoc,
-  query,
-  orderBy,
-  onSnapshot,
-  updateDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { Ionicons } from '@expo/vector-icons';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatCurrency } from '../../utils/roomRates';
 import { createBillingRecord } from '../../utils/BillingService';
 import { updateRoomStatus, ROOM_STATUS } from '../../utils/Roomsservice';
 
-function confirmDialog(title, message, confirmLabel, onConfirmPressed) {
-  if (Platform.OS === 'web') {
-    const ok = window.confirm(`${title}\n\n${message}`);
-    if (ok) onConfirmPressed();
-    return;
-  }
-  Alert.alert(title, message, [
-    { text: 'Cancel', style: 'cancel' },
-    { text: confirmLabel, style: confirmLabel === 'Decline' ? 'destructive' : 'default', onPress: onConfirmPressed },
-  ]);
-}
-
-function notifyDialog(title, message) {
-  if (Platform.OS === 'web') {
-    window.alert(`${title}\n\n${message}`);
-    return;
-  }
-  Alert.alert(title, message);
-}
+// confirmDialog/notifyDialog used to be module-level functions calling
+// window.confirm()/window.alert() on web and Alert.alert() on native —
+// both are unstyled system dialogs completely disconnected from the
+// app's own design (the browser's raw "localhost:8081 says..." popup
+// being the most jarring example). They're now defined INSIDE the
+// component below (same names, same call signatures — none of the 7
+// call sites needed to change) as closures over a single dialogState
+// piece of state, rendered via one themed <Modal> at the bottom of this
+// file. This also means web and native now show the exact same custom
+// dialog instead of two different unstyled system ones.
 
 export default function ReservationsScreen({ onLogout, filterKey = 'reservations:all' }) {
   const [bookings, setBookings] = useState([]);
@@ -51,20 +32,73 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
   const [actingId, setActingId] = useState(null);
   const [toast, setToast] = useState(null);
 
+  // Drives the single themed dialog rendered at the bottom of this
+  // component. null = closed. `onConfirm` present = two-button
+  // confirm/cancel dialog; `onConfirm` absent = single-button info dialog.
+  const [dialogState, setDialogState] = useState(null);
+
+  const confirmDialog = (title, message, confirmLabel, onConfirmPressed) => {
+    setDialogState({
+      title,
+      message,
+      confirmLabel,
+      onConfirm: onConfirmPressed,
+      destructive: confirmLabel === 'Decline',
+    });
+  };
+
+  const notifyDialog = (title, message) => {
+    setDialogState({ title, message, confirmLabel: null, onConfirm: null, destructive: false });
+  };
+
+  // Maps a Postgres reservations row (snake_case) to the same camelCase
+  // shape the Firestore version used, so getGuestName/getRoomNumbersForFolio
+  // /the JSX below all stayed unchanged.
+  const reservationToCamel = (row) => ({
+    id: row.id,
+    uid: row.user_id,
+    guestEmail: row.guest_email,
+    guestDetails: row.guest_details,
+    checkIn: row.check_in,
+    checkOut: row.check_out,
+    nights: row.nights,
+    selectedRooms: row.selected_rooms,
+    roomType: row.room_type,
+    totalAmount: row.total_amount,
+    status: row.status,
+    guestCount: row.guest_count,
+    createdAt: row.created_at,
+    checkedInAt: row.checked_in_at,
+    checkedOutAt: row.checked_out_at,
+  });
+
+  const loadBookings = async () => {
+    const { data, error } = await supabase
+      .from('reservations')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.error('Failed to load bookings:', error);
+      setLoading(false);
+      return;
+    }
+    setBookings((data || []).map(reservationToCamel));
+    setLoading(false);
+  };
+
   useEffect(() => {
-    const bookingsQuery = query(collection(db, 'reservations'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(
-      bookingsQuery,
-      (snapshot) => {
-        setBookings(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-        setLoading(false);
-      },
-      (error) => {
-        console.error('Failed to load bookings:', error);
-        setLoading(false);
-      }
-    );
-    return unsubscribe;
+    loadBookings();
+
+    // Realtime keeps this in sync with OTHER staff/devices acting on the
+    // same reservations. Our own writes below also call loadBookings()
+    // directly, so this screen updates immediately regardless of
+    // whether the realtime round-trip has landed yet.
+    const channel = supabase
+      .channel('reservations-frontdesk')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, loadBookings)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   const handleLogout = () => onLogout();
@@ -85,14 +119,18 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
     return `${firstName || ''} ${lastName || ''}`.trim() || '—';
   };
 
+  // accent = a stronger, more saturated version of `text`, used for the
+  // card's left border stripe — bg/text stay softer for the badge itself
+  // so the text remains readable, while accent gives a bolder at-a-glance
+  // color cue from the edge of the card, before you've even read the badge.
   const getStatusStyle = (status) => {
     switch (status) {
-      case 'upcoming':     return { bg: colors.primaryTint, text: colors.primary };
-      case 'pending':      return { bg: '#FFF4D6', text: '#9A7B00' };
-      case 'checked-in':   return { bg: '#DFF5E1', text: '#1E7B34' };
-      case 'checked-out':  return { bg: colors.cardAlt, text: colors.textMuted };
-      case 'declined':     return { bg: '#FCE1E1', text: '#B3261E' };
-      default:             return { bg: colors.cardAlt, text: colors.textMuted };
+      case 'upcoming':     return { bg: colors.primaryTint, text: colors.primary,   accent: colors.primary,  icon: 'calendar-outline' };
+      case 'pending':      return { bg: '#FFF4D6', text: '#9A7B00', accent: '#C99400', icon: 'time-outline' };
+      case 'checked-in':   return { bg: '#DFF5E1', text: '#1E7B34', accent: '#1E7B34', icon: 'log-in-outline' };
+      case 'checked-out':  return { bg: colors.cardAlt, text: colors.textMuted, accent: colors.textMuted, icon: 'log-out-outline' };
+      case 'declined':     return { bg: '#FCE1E1', text: '#B3261E', accent: '#B3261E', icon: 'close-circle-outline' };
+      default:             return { bg: colors.cardAlt, text: colors.textMuted, accent: colors.border, icon: 'help-circle-outline' };
     }
   };
 
@@ -108,6 +146,21 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
   const showToast = (message) => {
     setToast({ message });
     setTimeout(() => setToast(null), 2800);
+  };
+
+  // Prominent room-number display for the card header — distinct from
+  // getRoomNumbersForFolio below (which falls back to roomType/
+  // 'Unassigned' for internal folio/room-status syncing). This one
+  // returns null when there's no real room number yet, so the header can
+  // show an honest "Room not assigned" state instead of a fake number.
+  const getRoomNumbersDisplay = (item) => {
+    if (Array.isArray(item.selectedRooms) && item.selectedRooms.length > 0) {
+      const numbers = item.selectedRooms
+        .map((r) => r.roomNumber || r.number || r.room)
+        .filter(Boolean);
+      if (numbers.length > 0) return numbers;
+    }
+    return null;
   };
 
   // Derives the room number list for the folio / room-status sync.
@@ -162,10 +215,11 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
   const runStatusUpdate = async ({ item, newStatus, extraFields = {}, notifTitle, notifMessage, toastMessage, sideEffect }) => {
     setActingId(item.id);
     try {
-      await updateDoc(doc(db, 'reservations', item.id), {
-        status: newStatus,
-        ...extraFields,
-      });
+      const { error } = await supabase
+        .from('reservations')
+        .update({ status: newStatus, ...extraFields })
+        .eq('id', item.id);
+      if (error) throw error;
 
       // Runs after the status update succeeds but is isolated in its own
       // try/catch: a folio-creation or room-status failure shouldn't
@@ -186,18 +240,19 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
       }
 
       if (item.uid) {
-        await addDoc(collection(db, 'notifications'), {
-          uid: item.uid,
+        const { error: notifError } = await supabase.from('notifications').insert({
+          user_id: item.uid,
           type: `reservation_${newStatus.replace('-', '_')}`,
           title: notifTitle,
           message: notifMessage,
-          reservationId: item.id,
+          reservation_id: item.id,
           read: false,
-          createdAt: serverTimestamp(),
         });
+        if (notifError) console.error('Failed to create notification:', notifError);
       }
 
       showToast(toastMessage);
+      await loadBookings();
     } catch (err) {
       console.error(`Failed to update reservation to ${newStatus}:`, err);
       notifyDialog('Error', 'Could not update this reservation. Please try again.');
@@ -222,7 +277,7 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
         runStatusUpdate({
           item,
           newStatus: 'upcoming',
-          extraFields: { confirmedAt: serverTimestamp(), confirmedByAdmin: true },
+          extraFields: { confirmed_at: new Date().toISOString() },
           notifTitle: 'Reservation Confirmed! 🎉',
           notifMessage: `Your ${item.roomType} room (${formatDateRange(item.checkIn, item.checkOut)}) is confirmed.`,
           toastMessage: `${getGuestName(item)}'s reservation confirmed`,
@@ -239,7 +294,7 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
         runStatusUpdate({
           item,
           newStatus: 'declined',
-          extraFields: { declinedAt: serverTimestamp(), declinedByAdmin: true },
+          extraFields: { declined_at: new Date().toISOString() },
           notifTitle: 'Reservation Update',
           notifMessage: `We're sorry — your reservation request for ${formatDateRange(item.checkIn, item.checkOut)} could not be accommodated.`,
           toastMessage: `${getGuestName(item)}'s reservation declined`,
@@ -256,7 +311,7 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
         runStatusUpdate({
           item,
           newStatus: 'checked-in',
-          extraFields: { checkedInAt: serverTimestamp() },
+          extraFields: { checked_in_at: new Date().toISOString() },
           notifTitle: "You're Checked In! 🏨",
           notifMessage: `Welcome! You're checked in to your ${item.roomType} room. Enjoy your stay.`,
           toastMessage: `${getGuestName(item)} checked in`,
@@ -278,7 +333,7 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
         runStatusUpdate({
           item,
           newStatus: 'checked-out',
-          extraFields: { checkedOutAt: serverTimestamp() },
+          extraFields: { checked_out_at: new Date().toISOString() },
           notifTitle: 'Thanks for Staying With Us! 👋',
           notifMessage: `You've been checked out of your ${item.roomType} room. We hope you enjoyed your stay!`,
           toastMessage: `${getGuestName(item)} checked out`,
@@ -351,37 +406,70 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
             const showCheckOut = filterKey === 'reservations:checkouts' && item.status === 'checked-in';
 
             return (
-              <View style={styles.card}>
+              <View style={[styles.card, { borderLeftColor: statusStyle.accent }]}>
                 <View style={styles.cardHeader}>
                   <View style={styles.nameCol}>
                     <Text style={styles.referenceNumber}>{getReferenceNumber(item.id)}</Text>
                     <Text style={styles.guestName}>{getGuestName(item)}</Text>
+
+                    {/* Room number(s) — the most important thing for staff
+                        to spot at a glance, so it sits right under the
+                        guest name rather than buried in the detail rows
+                        below. */}
+                    {(() => {
+                      const roomNumbers = getRoomNumbersDisplay(item);
+                      return roomNumbers ? (
+                        <View style={styles.roomNumberRow}>
+                          {roomNumbers.map((rn) => (
+                            <View key={rn} style={styles.roomNumberBadge}>
+                              <Ionicons name="key-outline" size={12} color={colors.white} />
+                              <Text style={styles.roomNumberText}>Room {rn}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      ) : (
+                        <View style={[styles.roomNumberBadge, styles.roomNumberBadgeMuted]}>
+                          <Ionicons name="alert-circle-outline" size={12} color={colors.textMuted} />
+                          <Text style={[styles.roomNumberText, styles.roomNumberTextMuted]}>Room not assigned</Text>
+                        </View>
+                      );
+                    })()}
                   </View>
 
                   {isPending ? (
-                    <View style={styles.iconButtonRow}>
+                    <View style={styles.pendingActionsRow}>
                       <TouchableOpacity
-                        style={[styles.iconButton, styles.declineIconButton]}
+                        style={[styles.pendingActionBtn, styles.declineBtn]}
                         onPress={() => handleAdminDecline(item)}
-                        activeOpacity={0.8}
+                        activeOpacity={0.85}
                         disabled={isActing}
                         accessibilityLabel="Decline reservation"
                       >
                         {isActing
-                          ? <ActivityIndicator color={colors.white} size="small" />
-                          : <Text style={styles.iconButtonText}>✕</Text>
+                          ? <ActivityIndicator color={colors.danger} size="small" />
+                          : (
+                            <>
+                              <Ionicons name="close" size={14} color={colors.danger} />
+                              <Text style={styles.declineBtnText}>Decline</Text>
+                            </>
+                          )
                         }
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.iconButton, styles.confirmIconButton]}
+                        style={[styles.pendingActionBtn, styles.confirmBtn]}
                         onPress={() => handleAdminConfirm(item)}
-                        activeOpacity={0.8}
+                        activeOpacity={0.85}
                         disabled={isActing}
                         accessibilityLabel="Confirm reservation"
                       >
                         {isActing
                           ? <ActivityIndicator color={colors.white} size="small" />
-                          : <Text style={styles.iconButtonText}>✓</Text>
+                          : (
+                            <>
+                              <Ionicons name="checkmark" size={14} color={colors.white} />
+                              <Text style={styles.confirmBtnText}>Confirm</Text>
+                            </>
+                          )
                         }
                       </TouchableOpacity>
                     </View>
@@ -393,15 +481,19 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
                 </View>
 
                 <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
+                  <Ionicons name={statusStyle.icon} size={11} color={statusStyle.text} />
                   <Text style={[styles.statusBadgeText, { color: statusStyle.text }]}>
                     {getStatusLabel(item.status)}
                   </Text>
                 </View>
 
-                <Text style={styles.contact}>📞 {item.guestDetails?.phone || '—'}</Text>
+                <View style={styles.contactRow}>
+                  <Ionicons name="call-outline" size={12} color={colors.textMuted} />
+                  <Text style={styles.contact}>{item.guestDetails?.phone || '—'}</Text>
+                </View>
 
                 <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Room</Text>
+                  <Text style={styles.detailLabel}>Room Type</Text>
                   <Text style={styles.detailValue}>{item.roomType || 'Not selected yet'}</Text>
                 </View>
                 <View style={styles.detailRow}>
@@ -415,9 +507,8 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Rooms : Guests</Text>
                   <Text style={styles.detailValue}>
-                    {item.totals?.totalRooms ?? 0} Room{item.totals?.totalRooms !== 1 ? 's' : ''} ·{' '}
-                    {item.totals?.totalAdults ?? 0} Adult{item.totals?.totalAdults !== 1 ? 's' : ''} +{' '}
-                    {item.totals?.totalChildren ?? 0} Child{item.totals?.totalChildren !== 1 ? 'ren' : ''}
+                    {item.selectedRooms?.length ?? 0} Room{item.selectedRooms?.length !== 1 ? 's' : ''} ·{' '}
+                    {item.guestCount ?? 0} Guest{item.guestCount !== 1 ? 's' : ''}
                   </Text>
                 </View>
 
@@ -430,7 +521,12 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
                   >
                     {isActing
                       ? <ActivityIndicator color={colors.white} size="small" />
-                      : <Text style={styles.actionButtonText}>🛎️ Check In Guest</Text>
+                      : (
+                        <View style={styles.actionButtonContent}>
+                          <Ionicons name="log-in-outline" size={16} color={colors.white} />
+                          <Text style={styles.actionButtonText}>Check In Guest</Text>
+                        </View>
+                      )
                     }
                   </TouchableOpacity>
                 )}
@@ -444,7 +540,12 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
                   >
                     {isActing
                       ? <ActivityIndicator color={colors.white} size="small" />
-                      : <Text style={styles.actionButtonText}>🚪 Check Out Guest</Text>
+                      : (
+                        <View style={styles.actionButtonContent}>
+                          <Ionicons name="log-out-outline" size={16} color={colors.white} />
+                          <Text style={styles.actionButtonText}>Check Out Guest</Text>
+                        </View>
+                      )
                     }
                   </TouchableOpacity>
                 )}
@@ -456,10 +557,63 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
 
       {toast && (
         <View style={styles.toast}>
-          <Text style={styles.toastIcon}>✓</Text>
+          <Ionicons name="checkmark-circle" size={16} color={colors.white} />
           <Text style={styles.toastText}>{toast.message}</Text>
         </View>
       )}
+
+      {/* Themed replacement for window.confirm()/window.alert()/Alert.alert()
+          — same custom dialog on every platform now. */}
+      <Modal visible={!!dialogState} transparent animationType="fade" onRequestClose={() => setDialogState(null)}>
+        <View style={styles.dialogOverlay}>
+          <View style={styles.dialogCard}>
+            <View style={[
+              styles.dialogIconWrap,
+              dialogState?.destructive ? styles.dialogIconWrapDestructive : styles.dialogIconWrapDefault,
+            ]}>
+              <Ionicons
+                name={dialogState?.destructive ? 'alert-circle' : dialogState?.onConfirm ? 'help-circle' : 'information-circle'}
+                size={26}
+                color={dialogState?.destructive ? '#B3261E' : colors.primary}
+              />
+            </View>
+
+            <Text style={styles.dialogTitle}>{dialogState?.title}</Text>
+            <Text style={styles.dialogMessage}>{dialogState?.message}</Text>
+
+            {dialogState?.onConfirm ? (
+              <View style={styles.dialogActions}>
+                <TouchableOpacity
+                  style={styles.dialogCancelBtn}
+                  onPress={() => setDialogState(null)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.dialogCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.dialogConfirmBtn, dialogState.destructive && styles.dialogConfirmBtnDestructive]}
+                  onPress={() => {
+                    const action = dialogState.onConfirm;
+                    setDialogState(null);
+                    action();
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.dialogConfirmText}>{dialogState.confirmLabel}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.dialogOkBtn}
+                onPress={() => setDialogState(null)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.dialogOkText}>OK</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -493,6 +647,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
+    borderLeftWidth: 4, // color set inline per-card via getStatusStyle().accent
     padding: spacing.lg,
     marginBottom: spacing.md,
   },
@@ -512,19 +667,50 @@ const styles = StyleSheet.create({
   guestName: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.text, flexShrink: 1 },
   subtotal: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.accent },
 
-  iconButtonRow: { flexDirection: 'row', gap: spacing.xs },
-  iconButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+  roomNumberRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  roomNumberBadge: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: colors.primary,
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingHorizontal: spacing.sm,
+    alignSelf: 'flex-start',
   },
-  confirmIconButton: { backgroundColor: '#1E7B34' },
-  declineIconButton: { backgroundColor: '#B3261E' },
-  iconButtonText: { color: colors.white, fontSize: 14, fontFamily: fonts.headingBold },
+  roomNumberBadgeMuted: {
+    backgroundColor: colors.cardAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: 6,
+  },
+  roomNumberText: { fontSize: 12, fontFamily: fonts.headingSemiBold, color: colors.white, letterSpacing: 0.2 },
+  roomNumberTextMuted: { color: colors.textMuted },
+
+  pendingActionsRow: { flexDirection: 'row', gap: spacing.xs, flexShrink: 0 },
+  pendingActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 7,
+    paddingHorizontal: spacing.sm + 2,
+    borderRadius: 999,
+  },
+  declineBtn: {
+    backgroundColor: colors.white,
+    borderWidth: 1.5,
+    borderColor: colors.danger,
+  },
+  declineBtnText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.danger },
+  confirmBtn: {
+    backgroundColor: '#1E7B34',
+  },
+  confirmBtnText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.white },
 
   statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     alignSelf: 'flex-start',
     paddingVertical: 3,
     paddingHorizontal: spacing.sm,
@@ -532,7 +718,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   statusBadgeText: { fontSize: 10, fontFamily: fonts.bodySemiBold, letterSpacing: 0.4 },
-  contact: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginBottom: spacing.sm },
+  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: spacing.sm },
+  contact: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
   detailLabel: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
   detailValue: {
@@ -554,6 +741,7 @@ const styles = StyleSheet.create({
   checkInButton: { backgroundColor: '#1E7B34' },
   checkOutButton: { backgroundColor: colors.textMuted },
   actionButtonDisabled: { opacity: 0.7 },
+  actionButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   actionButtonText: { color: colors.white, fontSize: 13, fontFamily: fonts.headingSemiBold, letterSpacing: 0.3 },
   toast: {
     position: 'absolute',
@@ -574,4 +762,72 @@ const styles = StyleSheet.create({
   },
   toastIcon: { color: colors.white, fontSize: 13, fontFamily: fonts.headingBold },
   toastText: { color: colors.white, fontSize: 13, fontFamily: fonts.bodySemiBold },
+
+  dialogOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  dialogCard: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: colors.white,
+    borderRadius: radius.lg,
+    padding: spacing.xl,
+    alignItems: 'center',
+  },
+  dialogIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
+  dialogIconWrapDefault: { backgroundColor: colors.primaryTint },
+  dialogIconWrapDestructive: { backgroundColor: '#FBE7E7' },
+  dialogTitle: {
+    fontSize: 17,
+    fontFamily: fonts.headingBold,
+    color: colors.text,
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  dialogMessage: {
+    fontSize: 13,
+    fontFamily: fonts.body,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 19,
+    marginBottom: spacing.lg,
+  },
+  dialogActions: { flexDirection: 'row', gap: spacing.sm, width: '100%' },
+  dialogCancelBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    paddingVertical: spacing.sm + 2,
+    alignItems: 'center',
+  },
+  dialogCancelText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+  dialogConfirmBtn: {
+    flex: 1,
+    backgroundColor: '#1E7B34',
+    borderRadius: 999,
+    paddingVertical: spacing.sm + 2,
+    alignItems: 'center',
+  },
+  dialogConfirmBtnDestructive: { backgroundColor: '#B3261E' },
+  dialogConfirmText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.white },
+  dialogOkBtn: {
+    width: '100%',
+    backgroundColor: colors.primary,
+    borderRadius: 999,
+    paddingVertical: spacing.sm + 2,
+    alignItems: 'center',
+  },
+  dialogOkText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.white },
 });

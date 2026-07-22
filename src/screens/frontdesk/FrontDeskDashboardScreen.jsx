@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable } from 'react-native';
-import { collection, query, orderBy, onSnapshot, limit } from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatCurrency } from '../../utils/roomRates';
 import { subscribeToRooms, ROOM_STATUS } from '../../utils/Roomsservice';
@@ -12,11 +11,33 @@ import ReservationsTrendChart from '../../components/dashboard/ReservationsTrend
 import GuestDossierModal from '../../components/dashboard/GuestDossierModal';
 
 /**
- * FrontDeskDashboardScreen — overview of hotel operations: KPI cards
- * (with trend vs. last week + sparklines), a real occupancy gauge driven
- * by the "rooms" collection, a reservations trend chart, and recent
- * activity with a day-by-day look-back (1-5 days back), each entry
- * offering a guest dossier quick-view.
+ * FrontDeskDashboardScreen — overview of hotel operations.
+ *
+ * MIGRATED TO SUPABASE. This screen was missed during the original
+ * migration pass (AdminDashboardScreen.jsx got done, this sibling
+ * screen — same data, different portal — did not), meaning it's been
+ * running on stale/empty Firestore data since. Same reservationToCamel
+ * mapping pattern as AdminDashboardScreen.jsx and the other migrated
+ * screens.
+ *
+ * REDESIGNED KPI layout: previously 5 KPI cards sat in one flat row
+ * with equal visual weight, which is exactly the "which number matters
+ * right now?" confusion the redesign request called out. Split into two
+ * clearly labeled groups instead:
+ *   - "Today at a Glance" — Check-ins, Check-outs, Occupancy: the
+ *     numbers that describe what's actually happening on THIS shift,
+ *     right now, and what front desk needs to act on.
+ *   - "This Week's Performance" — Total Reservations, Total Revenue:
+ *     trend/reporting numbers, useful but not something front desk
+ *     needs to act on in the next five minutes.
+ * Today's operational numbers render first and larger — that's the
+ * actual priority order for someone starting a shift.
+ *
+ * FIXED BUG (same class as the one found in MyReservationsScreen /
+ * ReservationsScreen / AdminDashboardScreen): Recent Activity's room
+ * count read booking.totals?.totalRooms, a field the current schema
+ * doesn't have (only selectedRooms + guest_count) — now uses
+ * selectedRooms.length.
  *
  * Reservation lifecycle: pending -> upcoming -> checked-in -> checked-out
  * (declined is a terminal dead-end from pending). A reservation counts
@@ -59,20 +80,48 @@ export default function FrontDeskDashboardScreen({ onNavigate }) {
   const [lookBackDays, setLookBackDays] = useState(1);
   const [dossierReservation, setDossierReservation] = useState(null);
 
+  // Maps a Postgres reservations row (snake_case) to the same camelCase
+  // shape the Firestore version used, so every calculation/helper below
+  // stayed unchanged.
+  const reservationToCamel = (row) => ({
+    id: row.id,
+    guestDetails: row.guest_details,
+    checkIn: row.check_in,
+    checkOut: row.check_out,
+    checkedInAt: row.checked_in_at,
+    checkedOutAt: row.checked_out_at,
+    nights: row.nights,
+    selectedRooms: row.selected_rooms,
+    roomType: row.room_type,
+    totalAmount: row.total_amount,
+    status: row.status,
+    guestCount: row.guest_count,
+    createdAt: row.created_at,
+  });
+
   useEffect(() => {
-    const bookingsQuery = query(collection(db, 'reservations'), orderBy('createdAt', 'desc'), limit(500));
-    const unsubscribe = onSnapshot(
-      bookingsQuery,
-      (snapshot) => {
-        setBookings(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
-        setLoading(false);
-      },
-      (error) => {
+    const loadBookings = async () => {
+      const { data, error } = await supabase
+        .from('reservations')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (error) {
         console.error('Failed to load dashboard data:', error);
         setLoading(false);
+        return;
       }
-    );
-    return unsubscribe;
+      setBookings((data || []).map(reservationToCamel));
+      setLoading(false);
+    };
+    loadBookings();
+
+    const channel = supabase
+      .channel('frontdesk-dashboard-reservations')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, loadBookings)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   useEffect(() => {
@@ -213,28 +262,14 @@ export default function FrontDeskDashboardScreen({ onNavigate }) {
       <Text style={styles.pageTitle}>Dashboard</Text>
       <Text style={styles.pageSubtitle}>Overview of hotel operations</Text>
 
+      {/* "Today at a Glance" — what's actually happening on THIS shift,
+          right now. Comes first because these are the numbers front desk
+          needs to act on immediately, not just track over time. */}
+      <View style={styles.groupHeaderRow}>
+        <Text style={styles.groupTitle}>Today at a Glance</Text>
+        <Text style={styles.groupSubtitle}>What's happening right now</Text>
+      </View>
       <View style={styles.kpiGrid}>
-        <KpiCard
-          icon="calendar-outline"
-          label="Total Reservations"
-          value={String(totalReservations)}
-          accent={colors.primary}
-          trend={reservationsTrend}
-          sparklineData={reservationsSparkline}
-          tooltip="All reservations ever created, regardless of status."
-          onPress={() => goTo('reservations:all')}
-        />
-        <KpiCard
-          icon="cash-outline"
-          label="Total Revenue"
-          value={formatCurrency(totalRevenue)}
-          accent={colors.accent}
-          trend={revenueTrend}
-          sparklineData={revenueSparkline}
-          note="Confirmed bookings only"
-          tooltip="Sum of confirmed, checked-in, and checked-out bookings. Pending and declined are excluded."
-          onPress={() => goTo('billing:records')}
-        />
         <KpiCard
           icon="log-in-outline"
           label="Today's Check-ins"
@@ -261,9 +296,41 @@ export default function FrontDeskDashboardScreen({ onNavigate }) {
             roomsLoading ? (
               <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.md }} />
             ) : (
-              <OccupancyGauge percent={occupancyPercent} occupied={occupiedRooms} total={totalRooms} color={colors.primary} />
+              <OccupancyGauge percent={occupancyPercent} occupied={occupiedRooms} total={totalRooms} />
             )
           }
+        />
+      </View>
+
+      {/* "This Week's Performance" — trend/reporting numbers. Useful
+          context, but nothing here needs action in the next five
+          minutes the way the group above does, so it sits second and
+          reads as clearly secondary. */}
+      <View style={[styles.groupHeaderRow, styles.groupHeaderRowSecondary]}>
+        <Text style={styles.groupTitle}>This Week's Performance</Text>
+        <Text style={styles.groupSubtitle}>Trends vs. last week</Text>
+      </View>
+      <View style={styles.kpiGrid}>
+        <KpiCard
+          icon="calendar-outline"
+          label="Total Reservations"
+          value={String(totalReservations)}
+          accent={colors.primary}
+          trend={reservationsTrend}
+          sparklineData={reservationsSparkline}
+          tooltip="All reservations ever created, regardless of status."
+          onPress={() => goTo('reservations:all')}
+        />
+        <KpiCard
+          icon="cash-outline"
+          label="Total Revenue"
+          value={formatCurrency(totalRevenue)}
+          accent={colors.accent}
+          trend={revenueTrend}
+          sparklineData={revenueSparkline}
+          note="Confirmed bookings only"
+          tooltip="Sum of confirmed, checked-in, and checked-out bookings. Pending and declined are excluded."
+          onPress={() => goTo('billing:records')}
         />
       </View>
 
@@ -292,7 +359,7 @@ export default function FrontDeskDashboardScreen({ onNavigate }) {
                   {getGuestName(booking)} booked {booking.roomType || '(room pending)'}
                 </Text>
                 <Text style={styles.activitySubtitle}>
-                  {booking.totals?.totalRooms ?? 0} Room{booking.totals?.totalRooms !== 1 ? 's' : ''} ·{' '}
+                  {booking.selectedRooms?.length ?? 0} Room{booking.selectedRooms?.length !== 1 ? 's' : ''} ·{' '}
                   {booking.nights} night{booking.nights !== 1 ? 's' : ''} · Tap to view guest
                 </Text>
               </Pressable>
@@ -346,6 +413,11 @@ const styles = StyleSheet.create({
   content: { padding: spacing.xl },
   pageTitle: { fontSize: 22, fontFamily: fonts.headingExtraBold, color: colors.primary },
   pageSubtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2, marginBottom: spacing.xl },
+
+  groupHeaderRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: spacing.sm },
+  groupHeaderRowSecondary: { marginTop: spacing.xxl },
+  groupTitle: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.text },
+  groupSubtitle: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
   kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginBottom: spacing.xxl },
 
   sectionTitle: { fontSize: 16, fontFamily: fonts.headingBold, color: colors.text, marginBottom: spacing.md },

@@ -9,25 +9,49 @@ import {
   ActivityIndicator,
   Modal,
 } from 'react-native';
-import {
-  collection,
-  doc,
-  onSnapshot,
-  orderBy,
-  query,
-  setDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
-import {
-  createUserWithEmailAndPassword,
-  deleteUser,
-  signOut,
-  updateProfile,
-} from 'firebase/auth';
-import { auth, secondaryAuth, db } from '../../services/firebase';
+import { supabase, secondarySupabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
-import { resolveUserRole } from '../../utils/roleHelpers';
 
+/**
+ * FrontDeskAccountsScreen — admin creates/manages front desk staff
+ * accounts.
+ *
+ * MIGRATED TO SUPABASE. Notable differences from the Firebase version:
+ *
+ *  - Account creation uses `secondarySupabase` (a second, session-isolated
+ *    Supabase client — see supabase.js) instead of the primary client, for
+ *    the same reason the old code used Firebase's `secondaryAuth`:
+ *    signUp() on the primary client would log the admin OUT of their own
+ *    session and INTO the brand-new staff account.
+ *
+ *  - Role promotion is a separate step run on the PRIMARY (admin) client:
+ *    the new account is created with role defaulting to 'guest' (the
+ *    on_auth_user_created trigger's default for every signup), and can't
+ *    promote its own role — both the profiles RLS policy and the
+ *    prevent_role_self_escalation trigger require an admin session to
+ *    change role/active. So this screen signs the new account up on
+ *    secondarySupabase, then immediately runs
+ *    `supabase.from('profiles').update({ role: 'frontdesk' })...` on the
+ *    ADMIN's own authenticated primary client.
+ *
+ *  - KNOWN LIMITATION vs. the Firebase version: the old code could roll
+ *    back a failed Firestore write by calling deleteUser() on the
+ *    just-created Firebase Auth account. Supabase's client SDK has no
+ *    equivalent — deleting an auth user requires the Admin API (a
+ *    service_role key, which must never run in client code). So if the
+ *    role-promotion step fails after the account was already created,
+ *    the account is left behind with the default 'guest' role rather
+ *    than being cleaned up automatically. The error message says so
+ *    explicitly, and the fix is a manual role promotion (or asking an
+ *    admin to try again) rather than a full account deletion+retry.
+ *
+ *  - "Remove" now sets profiles.active = false, the real field for this
+ *    (see GuestProfileTableScreen.jsx), instead of overloading the role
+ *    column with a fake 'inactive' value — role stays 'frontdesk',
+ *    active flips to false, and every screen that checks
+ *    role='frontdesk' AND active=true (dashboard staff count, this
+ *    screen's own list) picks that up correctly.
+ */
 export default function FrontDeskAccountsScreen() {
   const [staffAccounts, setStaffAccounts] = useState([]);
   const [staffForm, setStaffForm] = useState({ firstName: '', lastName: '', email: '', password: '', confirmPassword: '', phone: '' });
@@ -38,21 +62,36 @@ export default function FrontDeskAccountsScreen() {
   const [pendingStaffRemoval, setPendingStaffRemoval] = useState(null);
 
   useEffect(() => {
-    const guestsQuery = query(collection(db, 'guests'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(
-      guestsQuery,
-      (snapshot) => {
-        const staff = snapshot.docs
-          .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-          .filter((guest) => resolveUserRole(guest) === 'frontdesk' && guest.role !== 'inactive');
-        setStaffAccounts(staff);
-      },
-      (error) => {
+    const loadStaff = async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'frontdesk')
+        .eq('active', true)
+        .order('created_at', { ascending: false });
+      if (error) {
         console.error('Failed to load front desk accounts:', error);
+        return;
       }
-    );
+      setStaffAccounts(
+        (data || []).map((row) => ({
+          id: row.id,
+          firstName: row.first_name,
+          lastName: row.last_name,
+          displayName: row.display_name,
+          email: row.email,
+          createdAt: row.created_at,
+        }))
+      );
+    };
+    loadStaff();
 
-    return unsubscribe;
+    const channel = supabase
+      .channel('frontdesk-accounts')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, loadStaff)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   const handleCreateFrontDeskAccount = async () => {
@@ -94,31 +133,39 @@ export default function FrontDeskAccountsScreen() {
     setCreatingStaff(true);
 
     try {
-      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
-      const newUser = userCredential.user;
-
-      await updateProfile(newUser, {
-        displayName: `${firstName} ${lastName}`,
-      });
-
-      try {
-        await setDoc(
-          doc(db, 'guests', newUser.uid),
-          {
-            firstName,
-            lastName,
-            email,
+      // Step 1: create the auth account on the ISOLATED secondary
+      // client, so this never touches the admin's own primary session.
+      const { data: signUpData, error: signUpError } = await secondarySupabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            first_name: firstName,
+            last_name: lastName,
             phone,
-            displayName: `${firstName} ${lastName}`,
-            role: 'frontdesk',
-            createdAt: serverTimestamp(),
-            createdBy: auth.currentUser?.uid || null,
+            display_name: `${firstName} ${lastName}`,
           },
-          { merge: true }
+        },
+      });
+      if (signUpError) throw signUpError;
+      const newUser = signUpData.user;
+
+      // Step 2: promote the role, run on the PRIMARY client (i.e. as the
+      // signed-in admin) — the new account can't do this for itself, see
+      // the file header note on prevent_role_self_escalation.
+      const { error: promoteError } = await supabase
+        .from('profiles')
+        .update({ role: 'frontdesk', active: true })
+        .eq('id', newUser.id);
+
+      if (promoteError) {
+        // No client-side account deletion is possible here (see file
+        // header) — be upfront that the account exists but is stuck at
+        // the default 'guest' role rather than silently losing that fact.
+        throw new Error(
+          `Account was created, but could not be promoted to Front Desk role: ${promoteError.message}. ` +
+          `The account exists with the default guest role — promote it manually or try again.`
         );
-      } catch (firestoreErr) {
-        await deleteUser(newUser).catch(() => {});
-        throw new Error(`Could not save staff profile: ${firestoreErr.message}`);
       }
 
       setStaffSuccess(`Front desk account created for ${firstName} ${lastName}.`);
@@ -129,7 +176,9 @@ export default function FrontDeskAccountsScreen() {
       setStaffError(message);
     } finally {
       setCreatingStaff(false);
-      await signOut(secondaryAuth).catch(() => {});
+      // Cleanup: drop the secondary client's session now that we're done
+      // with it, same spirit as the old signOut(secondaryAuth) call.
+      await secondarySupabase.auth.signOut().catch(() => {});
     }
   };
 
@@ -145,14 +194,11 @@ export default function FrontDeskAccountsScreen() {
     setStaffSuccess('');
 
     try {
-      await setDoc(
-        doc(db, 'guests', pendingStaffRemoval.id),
-        {
-          role: 'inactive',
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const { error } = await supabase
+        .from('profiles')
+        .update({ active: false })
+        .eq('id', pendingStaffRemoval.id);
+      if (error) throw error;
       setStaffSuccess('Front desk account removed from the active staff list.');
     } catch (err) {
       console.error('Failed to remove staff account:', err);

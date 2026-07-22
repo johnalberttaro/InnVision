@@ -14,18 +14,7 @@ import {
   Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  collection,
-  addDoc,
-  deleteDoc,
-  doc,
-  query,
-  orderBy,
-  onSnapshot,
-  serverTimestamp,
-  limit,
-} from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatDate } from '../../utils/dateHelpers';
 import { formatCurrency } from '../../utils/roomRates';
@@ -34,10 +23,17 @@ import { formatCurrency } from '../../utils/roomRates';
  * GuestRecordsScreen — the master guest directory (Guest Management → Guest
  * Records). This is the single source of truth for "who is a guest of this
  * hotel," independent of any one reservation — but it also joins LIVE
- * against the "reservations" collection so each card shows the guest's
+ * against the "reservations" table so each card shows the guest's
  * current stay (status, room type, check-in/out) and running stats
  * (total stays, total reservations, lifetime spend, last stay) without
- * caching any of that on the guest doc itself.
+ * caching any of that on the guest row itself.
+ *
+ * MIGRATED TO SUPABASE. The join key is now guests.user_id (was
+ * guests.linkedUid on Firestore) matched against reservations.user_id
+ * (was reservations.uid) — same join logic, new field names. Because
+ * guests.user_id has a real UNIQUE constraint now, the historical
+ * duplicate-guest bug this screen used to surface as ghost "no
+ * reservation on file" cards structurally can't happen anymore.
  *
  * UI NOTE: the "Source" badge and filter chips (Mobile App / Website /
  * Walk-In / Front Desk) that used to appear on each card and above the
@@ -53,37 +49,29 @@ import { formatCurrency } from '../../utils/roomRates';
  * a cached counter needs to be kept in sync from every place a
  * reservation's status can change (confirm, decline, check-in, check-out),
  * and any missed sync point means the number quietly drifts wrong. Since
- * every reservation already carries the booking guest's `uid`, this screen
- * can just filter the live `reservations` feed by `uid` and derive
- * everything fresh, every time. Nothing to keep in sync, nothing to drift.
+ * every reservation already carries the booking guest's `user_id`, this
+ * screen can just filter the live `reservations` feed by `user_id` and
+ * derive everything fresh, every time. Nothing to keep in sync, nothing
+ * to drift.
  *
- * Firestore: collection "guests" (identity only — see Guestrecordsscreen
- * write path in ReviewPayScreen.jsx for the upsert-on-booking logic)
- *   firstName, lastName, email, phone, source, linkedUid, vipTier, tags[],
- *   staffNotes, createdAt, updatedAt, createdBy, photoURL (optional)
+ * KNOWN GAP: there is no per-unit room inventory/numbering system
+ * reflected on this screen (reservations store `roomType`, e.g.
+ * "Twin"/"King" — Room Management does have real room numbers via
+ * selected_rooms, this screen just doesn't drill into them). So this
+ * screen shows Room Type only.
  *
- * Firestore: collection "reservations" (existing, unchanged) — joined
- * here by `uid === guest.linkedUid`.
- *
- * KNOWN GAP: there is no per-unit room inventory/numbering system in this
- * app yet (reservations store `roomType`, e.g. "Twin"/"King", not an
- * assigned room number — your own AdminDashboardScreen already flags this
- * under Occupancy Rate). So this screen shows Room Type only; it does not
- * fabricate a room number that doesn't exist in the data.
- *
- * KNOWN GAP: walk-in guests added manually here have no `linkedUid`, and
+ * KNOWN GAP: walk-in guests added manually here have no `user_id`, and
  * there's currently no staff-side "book a room for this guest" flow — so
  * a walk-in's card will correctly show "No reservation on file" until
  * that flow exists. That's accurate, not a bug.
  *
- * DELETE NOTE: deleting a guest here removes ONLY the `guests` document —
- * it is a separate collection from `reservations` and the two are never
+ * DELETE NOTE: deleting a guest here removes ONLY the `guests` row —
+ * it is a separate table from `reservations` and the two are never
  * cascade-deleted in either direction. If a guest still has reservation
- * documents pointed at their `linkedUid`, those documents are untouched;
- * they'll simply no longer join to a guest card here. Conversely,
- * deleting a reservation in Firestore does NOT remove the guest record —
- * staff must delete the guest separately, which is what this button is
- * for.
+ * rows pointed at their `user_id`, those rows are untouched; they'll
+ * simply no longer join to a guest card here. Conversely, deleting a
+ * reservation does NOT remove the guest record — staff must delete the
+ * guest separately, which is what this button is for.
  *
  * Props:
  *  - onSelectGuest: (guest) => void
@@ -180,39 +168,86 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
   // blocking the rest of the list.
   const [deletingId, setDeletingId] = useState(null);
 
+  // Maps a Postgres guests row to the same camelCase shape the Firestore
+  // version used.
+  const guestToCamel = (row) => ({
+    id: row.id,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    email: row.email,
+    phone: row.phone,
+    source: row.source,
+    linkedUid: row.user_id,
+    nationality: row.nationality,
+    idType: row.id_type,
+    idNumber: row.id_number,
+    vipTier: row.vip_tier,
+    tags: row.tags,
+    staffNotes: row.staff_notes,
+    photoURL: row.photo_url,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  });
+
+  // Maps just the reservation fields this screen's join actually needs.
+  const reservationToCamel = (row) => ({
+    id: row.id,
+    uid: row.user_id,
+    status: row.status,
+    roomType: row.room_type,
+    checkIn: row.check_in,
+    checkOut: row.check_out,
+    totalAmount: row.total_amount,
+    createdAt: row.created_at,
+  });
+
   useEffect(() => {
-    const guestsQuery = query(collection(db, 'guests'), orderBy('lastName'));
-    const unsubGuests = onSnapshot(
-      guestsQuery,
-      (snapshot) => {
-        setGuests(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      },
-      (error) => {
+    const loadGuests = async () => {
+      const { data, error } = await supabase
+        .from('guests')
+        .select('*')
+        .order('last_name');
+      if (error) {
         console.error('Failed to load guests:', error);
         setLoading(false);
+        return;
       }
-    );
+      setGuests((data || []).map(guestToCamel));
+      setLoading(false);
+    };
+    loadGuests();
+    const guestsChannel = supabase
+      .channel('guest-records-guests')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, loadGuests)
+      .subscribe();
 
     // Reasonable cap for the join — same pattern as AdminDashboardScreen's
     // limit(200). Raise this if the hotel's reservation volume grows past
     // it; a missing older reservation would only affect historical stats,
     // never the current-reservation join (which always wants the most
     // recent records anyway).
-    const reservationsQuery = query(collection(db, 'reservations'), orderBy('createdAt', 'desc'), limit(500));
-    const unsubReservations = onSnapshot(
-      reservationsQuery,
-      (snapshot) => {
-        setReservations(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (error) => {
+    const loadReservations = async () => {
+      const { data, error } = await supabase
+        .from('reservations')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (error) {
         console.error('Failed to load reservations for guest join:', error);
+        return;
       }
-    );
+      setReservations((data || []).map(reservationToCamel));
+    };
+    loadReservations();
+    const reservationsChannel = supabase
+      .channel('guest-records-reservations')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, loadReservations)
+      .subscribe();
 
     return () => {
-      unsubGuests();
-      unsubReservations();
+      supabase.removeChannel(guestsChannel);
+      supabase.removeChannel(reservationsChannel);
     };
   }, []);
 
@@ -296,24 +331,23 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
     try {
       // Note: no `stats` field written here (or anywhere else) — Guest
       // Statistics are always computed live from the reservations join
-      // above, never cached on the guest doc.
-      await addDoc(collection(db, 'guests'), {
-        firstName: form.firstName.trim(),
-        lastName:  form.lastName.trim(),
-        email:     form.email.trim() || null,
-        phone:     form.phone.trim() || null,
-        source:    form.source,
-        linkedUid: null, // manually created here → always a walk-in / staff-entered guest
+      // above, never cached on the guest row.
+      const { error } = await supabase.from('guests').insert({
+        first_name: form.firstName.trim(),
+        last_name: form.lastName.trim(),
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+        source: form.source,
+        user_id: null, // manually created here → always a walk-in / staff-entered guest
         nationality: form.nationality.trim() || null,
-        idType:      form.idType.trim() || null,
-        idNumber:    form.idNumber.trim() || null,
-        vipTier:     null,
-        tags:        [],
-        staffNotes:  form.staffNotes.trim() || null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        createdBy: 'admin',
+        id_type: form.idType.trim() || null,
+        id_number: form.idNumber.trim() || null,
+        vip_tier: null,
+        tags: [],
+        staff_notes: form.staffNotes.trim() || null,
+        created_by: 'admin',
       });
+      if (error) throw error;
 
       resetAndCloseModal();
     } catch (err) {
@@ -325,12 +359,13 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
   };
 
   // ── Delete Guest ────────────────────────────────────────────────────
-  // Deletes only the `guests` document. Does not touch `reservations` —
-  // see the DELETE NOTE in the file header for why that's intentional.
+  // Deletes only the `guests` row. Does not touch `reservations` — see
+  // the DELETE NOTE in the file header for why that's intentional.
   const performDeleteGuest = async (guestId) => {
     setDeletingId(guestId);
     try {
-      await deleteDoc(doc(db, 'guests', guestId));
+      const { error } = await supabase.from('guests').delete().eq('id', guestId);
+      if (error) throw error;
     } catch (err) {
       console.error('Failed to delete guest:', err);
       notifyDialog('Error', 'Could not delete this guest. Please try again.');
@@ -346,7 +381,7 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
 
     const message = hasActiveStay
       ? `${fullName} has an active reservation on file. Deleting the guest record will not cancel that reservation, but it will remove them from Guest Records. Continue?`
-      : `This will permanently remove ${fullName} from Guest Records. This does not delete any reservation history in Firestore. Continue?`;
+      : `This will permanently remove ${fullName} from Guest Records. This does not delete any reservation history. Continue?`;
 
     confirmAction('Delete Guest', message, () => performDeleteGuest(guest.id));
   };

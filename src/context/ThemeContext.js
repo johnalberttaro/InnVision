@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../services/firebase';
+import { supabase } from '../services/supabase';
 import { lightColors, darkColors, spacing, radius, fonts } from '../utils/theme';
 
 /**
@@ -16,17 +15,32 @@ import { lightColors, darkColors, spacing, radius, fonts } from '../utils/theme'
  * returns the current palette and re-renders that screen automatically
  * whenever the theme changes anywhere in the app.
  *
+ * MIGRATED TO SUPABASE. The preference now lives in profiles.dark_mode
+ * instead of Firestore's guests/{uid}.darkMode — that Firestore path was
+ * keyed by a Firebase uid that no longer exists anywhere in the new
+ * Supabase-based identity system, so this had been silently
+ * non-functional (toggling worked in-session, but never actually
+ * persisted anywhere real) since the rest of the app moved over.
+ *
+ * One real difference from the Firestore version: Supabase Realtime's
+ * postgres_changes only pushes FUTURE changes, not the row's current
+ * value at subscribe time, the way Firestore's onSnapshot does. So step
+ * 2 below is now two parts — an explicit initial SELECT once userId is
+ * known, then a realtime subscription for changes after that (e.g. the
+ * user toggling dark mode on a different device mid-session).
+ *
  * PERSISTENCE STRATEGY:
  *   1. On app boot, read the cached preference from AsyncStorage
  *      immediately — this is what makes the correct theme show up
- *      instantly on launch, before Firestore has even responded.
- *   2. Once a user is logged in (userId becomes available), subscribe
- *      live to guests/{uid}.darkMode in Firestore. If it differs from the
- *      cached value (e.g. the user changed it on another device), the
- *      live Firestore value wins and the cache is updated to match.
+ *      instantly on launch, before Supabase has even responded.
+ *   2. Once a user is logged in (userId becomes available), fetch
+ *      profiles.dark_mode once, then subscribe to further live changes.
+ *      If it differs from the cached value (e.g. the user changed it on
+ *      another device), the live Supabase value wins and the cache is
+ *      updated to match.
  *   3. Toggling calls setDarkMode(), which updates local state
  *      immediately (instant UI change, no waiting on the network),
- *      writes to AsyncStorage, and — if logged in — writes to Firestore
+ *      writes to AsyncStorage, and — if logged in — writes to Supabase
  *      so the preference follows the user across devices and app
  *      restarts.
  *
@@ -76,27 +90,50 @@ export function ThemeProvider({ userId, children }) {
     return () => { cancelled = true; };
   }, []);
 
-  // 2. Live Firestore subscription once logged in — keeps the preference
-  // in sync across devices/sessions for this account.
+  // 2. Fetch the current preference once logged in, then subscribe to
+  // further live changes — keeps the preference in sync across
+  // devices/sessions for this account.
   useEffect(() => {
     if (!userId) return;
 
-    const unsubscribe = onSnapshot(
-      doc(db, 'guests', userId),
-      (snapshot) => {
-        const data = snapshot.data();
-        if (data && typeof data.darkMode === 'boolean') {
-          setIsDark(data.darkMode);
-          AsyncStorage.setItem(CACHE_KEY, String(data.darkMode)).catch(() => {});
-        }
-      },
-      (err) => console.warn('Theme preference subscription failed:', err)
-    );
+    let cancelled = false;
 
-    return unsubscribe;
+    const loadInitial = async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('dark_mode')
+        .eq('id', userId)
+        .single();
+      if (!cancelled && !error && data && typeof data.dark_mode === 'boolean') {
+        setIsDark(data.dark_mode);
+        AsyncStorage.setItem(CACHE_KEY, String(data.dark_mode)).catch(() => {});
+      } else if (error) {
+        console.warn('Theme preference fetch failed:', error);
+      }
+    };
+    loadInitial();
+
+    const channel = supabase
+      .channel(`theme-${userId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
+        (payload) => {
+          if (typeof payload.new?.dark_mode === 'boolean') {
+            setIsDark(payload.new.dark_mode);
+            AsyncStorage.setItem(CACHE_KEY, String(payload.new.dark_mode)).catch(() => {});
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [userId]);
 
-  // 3. Toggle — instant local update, then persist to cache + Firestore.
+  // 3. Toggle — instant local update, then persist to cache + Supabase.
   const setDarkMode = useCallback(async (nextValue) => {
     setIsDark(nextValue); // instant, drives the re-render across the app
     try {
@@ -106,13 +143,13 @@ export function ThemeProvider({ userId, children }) {
     }
     if (userId) {
       try {
-        await setDoc(
-          doc(db, 'guests', userId),
-          { darkMode: nextValue, updatedAt: serverTimestamp() },
-          { merge: true }
-        );
+        const { error } = await supabase
+          .from('profiles')
+          .update({ dark_mode: nextValue })
+          .eq('id', userId);
+        if (error) throw error;
       } catch (err) {
-        console.warn('Failed to save theme preference to Firestore:', err);
+        console.warn('Failed to save theme preference to Supabase:', err);
       }
     }
   }, [userId]);

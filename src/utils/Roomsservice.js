@@ -1,34 +1,10 @@
-import {
-  addDoc,
-  collection,
-  doc,
-  getDocs,
-  query,
-  orderBy,
-  onSnapshot,
-  serverTimestamp,
-  setDoc,
-  where,
-} from 'firebase/firestore';
-import { db } from '../services/firebase';
-
+import { supabase } from '../services/supabase';
 import { getPlaceholderImages } from './Roomimageplaceholders';
 
 /**
- * ROOM STATUS — single unified field driving occupancy AND housekeeping.
+ * ROOM STATUS — see room_status enum in the Supabase schema for the full
+ * 8-state workflow this drives. Same lifecycle as before the migration:
  *
- * Previously occupancy (vacant/occupied/reserved/maintenance) and
- * housekeeping (dirty/in_progress/clean/inspected) were two independent
- * fields on the room doc. They're merged here into one `status` field
- * because the front-desk workflow needs them to interact directly:
- * checking a guest OUT must immediately take the room out of the
- * available pool and into the cleaning cycle (Inspect), and only a room
- * that has come all the way through that cycle to VACANT is bookable
- * again. Two independent fields made that guarantee hard to express and
- * easy to get out of sync (e.g. a room could be "clean" but still show
- * as bookable while a guest was mid-stay, or vice versa).
- *
- * Lifecycle:
  *   VACANT --(guest checks in)--> OCCUPIED
  *   OCCUPIED --(guest checks out)--> INSPECT
  *   INSPECT --(passes inspection)--> START_CLEANING
@@ -38,8 +14,21 @@ import { getPlaceholderImages } from './Roomimageplaceholders';
  *   IN_PROGRESS --(cleaning finished)--> VACANT
  *   VACANT --(manual, e.g. mid-stay re-clean)--> NEEDS_CLEANING_AGAIN
  *
- * RESERVED and MAINTENANCE are independent side-states an admin can set
- * manually from Room Management (not part of the automatic cycle above).
+ * RESERVED and MAINTENANCE are independent side-states set manually from
+ * Room Management, same as before.
+ *
+ * MIGRATED TO SUPABASE. Every exported function below keeps the exact
+ * same name and returns the exact same camelCase shape it did with
+ * Firestore — RoomTypeRatesScreen.jsx, RoomManagementScreen.jsx,
+ * RoomCleaningStatusScreen.jsx, and RoomSelectionScreen.jsx all import
+ * only from this file and never touch the database directly, so NONE of
+ * those screens needed to change for this migration. All the snake_case
+ * <-> camelCase translation happens right here.
+ *
+ * FIXED BUG carried over from Firestore: `deletedAt` (soft-delete) used
+ * to be written by deleteRoomType() but never actually filtered out of
+ * any read — so a "deleted" room type never really disappeared from any
+ * screen. subscribeToRoomTypes() below now filters deleted_at is null.
  */
 export const ROOM_STATUS = {
   OCCUPIED: 'occupied',
@@ -63,19 +52,9 @@ export const STATUS_META = {
   [ROOM_STATUS.MAINTENANCE]:          { label: 'Out of Service',           color: '#d97706', bg: '#fef3c7' },
 };
 
-// No fallback to VACANT here on purpose: a room with a missing or
-// unrecognized status is NOT the same as a room that's actually vacant,
-// and defaulting the display to "Vacant" for that case previously made
-// broken data invisible — the badge said Vacant while isAvailable()
-// (which has no such fallback) correctly kept the room out of Room
-// Selection, so the UI and the booking logic silently disagreed.
 const UNKNOWN_STATUS_META = { label: 'Unknown Status', color: '#6b7280', bg: '#e5e7eb' };
-
 export const statusMeta = (status) => STATUS_META[status] || UNKNOWN_STATUS_META;
 
-// The 5-step housekeeping cycle, in workflow order — used by Room
-// Cleaning Status to know which statuses it manages vs. which ones
-// (OCCUPIED / RESERVED / MAINTENANCE) are out of its scope.
 export const CLEANING_WORKFLOW_STATUSES = [
   ROOM_STATUS.INSPECT,
   ROOM_STATUS.NEEDS_CLEANING_AGAIN,
@@ -84,10 +63,6 @@ export const CLEANING_WORKFLOW_STATUSES = [
   ROOM_STATUS.VACANT,
 ];
 
-// Primary "advance" action for each step of the cleaning cycle. INSPECT
-// has a second, alternate action (branch to NEEDS_CLEANING_AGAIN instead
-// of straight to START_CLEANING) — handled separately in the screen,
-// since a room can fail inspection.
 export const NEXT_CLEANING_STATUS = {
   [ROOM_STATUS.INSPECT]:              ROOM_STATUS.START_CLEANING,
   [ROOM_STATUS.NEEDS_CLEANING_AGAIN]: ROOM_STATUS.START_CLEANING,
@@ -102,9 +77,6 @@ export const CLEANING_ACTION_LABEL = {
   [ROOM_STATUS.IN_PROGRESS]:          'Mark Vacant (Ready for Guest)',
 };
 
-// A room only counts as bookable/available once it has come all the way
-// through the cleaning cycle. Every other status (including OCCUPIED and
-// MAINTENANCE) is excluded automatically since none of them equal VACANT.
 export function isAvailable(status) {
   return status === ROOM_STATUS.VACANT;
 }
@@ -113,33 +85,44 @@ export function formatCurrency(amount) {
   return `₱${(amount ?? 0).toLocaleString()}`;
 }
 
-/* ── Real-time subscriptions ─────────────────────────────────────────── */
+/* ── snake_case (DB) <-> camelCase (app) mapping ─────────────────────── */
 
-export function subscribeToRoomTypes(onData, onError) {
-  const q = query(collection(db, 'roomTypes'), orderBy('name'));
-  return onSnapshot(
-    q,
-    (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    (error) => {
-      console.error('Failed to subscribe to roomTypes:', error);
-      if (onError) onError(error);
-    }
-  );
+function roomTypeToCamel(rt) {
+  return {
+    id: rt.id,
+    name: rt.name,
+    description: rt.description,
+    price: rt.price,
+    originalPrice: rt.original_price,
+    bbPrice: rt.bb_price,
+    bbOriginalPrice: rt.bb_original_price,
+    note: rt.note,
+    taxNote: rt.tax_note,
+    size: rt.size,
+    bed: rt.bed,
+    occupancy: rt.occupancy,
+    floor: rt.floor,
+    inclusions: rt.inclusions || [],
+    images: rt.images || [],
+    createdAt: rt.created_at,
+    updatedAt: rt.updated_at,
+  };
 }
 
-export function subscribeToRooms(onData, onError) {
-  const q = query(collection(db, 'rooms'), orderBy('roomNumber'));
-  return onSnapshot(
-    q,
-    (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    (error) => {
-      console.error('Failed to subscribe to rooms:', error);
-      if (onError) onError(error);
-    }
-  );
+function roomToCamel(r) {
+  return {
+    id: r.room_number,          // matches old behavior: Firestore doc ID was the room number
+    roomNumber: r.room_number,
+    roomTypeId: r.room_type_id,
+    floor: r.floor,
+    status: r.status,
+    maintenanceNote: r.maintenance_note,
+    updatedAt: r.updated_at,
+    createdAt: r.created_at,
+  };
 }
 
-/* ── Join helper ──────────────────────────────────────────────────────── */
+/* ── Join helper — unchanged, pure JS, no DB calls ───────────────────── */
 
 export function joinRoomsWithTypes(rooms, roomTypes) {
   const typesById = {};
@@ -172,163 +155,235 @@ export function joinRoomsWithTypes(rooms, roomTypes) {
   });
 }
 
+/* ── Real-time subscriptions ─────────────────────────────────────────── */
+
+export function subscribeToRoomTypes(onData, onError) {
+  const load = async () => {
+    const { data, error } = await supabase
+      .from('room_types')
+      .select('*')
+      .is('deleted_at', null) // fixes the dormant soft-delete bug — see file header
+      .order('name');
+    if (error) {
+      console.error('Failed to load room_types:', error);
+      if (onError) onError(error);
+      return;
+    }
+    onData((data || []).map(roomTypeToCamel));
+  };
+  load();
+
+  const channel = supabase
+    .channel('room_types-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'room_types' }, load)
+    .subscribe();
+
+  return () => supabase.removeChannel(channel);
+}
+
+export function subscribeToRooms(onData, onError) {
+  const load = async () => {
+    const { data, error } = await supabase
+      .from('rooms')
+      .select('*')
+      .order('room_number');
+    if (error) {
+      console.error('Failed to load rooms:', error);
+      if (onError) onError(error);
+      return;
+    }
+    onData((data || []).map(roomToCamel));
+  };
+  load();
+
+  const channel = supabase
+    .channel('rooms-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, load)
+    .subscribe();
+
+  return () => supabase.removeChannel(channel);
+}
+
 /* ── Mutations ────────────────────────────────────────────────────────── */
 
-// Single write path for the unified status field — used by Room
-// Management (admin-set statuses like RESERVED/MAINTENANCE), Room
-// Cleaning Status (advancing the 5-step cycle), and Reservation
-// Management (auto-set OCCUPIED on check-in / INSPECT on check-out).
+// Single write path for the status field, same role as before. `extra`
+// only ever carries { maintenanceNote } in practice (from
+// RoomManagementScreen's "clear note on mark vacant" action) — mapped to
+// snake_case here.
 export async function updateRoomStatus(roomNumber, status, extra = {}) {
-  await setDoc(
-    doc(db, 'rooms', roomNumber),
-    { status, ...extra, updatedAt: serverTimestamp() },
-    { merge: true }
-  );
+  const patch = { status, updated_at: new Date().toISOString() };
+  if ('maintenanceNote' in extra) patch.maintenance_note = extra.maintenanceNote;
+
+  const { error } = await supabase
+    .from('rooms')
+    .update(patch)
+    .eq('room_number', roomNumber);
+  if (error) throw error;
 }
 
 export async function createRoomType(data) {
-  const docRef = await addDoc(collection(db, 'roomTypes'), {
-    ...data,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-  return docRef.id;
+  const { data: inserted, error } = await supabase
+    .from('room_types')
+    .insert({
+      name: data.name,
+      description: data.description,
+      price: data.price,
+      original_price: data.originalPrice,
+      bb_price: data.bbPrice,
+      bb_original_price: data.bbOriginalPrice,
+      note: data.note,
+      tax_note: data.taxNote,
+      size: data.size,
+      bed: data.bed,
+      occupancy: data.occupancy,
+      floor: data.floor,
+      inclusions: data.inclusions || [],
+      images: data.images || [],
+    })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return inserted.id;
 }
 
 export async function updateRoomType(roomTypeId, data) {
-  await setDoc(
-    doc(db, 'roomTypes', roomTypeId),
-    {
-      ...data,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
+  const patch = { updated_at: new Date().toISOString() };
+  if ('name' in data) patch.name = data.name;
+  if ('description' in data) patch.description = data.description;
+  if ('price' in data) patch.price = data.price;
+  if ('originalPrice' in data) patch.original_price = data.originalPrice;
+  if ('bbPrice' in data) patch.bb_price = data.bbPrice;
+  if ('bbOriginalPrice' in data) patch.bb_original_price = data.bbOriginalPrice;
+  if ('note' in data) patch.note = data.note;
+  if ('taxNote' in data) patch.tax_note = data.taxNote;
+  if ('size' in data) patch.size = data.size;
+  if ('bed' in data) patch.bed = data.bed;
+  if ('occupancy' in data) patch.occupancy = data.occupancy;
+  if ('floor' in data) patch.floor = data.floor;
+  if ('inclusions' in data) patch.inclusions = data.inclusions;
+  if ('images' in data) patch.images = data.images;
+
+  const { error } = await supabase.from('room_types').update(patch).eq('id', roomTypeId);
+  if (error) throw error;
 }
 
 export async function deleteRoomType(roomTypeId) {
-  const roomsQuery = query(
-    collection(db, 'rooms'),
-    where('roomTypeId', '==', roomTypeId)
-  );
-  const roomsSnapshot = await getDocs(roomsQuery);
-  if (!roomsSnapshot.empty) {
+  const { data: assignedRooms, error: checkError } = await supabase
+    .from('rooms')
+    .select('id')
+    .eq('room_type_id', roomTypeId)
+    .limit(1);
+  if (checkError) throw checkError;
+
+  if (assignedRooms && assignedRooms.length > 0) {
     const error = new Error('This room type cannot be deleted while rooms are assigned to it.');
     error.code = 'room-type/has-assigned-rooms';
     throw error;
   }
 
-  await setDoc(
-    doc(db, 'roomTypes', roomTypeId),
-    { deletedAt: serverTimestamp() },
-    { merge: true }
-  );
+  const { error } = await supabase
+    .from('room_types')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', roomTypeId);
+  if (error) throw error;
 }
 
 /* ── One-time seed ────────────────────────────────────────────────────── */
 
 const SEED_ROOM_TYPES = [
   {
-    id: 'RM101',
+    placeholderKey: 'RM101',
     name: 'Twin',
     description: 'Two single beds, great for friends or colleagues sharing.',
-    originalPrice: 2000,
+    original_price: 2000,
     price: 1700,
     note: 'Book now, pay at hotel',
-    taxNote: 'Excludes taxes and charges',
+    tax_note: 'Excludes taxes and charges',
     size: '28 sqm',
     bed: '2 Single Beds',
     occupancy: '2 Adults',
     floor: 'Ground Floor',
     inclusions: [
-      'Free Wi-Fi',
-      'Air conditioning',
-      'Flat-screen TV',
-      'Private bathroom with hot & cold shower',
-      'Daily housekeeping',
+      'Free Wi-Fi', 'Air conditioning', 'Flat-screen TV',
+      'Private bathroom with hot & cold shower', 'Daily housekeeping',
     ],
   },
   {
-    id: 'RM102',
+    placeholderKey: 'RM102',
     name: 'King',
     description: 'One king-size bed, ideal for couples or solo travelers.',
-    originalPrice: 2500,
+    original_price: 2500,
     price: 2000,
-    bbPrice: 2400,
-    bbOriginalPrice: 3000,
+    bb_price: 2400,
+    bb_original_price: 3000,
     note: 'Book now, pay at hotel',
-    taxNote: 'Excludes taxes and charges',
+    tax_note: 'Excludes taxes and charges',
     size: '32 sqm',
     bed: '1 King Bed',
     occupancy: '2 Adults',
     floor: 'Ground Floor',
     inclusions: [
-      'Free Wi-Fi',
-      'Air conditioning',
-      'Flat-screen TV',
-      'Private bathroom with hot & cold shower',
-      'Daily housekeeping',
-      'Mini refrigerator',
-      'City view window',
+      'Free Wi-Fi', 'Air conditioning', 'Flat-screen TV',
+      'Private bathroom with hot & cold shower', 'Daily housekeeping',
+      'Mini refrigerator', 'City view window',
     ],
   },
   {
-    id: 'RM103',
+    placeholderKey: 'RM103',
     name: 'Single Room',
     description: 'One single bed, ideal for solo travelers and short stays.',
-    originalPrice: 1500,
+    original_price: 1500,
     price: 1200,
     note: 'Book now, pay at hotel',
-    taxNote: 'Excludes taxes and charges',
+    tax_note: 'Excludes taxes and charges',
     size: '20 sqm',
     bed: '1 Single Bed',
     occupancy: '1 Adult',
     floor: 'Ground Floor',
     inclusions: [
-      'Free Wi-Fi',
-      'Air conditioning',
-      'Flat-screen TV',
-      'Private bathroom with hot & cold shower',
-      'Daily housekeeping',
+      'Free Wi-Fi', 'Air conditioning', 'Flat-screen TV',
+      'Private bathroom with hot & cold shower', 'Daily housekeeping',
     ],
   },
 ];
 
-const SEED_ROOMS = [
-  { roomNumber: '101', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
-  { roomNumber: '102', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.OCCUPIED },
-  { roomNumber: '103', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.RESERVED },
-  { roomNumber: '104', roomTypeId: 'RM103', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
+const SEED_ROOMS_BY_TYPE_NAME = [
+  { roomNumber: '101', typeName: 'Twin',        floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
+  { roomNumber: '102', typeName: 'Twin',        floor: 'Ground Floor', status: ROOM_STATUS.OCCUPIED },
+  { roomNumber: '103', typeName: 'Twin',        floor: 'Ground Floor', status: ROOM_STATUS.RESERVED },
+  { roomNumber: '104', typeName: 'Single Room', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
   {
-    roomNumber: '105',
-    roomTypeId: 'RM102',
-    floor: 'Ground Floor',
-    status: ROOM_STATUS.MAINTENANCE,
+    roomNumber: '105', typeName: 'King', floor: 'Ground Floor', status: ROOM_STATUS.MAINTENANCE,
     maintenanceNote: 'AC unit repair — scheduled for completion this week.',
   },
-  { roomNumber: '106', roomTypeId: 'RM102', floor: 'Ground Floor', status: ROOM_STATUS.OCCUPIED },
-  { roomNumber: '107', roomTypeId: 'RM102', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
-  { roomNumber: '108', roomTypeId: 'RM101', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
+  { roomNumber: '106', typeName: 'King', floor: 'Ground Floor', status: ROOM_STATUS.OCCUPIED },
+  { roomNumber: '107', typeName: 'King', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
+  { roomNumber: '108', typeName: 'Twin', floor: 'Ground Floor', status: ROOM_STATUS.VACANT },
 ];
 
+// NOTE: room type IDs are now Postgres-generated UUIDs instead of the
+// fixed 'RM101'/'RM102'/'RM103' strings Firestore used, so seeding looks
+// types up by name after inserting them, then wires rooms to those IDs.
 export async function seedInitialRooms() {
-  for (const roomType of SEED_ROOM_TYPES) {
-    const { id, ...data } = roomType;
-    await setDoc(doc(db, 'roomTypes', id), {
-      ...data,
-      images: getPlaceholderImages(id),
-      updatedAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
-    });
+  const insertedTypes = {};
+  for (const { placeholderKey, ...rt } of SEED_ROOM_TYPES) {
+    const { data, error } = await supabase
+      .from('room_types')
+      .insert({ ...rt, images: getPlaceholderImages(placeholderKey) })
+      .select('id, name')
+      .single();
+    if (error) throw error;
+    insertedTypes[data.name] = data.id;
   }
 
-  for (const room of SEED_ROOMS) {
-    const { roomNumber, ...data } = room;
-    await setDoc(doc(db, 'rooms', roomNumber), {
-      roomNumber,
-      ...data,
-      updatedAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
-    });
-  }
+  const roomRows = SEED_ROOMS_BY_TYPE_NAME.map(({ roomNumber, typeName, floor, status, maintenanceNote }) => ({
+    room_number: roomNumber,
+    room_type_id: insertedTypes[typeName],
+    floor,
+    status,
+    maintenance_note: maintenanceNote || null,
+  }));
+
+  const { error: roomsError } = await supabase.from('rooms').insert(roomRows);
+  if (roomsError) throw roomsError;
 }

@@ -1,14 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image,
+  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
-import { resolveUserRole } from '../../utils/roleHelpers';
 
 export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, onBack }) {
   const [email, setEmail]               = useState('');
@@ -19,6 +16,19 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState('');
 
+  // Smooth entrance whenever this screen mounts — e.g. navigating here
+  // from Register/ForgotPassword feels like a continuation, not an
+  // abrupt cut. Runs once on mount; each screen animates itself in
+  // independently of whichever screen it's coming from.
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(16)).current;
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 320, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 320, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
   const handleLogin = async () => {
     if (!email.trim() || !password) {
       setError('Please enter your email and password.');
@@ -27,20 +37,27 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
     setError('');
     setLoading(true);
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
-      const user = userCredential.user;
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (signInError) throw signInError;
+      const user = data.user;
 
-      // Same "guests" collection holds every account — most docs have no
-      // `role` field at all (plain guests); the one admin account has
-      // role: 'admin' set manually in Firebase Console. Default to
-      // 'guest' whenever the field is missing, so existing guest
-      // accounts keep working with zero changes needed on their docs.
+      // profiles.role is a real Postgres enum (admin | frontdesk | guest),
+      // auto-created and defaulted to 'guest' by the on_auth_user_created
+      // trigger — no more resolveUserRole() guessing across differently-
+      // shaped legacy fields (role / isAdmin / accessLevel / etc.) the way
+      // the old Firestore "guests" docs needed.
       let role = 'guest';
       try {
-        const guestDoc = await getDoc(doc(db, 'guests', user.uid));
-        if (guestDoc.exists()) {
-          role = resolveUserRole(guestDoc.data());
-        }
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .single();
+        if (profileError) throw profileError;
+        if (profile?.role) role = profile.role;
       } catch (roleLookupError) {
         // If the role lookup itself fails (e.g. offline), fail safe to
         // 'guest' rather than blocking login entirely or risking a
@@ -50,20 +67,20 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
 
       onLogin && onLogin(user, role);
     } catch (e) {
-      switch (e.code) {
-        case 'auth/user-not-found':
-        case 'auth/wrong-password':
-        case 'auth/invalid-credential':
-          setError('Incorrect email or password.');
-          break;
-        case 'auth/invalid-email':
-          setError('Please enter a valid email address.');
-          break;
-        case 'auth/too-many-requests':
-          setError('Too many attempts. Please try again later.');
-          break;
-        default:
-          setError('Login failed. Please try again.');
+      // Supabase Auth errors don't carry Firebase-style `auth/xxx` codes —
+      // match on message content instead. `status` is also available if
+      // you'd rather branch on HTTP status (400/422/429).
+      const msg = (e.message || '').toLowerCase();
+      if (msg.includes('invalid login credentials')) {
+        setError('Incorrect email or password.');
+      } else if (msg.includes('email not confirmed')) {
+        setError('Please confirm your email address before logging in.');
+      } else if (msg.includes('email') && msg.includes('valid')) {
+        setError('Please enter a valid email address.');
+      } else if (e.status === 429 || msg.includes('rate limit')) {
+        setError('Too many attempts. Please try again later.');
+      } else {
+        setError('Login failed. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -90,7 +107,7 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
 
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <View style={styles.card}>
+          <Animated.View style={[styles.card, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
 
             {/* Logo */}
             <View style={styles.logoBadge}>
@@ -116,6 +133,7 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Email:</Text>
               <View style={[styles.inputWrap, emailFocused && styles.inputWrapFocused]}>
+                <Ionicons name="mail-outline" size={18} color={emailFocused ? colors.primary : colors.textMuted} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="Enter your email..."
@@ -135,6 +153,7 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Password:</Text>
               <View style={[styles.inputWrap, passFocused && styles.inputWrapFocused]}>
+                <Ionicons name="lock-closed-outline" size={18} color={passFocused ? colors.primary : colors.textMuted} style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
                   placeholder="Enter your password..."
@@ -173,7 +192,7 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
               <Text style={styles.registerButtonText}>Register Account</Text>
             </TouchableOpacity>
 
-          </View>
+          </Animated.View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -184,7 +203,25 @@ const styles = StyleSheet.create({
   safe:   { flex: 1, backgroundColor: colors.cardAlt },
   flex:   { flex: 1 },
   scroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
-  card:   { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 0.5, borderColor: colors.border, padding: spacing.xxl, width: '100%', maxWidth: 420, alignItems: 'center' },
+
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: radius.xl,
+    padding: spacing.xxl,
+    width: '100%',
+    maxWidth: 420,
+    alignItems: 'center',
+    ...Platform.select({
+      web: { boxShadow: '0 20px 50px rgba(0,0,0,0.16)' },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.14,
+        shadowRadius: 24,
+        elevation: 8,
+      },
+    }),
+  },
 
   backButton: {
     width: 40,
@@ -207,12 +244,13 @@ const styles = StyleSheet.create({
 
   fieldGroup:       { width: '100%', marginBottom: spacing.md },
   label:            { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.text, marginBottom: spacing.xs },
-  inputWrap:        { flexDirection: 'row', alignItems: 'center', height: 44, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.md },
-  inputWrapFocused: { borderColor: colors.text, backgroundColor: colors.card },
+  inputWrap:        { flexDirection: 'row', alignItems: 'center', height: 46, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.md, gap: spacing.sm },
+  inputWrapFocused: { borderColor: colors.primary, backgroundColor: colors.card },
+  inputIcon:        { flexShrink: 0 },
   input:            { flex: 1, fontFamily: fonts.body, fontSize: 14, color: colors.text, outlineStyle: 'none' },
-  eyeBtn:           { paddingLeft: spacing.sm, paddingVertical: spacing.xs },
+  eyeBtn:           { paddingLeft: spacing.xs, paddingVertical: spacing.xs },
 
-  loginButton:      { width: '100%', height: 44, borderRadius: radius.md, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },
+  loginButton:      { width: '100%', height: 48, borderRadius: 999, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },
   loginButtonText:  { fontFamily: fonts.headingSemiBold, fontSize: 15, color: colors.white, letterSpacing: 0.2 },
   buttonDisabled:   { opacity: 0.7 },
 
@@ -221,6 +259,6 @@ const styles = StyleSheet.create({
 
   divider: { width: '100%', height: 0.5, backgroundColor: colors.border, marginVertical: spacing.lg },
 
-  registerButton:     { width: '100%', height: 44, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.accent, backgroundColor: colors.accentTint, alignItems: 'center', justifyContent: 'center' },
+  registerButton:     { width: '100%', height: 48, borderRadius: 999, borderWidth: 1.5, borderColor: colors.accent, backgroundColor: colors.accentTint, alignItems: 'center', justifyContent: 'center' },
   registerButtonText: { fontFamily: fonts.headingSemiBold, fontSize: 15, color: colors.accent, letterSpacing: 0.2 },
 });

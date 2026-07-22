@@ -10,8 +10,7 @@ import {
   Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 
 /**
@@ -24,10 +23,17 @@ import { colors, spacing, radius, fonts } from '../../utils/theme';
  * via GuestRecordsScreen's "Add Guest" form) never appear here — that's
  * intentional, since a walk-in has no account to have a "profile" for.
  *
- * Table columns: Name, Email, Contact Number, Status (Active/Inactive,
- * mirrors the accountStatus field GuestProfileScreen already edits —
- * defaults to "active" when the field is missing, same fallback used
- * there).
+ * MIGRATED TO SUPABASE. FIXED BUG: the Active/Inactive status badge used
+ * to read guest.accountStatus, a field that was NEVER written anywhere
+ * in the app — meaning it always fell back to 'active', so the
+ * "Inactive" state could never actually appear no matter what. Since
+ * every guest here has a linked profiles row (that's the whole
+ * criteria for showing up on this screen), and profiles.active is a
+ * real, meaningful field already used elsewhere (e.g. the
+ * prevent_role_self_escalation trigger), the status now reads the
+ * actual profiles.active value via a joined query instead.
+ *
+ * Table columns: Name, Email, Contact Number, Status (Active/Inactive).
  *
  * Tapping a row calls onSelectGuest(guest) — same prop/pattern as
  * GuestRecordsScreen — so it can navigate into the existing
@@ -42,19 +48,43 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
   const [searchText, setSearchText] = useState('');
 
   useEffect(() => {
-    const guestsQuery = query(collection(db, 'guests'), orderBy('lastName'));
-    const unsub = onSnapshot(
-      guestsQuery,
-      (snapshot) => {
-        setGuests(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+    const loadGuests = async () => {
+      // Embeds the linked profiles row via the guests.user_id -> profiles.id
+      // foreign key, so profiles.active comes back on each row for the
+      // status badge — no separate lookup needed.
+      const { data, error } = await supabase
+        .from('guests')
+        .select('*, profiles(active)')
+        .not('user_id', 'is', null)
+        .order('last_name');
+      if (error) {
+        console.error('Failed to load guests:', error);
         setLoading(false);
-      },
-      (err) => {
-        console.error('Failed to load guests:', err);
-        setLoading(false);
+        return;
       }
-    );
-    return unsub;
+      setGuests(
+        (data || []).map((row) => ({
+          id: row.id,
+          firstName: row.first_name,
+          lastName: row.last_name,
+          email: row.email,
+          phone: row.phone,
+          linkedUid: row.user_id,
+          photoURL: row.photo_url,
+          active: row.profiles?.active ?? true,
+        }))
+      );
+      setLoading(false);
+    };
+    loadGuests();
+
+    const channel = supabase
+      .channel('guest-profiles-table')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, loadGuests)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, loadGuests)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   // Only guests who registered an account — i.e. have a linkedUid.
@@ -83,7 +113,7 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
     return (a + b).toUpperCase() || '?';
   };
 
-  const isActive = (g) => (g.accountStatus || 'active') === 'active';
+  const isActive = (g) => g.active !== false;
 
   const renderRow = ({ item, index }) => {
     const active = isActive(item);

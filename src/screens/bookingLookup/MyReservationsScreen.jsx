@@ -11,52 +11,38 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  collection,
-  query,
-  where,
-  getDocs,
-  doc,
-  updateDoc,
-  runTransaction,
-  serverTimestamp,
-} from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
-import { db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
+import { updateRoomStatus, ROOM_STATUS } from '../../utils/Roomsservice';
 import { useTheme } from '../../context/ThemeContext';
 
 /**
- * MyReservationsScreen — replaces BookingLookupScreen for registered
- * guests. Automatically pulls every reservation tied to the logged-in
- * guest's account (matched on email — same field BookingLookupScreen used)
- * and renders them newest-first in expandable cards.
+ * MyReservationsScreen — shows every reservation tied to the logged-in
+ * guest's account, newest-first, in expandable cards.
  *
- * ASSUMPTIONS TO VERIFY AGAINST YOUR ACTUAL SCHEMA/FILES:
- *  1. Auth: this reads the current user straight from firebase/auth
- *     (getAuth().currentUser). If you already have an AuthContext with a
- *     `useAuth()` hook exposing `{ user }`, swap the two lines marked
- *     "AUTH SOURCE" below to use that instead — it's the same pattern
- *     used elsewhere in the app for role detection via guests/{uid}.
- *  2. `selectedRooms` is assumed to be an array of objects shaped like
- *     `{ roomNumber, roomType, rate }` (mirrors RoomSelectionScreen /
- *     ReviewPayScreen output). Adjust `roomLabel`/`rateLabel` below if
- *     your actual shape differs.
- *  3. Payment method display: reservations written by submitReservation()
- *     store `paymentMode` ('online' | 'cash' | ...) and, for online
- *     payments, `eWalletProvider` (e.g. 'gcash'). `paymentMethod()` below
- *     maps those to a human label. A legacy `paymentMethod` /
- *     `guestDetails.paymentMethod` field is still checked first as a
- *     fallback for any older reservations that used it. Verify the exact
- *     field names/casing submitReservation() writes and adjust the
- *     EWALLET_LABELS map/keys if they differ (e.g. `ewalletProvider`).
- *  4. `bookingDate` falls back to `createdAt` (Firestore Timestamp),
- *     which is what BookingLookupScreen sorted on.
- *  5. Room release on cancellation: this does a best-effort transaction
- *     against a top-level `rooms` collection (doc id = room number,
- *     field `status`/`isAvailable`). If Roomsservice.js already exposes
- *     a release/availability function, replace `releaseRoomsInventory`
- *     below with a call into that service instead — it's the
- *     established shared Firestore layer for rooms.
+ * MIGRATED TO SUPABASE. Notes on what changed:
+ *  - Auth: fetches the current user via supabase.auth.getUser() (async —
+ *    there's no synchronous getAuth().currentUser equivalent).
+ *  - Fetched rows are mapped from Postgres snake_case to the same
+ *    camelCase shape the Firestore version used (checkIn, selectedRooms,
+ *    totalAmount, etc.) right after fetching — every helper function
+ *    below (guestName, roomLabel, statusMeta, canCancel...) and all the
+ *    JSX stayed unchanged as a result.
+ *  - FIXED BUG: rateLabel() used to read `room.rate`, but
+ *    ReviewPayScreen's submitReservation() actually writes `room.price`
+ *    on each selected_rooms entry — this mismatch meant the "Selected
+ *    rate" detail was likely always showing ₱0.00. Now reads the field
+ *    that's actually written.
+ *  - Room release on cancellation now goes through
+ *    Roomsservice.updateRoomStatus() (the shared service every other
+ *    room screen uses) instead of a raw Firestore transaction, and sets
+ *    ROOM_STATUS.VACANT directly — correct for a pre-check-in
+ *    cancellation (no guest ever occupied the room, so no cleaning cycle
+ *    is needed, unlike an actual checkout which goes through INSPECT).
+ *  - Adults/Children breakdown removed from the expanded details: the
+ *    new reservations schema only stores a single guest_count (total),
+ *    not the per-room adults/children split the old `totals` object on
+ *    the Firestore doc had — that granularity wasn't carried over during
+ *    the ReviewPayScreen migration. Shows "Guests: N" instead.
  *
  * Props:
  *  - onBack: () => void
@@ -96,9 +82,11 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
   const [cancelling, setCancelling]     = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
 
-  // ---- AUTH SOURCE (swap for useAuth() if you have an AuthContext) ----
-  const auth = getAuth();
-  const currentUser = auth.currentUser;
+  // ---- AUTH SOURCE ----
+  const [currentUser, setCurrentUser] = useState(null);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setCurrentUser(data?.user || null));
+  }, []);
   // -----------------------------------------------------------------
 
   /**
@@ -122,11 +110,15 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     await Promise.all(
       overdue.map(async (r) => {
         try {
-          await updateDoc(doc(db, 'reservations', r.id), {
-            status: 'checked-out',
-            checkedOutAt: serverTimestamp(),
-            autoCheckedOut: true, // flags this as system-corrected, not front-desk-confirmed
-          });
+          const { error } = await supabase
+            .from('reservations')
+            .update({
+              status: 'checked-out',
+              checked_out_at: new Date().toISOString(),
+              auto_checked_out: true, // flags this as system-corrected, not front-desk-confirmed
+            })
+            .eq('id', r.id);
+          if (error) throw error;
           r.status = 'checked-out'; // reflect immediately without a second fetch
         } catch (err) {
           console.error(`Auto-checkout failed for ${r.id}:`, err);
@@ -136,8 +128,31 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     return docs;
   };
 
+  // Maps a Postgres reservations row (snake_case) to the same camelCase
+  // shape the Firestore version used, so every helper/JSX below stays
+  // unchanged.
+  const reservationToCamel = (row) => ({
+    id: row.id,
+    guestEmail: row.guest_email,
+    guestDetails: row.guest_details,
+    checkIn: row.check_in,
+    checkOut: row.check_out,
+    nights: row.nights,
+    selectedRooms: row.selected_rooms,
+    roomType: row.room_type,
+    subtotal: row.subtotal,
+    tax: row.tax,
+    totalAmount: row.total_amount,
+    paymentMode: row.payment_mode,
+    paymentStatus: row.payment_status,
+    eWalletProvider: row.ewallet_provider,
+    status: row.status,
+    guestCount: row.guest_count,
+    createdAt: row.created_at,
+  });
+
   const fetchReservations = useCallback(async () => {
-    if (!currentUser?.email) {
+    if (!currentUser?.id) {
       setError('You need to be signed in to view your reservations.');
       setLoading(false);
       setRefreshing(false);
@@ -145,28 +160,24 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     }
     setError('');
     try {
-      const q = query(
-        collection(db, 'reservations'),
-        where('guestEmail', '==', currentUser.email)
-      );
-      const snapshot = await getDocs(q);
-      let docs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const { data, error: fetchError } = await supabase
+        .from('reservations')
+        .select('*')
+        .eq('user_id', currentUser.id)
+        .order('created_at', { ascending: false });
+      if (fetchError) throw fetchError;
+
+      let docs = (data || []).map(reservationToCamel);
       docs = await autoResolveOverdueCheckouts(docs);
-      // Sorted client-side (same approach BookingLookupScreen used) so
-      // this doesn't depend on a Firestore composite index existing.
-      docs.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setReservations(docs);
     } catch (err) {
       console.error('Failed to load reservations:', err);
-      // Firestore throws if the composite index for where+orderBy is
-      // missing on first run — the console error will include a direct
-      // link to create it if that's the cause.
       setError('Something went wrong while loading your reservations.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [currentUser?.email]);
+  }, [currentUser?.id]);
 
   useEffect(() => {
     fetchReservations();
@@ -206,8 +217,11 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
   const rateLabel = (r) => {
     const rooms = r.selectedRooms || [];
     if (rooms.length === 0) return '—';
-    if (rooms.length === 1) return formatCurrency(rooms[0].rate);
-    return rooms.map((room) => formatCurrency(room.rate)).join(' + ');
+    // FIXED: was reading room.rate, but selected_rooms entries actually
+    // have a `price` field (see submitReservation() in ReviewPayScreen)
+    // — this was likely always showing ₱0.00 before.
+    if (rooms.length === 1) return formatCurrency(rooms[0].price);
+    return rooms.map((room) => formatCurrency(room.price)).join(' + ');
   };
 
   const guestName = (r) => {
@@ -277,24 +291,17 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
   };
 
   /**
-   * Best-effort release of room inventory. Runs as a transaction per room
-   * so partial failures don't leave rooms half-updated. Replace the body
-   * with a Roomsservice call if one already exists for this.
+   * Best-effort release of room inventory, via the same shared
+   * Roomsservice every other room screen uses. Sets rooms straight to
+   * VACANT (not through the INSPECT cleaning cycle) — correct here
+   * because canCancel() only allows cancelling 'pending'/'upcoming'
+   * reservations, meaning the guest never actually occupied the room.
    */
   const releaseRoomsInventory = async (selectedRooms = []) => {
     for (const room of selectedRooms) {
       if (!room?.roomNumber) continue;
-      const roomRef = doc(db, 'rooms', String(room.roomNumber));
       try {
-        await runTransaction(db, async (tx) => {
-          const roomSnap = await tx.get(roomRef);
-          if (!roomSnap.exists()) return;
-          tx.update(roomRef, {
-            status: 'available',
-            isAvailable: true,
-            currentReservationId: null,
-          });
-        });
+        await updateRoomStatus(String(room.roomNumber), ROOM_STATUS.VACANT);
       } catch (err) {
         // Don't let one room's failure block the rest — surface it but
         // continue, since the reservation-level status update is the
@@ -308,11 +315,11 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     if (!cancelTarget) return;
     setCancelling(true);
     try {
-      const resRef = doc(db, 'reservations', cancelTarget.id);
-      await updateDoc(resRef, {
-        status: 'cancelled',
-        cancelledAt: serverTimestamp(),
-      });
+      const { error } = await supabase
+        .from('reservations')
+        .update({ status: 'cancelled' }) // updated_at trigger covers the "when" automatically
+        .eq('id', cancelTarget.id);
+      if (error) throw error;
       await releaseRoomsInventory(cancelTarget.selectedRooms);
 
       setCancelTarget(null);
@@ -361,8 +368,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
             <View style={styles.divider} />
             <View style={styles.resGrid}>
               <SummaryItem label="Booking date" value={formatDate(r.createdAt)} styles={styles} />
-              <SummaryItem label="Adults" value={r.totals?.totalAdults ?? 0} styles={styles} />
-              <SummaryItem label="Children" value={r.totals?.totalChildren ?? 0} styles={styles} />
+              <SummaryItem label="Guests" value={r.guestCount ?? '—'} styles={styles} />
               <SummaryItem label="Room number(s)" value={roomLabel(r)} styles={styles} />
               <SummaryItem label="Selected rate" value={rateLabel(r)} styles={styles} />
               <SummaryItem label="Payment method" value={paymentMethod(r)} styles={styles} />

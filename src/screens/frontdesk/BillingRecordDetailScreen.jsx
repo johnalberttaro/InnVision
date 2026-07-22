@@ -12,6 +12,7 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { getBillingRecord, getReceiptsForFolio } from '../../utils/BillingService';
 
@@ -102,9 +103,7 @@ export default function BillingRecordDetailScreen({ folioId, onBack, onRecordPay
   }
 
   const statusStyle = STATUS_STYLE[folio.billingStatus] || STATUS_STYLE.unpaid;
-  const roomNumbersLabel = Array.isArray(folio.roomNumbers)
-    ? folio.roomNumbers.join(', ')
-    : folio.roomNumbers;
+  const roomNumbers = Array.isArray(folio.roomNumbers) ? folio.roomNumbers : [folio.roomNumbers].filter(Boolean);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -116,6 +115,14 @@ export default function BillingRecordDetailScreen({ folioId, onBack, onRecordPay
         <View>
           <Text style={styles.folioNumber}>{folio.folioNumber}</Text>
           <Text style={styles.guestName}>{folio.guestName}</Text>
+          <View style={styles.roomBadgeRow}>
+            {roomNumbers.map((rn) => (
+              <View key={rn} style={styles.roomBadge}>
+                <Ionicons name="key-outline" size={11} color={colors.white} />
+                <Text style={styles.roomBadgeText}>Room {rn}</Text>
+              </View>
+            ))}
+          </View>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
           <Text style={[styles.statusBadgeText, { color: statusStyle.text }]}>{statusStyle.label}</Text>
@@ -126,7 +133,6 @@ export default function BillingRecordDetailScreen({ folioId, onBack, onRecordPay
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Stay Details</Text>
         <DetailRow label="Reservation Ref" value={formatReservationRef(folio.reservationRef)} />
-        <DetailRow label="Room" value={roomNumbersLabel} />
         <DetailRow label="Check-in" value={formatDate(folio.checkInDate)} />
         <DetailRow label="Check-out" value={formatDate(folio.checkOutDate)} />
       </View>
@@ -169,7 +175,8 @@ export default function BillingRecordDetailScreen({ folioId, onBack, onRecordPay
           activeOpacity={0.85}
           onPress={() => onRecordPayment && onRecordPayment(folio)}
         >
-          <Text style={styles.paymentButtonText}>💳 Record Payment</Text>
+          <Ionicons name="card-outline" size={15} color={colors.white} />
+          <Text style={styles.paymentButtonText}>Record Payment</Text>
         </TouchableOpacity>
       )}
     </ScrollView>
@@ -256,6 +263,20 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingVertical: spacing.md,
     alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.xs,
   },
   paymentButtonText: { color: colors.white, fontFamily: fonts.headingSemiBold, fontSize: 14 },
+  roomBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 },
+  roomBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: colors.primary,
+    borderRadius: 999,
+    paddingVertical: 2,
+    paddingHorizontal: spacing.sm,
+  },
+  roomBadgeText: { fontSize: 10, fontFamily: fonts.headingSemiBold, color: colors.white },
 });
