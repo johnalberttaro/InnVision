@@ -16,6 +16,7 @@ import BillingRecordDetailScreen from './BillingRecordDetailScreen';
 import RecordPaymentModal from './RecordPaymentModal';
 import PaymentsScreen from './PaymentsScreen';
 import ReceiptsScreen from './ReceiptsScreen';
+import MyProfileScreen from './MyProfileScreen';
 import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import DashboardFooter from '../../components/shared/DashboardFooter';
 import { colors, spacing, fonts } from '../../utils/theme';
@@ -183,6 +184,9 @@ function renderActiveScreen(
 ) {
   if (activeKey === 'dashboard') {
     return <FrontDeskDashboardScreen />;
+  }
+  if (activeKey === 'profile:me') {
+    return <MyProfileScreen staffUid={staffUid} />;
   }
   if (activeKey.startsWith('reservations')) {
     return <ReservationsScreen onLogout={onLoggedOut} filterKey={activeKey} />;

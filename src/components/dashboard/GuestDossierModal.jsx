@@ -60,7 +60,7 @@ export default function GuestDossierModal({ visible, onClose, reservation, onVie
         }
 
         const [guestResult, resResult] = await Promise.all([
-          supabase.from('guests').select('*').eq('user_id', uid).maybeSingle(),
+          supabase.from('guests').select('*, profiles(photo_url)').eq('user_id', uid).maybeSingle(),
           supabase.from('reservations').select('*').eq('user_id', uid).order('created_at', { ascending: false }),
         ]);
         if (cancelled) return;
@@ -74,7 +74,10 @@ export default function GuestDossierModal({ visible, onClose, reservation, onVie
               id: guestRow.id,
               firstName: guestRow.first_name,
               lastName: guestRow.last_name,
-              photoURL: guestRow.photo_url,
+              // FIXED BUG: prefers profiles.photo_url (where the avatar
+              // upload actually writes) over guests.photo_url, which
+              // nothing populates.
+              photoURL: guestRow.profiles?.photo_url || guestRow.photo_url,
             }
           : null;
 

@@ -27,19 +27,19 @@ const HERO_SLIDES = [
     uri: 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=1200&q=80',
     caption: 'Luxury Suites',
     description: 'Elegant stays with comfort, privacy, and premium amenities.',
-    badge: 'From $180/night',
+    badge: 'Instant Receipt',
   },
   {
     uri: 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=1200&q=80',
     caption: 'Comfort & Style',
     description: 'Thoughtfully designed rooms for relaxing business or leisure stays.',
-    badge: 'Free cancellation',
+    badge: 'Book Another Room',
   },
   {
     uri: 'https://images.unsplash.com/photo-1578683010236-d716f9a3f461?auto=format&fit=crop&w=1200&q=80',
     caption: 'Stay in Comfort',
     description: 'A welcoming atmosphere with modern features and easy booking.',
-    badge: '24/7 concierge',
+    badge: 'Student Discounts',
   },
 ];
 // ============================================================================

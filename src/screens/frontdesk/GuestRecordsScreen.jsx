@@ -184,7 +184,10 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
     vipTier: row.vip_tier,
     tags: row.tags,
     staffNotes: row.staff_notes,
-    photoURL: row.photo_url,
+    // FIXED BUG: prefers profiles.photo_url (where ProfileScreen.jsx's
+    // avatar upload actually writes) over guests.photo_url, which
+    // nothing ever populates.
+    photoURL: row.profiles?.photo_url || row.photo_url,
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -206,7 +209,7 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
     const loadGuests = async () => {
       const { data, error } = await supabase
         .from('guests')
-        .select('*')
+        .select('*, profiles(photo_url)')
         .order('last_name');
       if (error) {
         console.error('Failed to load guests:', error);

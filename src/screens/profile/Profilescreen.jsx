@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { decode as decodeBase64 } from 'base64-arraybuffer';
 import { supabase } from '../../services/supabase';
 import { useTheme } from '../../context/ThemeContext';
 import { formatDate } from '../../utils/dateHelpers';
@@ -42,6 +43,22 @@ import { formatDate } from '../../utils/dateHelpers';
  *  - Avatar upload goes to Supabase Storage (bucket `avatars`, path
  *    `{uid}/avatar.jpg`) instead of Firebase Storage. Needs the
  *    `avatars` bucket + policies set up first.
+ *
+ *  - FIXED BUG: avatar upload used fetch(uri).then(r => r.blob()) to
+ *    read the picked image on every platform, which is unreliable for
+ *    local image URIs on native Android specifically (throws "Network
+ *    request failed" even for a valid file — a known Expo/React Native
+ *    gotcha, not a Supabase or storage-policy issue). Native now asks
+ *    ImagePicker itself for base64 (base64: true in
+ *    launchImageLibraryAsync) and decodes that into an ArrayBuffer for
+ *    the upload — avoids fetch entirely on native, and avoids
+ *    expo-file-system too (an earlier attempt at this fix used that
+ *    library's readAsStringAsync + FileSystem.EncodingType.Base64, but
+ *    that constant came back undefined on this project's Expo SDK
+ *    version — its API changed and no longer matches most
+ *    tutorials/older code, so this sidesteps it rather than chase the
+ *    exact current shape). Web keeps the original fetch/blob path,
+ *    which already works fine there.
  *
  *  - Reservation status comparison fixed: the old version compared
  *    against `r.status === 'completed'`, but the reservations table's
@@ -235,6 +252,11 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
       quality: 0.7,
       allowsEditing: true,
       aspect: [1, 1],
+      // Only needed on native — see the FIXED BUG note above. Skipped on
+      // web since that platform's fetch/blob path doesn't need it, and
+      // requesting it there would just waste time encoding data we
+      // won't use.
+      base64: Platform.OS !== 'web',
     });
 
     if (result.canceled || !result.assets?.length) return;
@@ -242,8 +264,27 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
     const asset = result.assets[0];
     setUploadingAvatar(true);
     try {
-      const response = await fetch(asset.uri);
-      const blob = await response.blob();
+      // FIXED BUG (2nd attempt): the first fix used expo-file-system's
+      // readAsStringAsync + FileSystem.EncodingType.Base64, but that
+      // constant came back undefined on this Expo SDK — the library's
+      // API surface changed in a recent SDK version and no longer
+      // matches what's documented in most tutorials/older code. Rather
+      // than chase the exact current shape, this sidesteps
+      // expo-file-system entirely: asking ImagePicker itself for
+      // base64 (base64: true above) hands back the encoded data
+      // directly on the returned asset — one less moving part, and not
+      // dependent on a separate library's API staying in a particular
+      // shape.
+      let uploadBody;
+      if (Platform.OS === 'web') {
+        const response = await fetch(asset.uri);
+        uploadBody = await response.blob();
+      } else {
+        if (!asset.base64) {
+          throw new Error('No image data returned from the picker.');
+        }
+        uploadBody = decodeBase64(asset.base64);
+      }
 
       // Path convention: avatars/{uid}/avatar.jpg — matches the
       // avatars_owner_* storage policies, which check the folder name
@@ -251,7 +292,7 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
       const path = `${user.id}/avatar.jpg`;
       const { error: uploadError } = await supabase.storage
         .from('avatars')
-        .upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+        .upload(path, uploadBody, { upsert: true, contentType: 'image/jpeg' });
       if (uploadError) throw uploadError;
 
       const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);

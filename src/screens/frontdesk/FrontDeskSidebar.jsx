@@ -63,7 +63,7 @@ const MENU_SECTIONS = [
     subItems: [
       { key: 'guests:profiles', label: 'Guest Profiles' },
       { key: 'guests:records', label: 'Guest Records' },
-  
+      { key: 'guests:inquiries', label: 'Inquiries' },
     ],
   },
   {
@@ -238,15 +238,25 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole 
         </TouchableOpacity>
       </ScrollView>
 
-      {/* Profile footer */}
+      {/* Profile footer — tap the name/avatar area to open your own
+          profile (edit your photo/phone); the small power icon stays a
+          separate, more deliberate logout action so tapping your own
+          name never accidentally signs you out. */}
       <View style={styles.profileFooter}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{staffName.charAt(0).toUpperCase()}</Text>
-        </View>
-        <View style={styles.profileTextWrap}>
-          <Text style={styles.profileName} numberOfLines={1}>{staffName}</Text>
-          <Text style={styles.profileRole} numberOfLines={1}>{staffRole}</Text>
-        </View>
+        <TouchableOpacity
+          style={styles.profileFooterMain}
+          onPress={() => onNavigate('profile:me')}
+          activeOpacity={0.7}
+          accessibilityLabel="View my profile"
+        >
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{staffName.charAt(0).toUpperCase()}</Text>
+          </View>
+          <View style={styles.profileTextWrap}>
+            <Text style={styles.profileName} numberOfLines={1}>{staffName}</Text>
+            <Text style={styles.profileRole} numberOfLines={1}>{staffRole}</Text>
+          </View>
+        </TouchableOpacity>
         <TouchableOpacity onPress={onLogout} style={styles.quickLogout} accessibilityLabel="Log out">
           <Text style={styles.quickLogoutIcon}>⏻</Text>
         </TouchableOpacity>
@@ -401,6 +411,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.1)',
+  },
+  profileFooterMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   avatar: {
     width: 36,

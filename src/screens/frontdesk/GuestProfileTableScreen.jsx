@@ -50,11 +50,19 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
   useEffect(() => {
     const loadGuests = async () => {
       // Embeds the linked profiles row via the guests.user_id -> profiles.id
-      // foreign key, so profiles.active comes back on each row for the
-      // status badge — no separate lookup needed.
+      // foreign key, so profiles.active AND profiles.photo_url come back
+      // on each row — no separate lookup needed.
+      //
+      // FIXED BUG: photoURL used to read row.photo_url (the guests
+      // table's own column), but ProfileScreen.jsx's avatar upload
+      // writes to profiles.photo_url instead — a different column on a
+      // different table. Nothing ever wrote to guests.photo_url, so no
+      // uploaded photo could ever show here. Now prefers the real
+      // profiles.photo_url, falling back to guests.photo_url only if
+      // that's ever populated some other way.
       const { data, error } = await supabase
         .from('guests')
-        .select('*, profiles(active)')
+        .select('*, profiles(active, photo_url)')
         .not('user_id', 'is', null)
         .order('last_name');
       if (error) {
@@ -70,7 +78,7 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
           email: row.email,
           phone: row.phone,
           linkedUid: row.user_id,
-          photoURL: row.photo_url,
+          photoURL: row.profiles?.photo_url || row.photo_url,
           active: row.profiles?.active ?? true,
         }))
       );

@@ -30,9 +30,15 @@ export const DEVELOPERS = [
     photo: null, // e.g. require('../../assets/developers/john.jpg')
   },
   {
-    name: 'Timothy Largo',
+    name: 'Timothy John Largo',
     role: 'UI/UX Designer',
     description: '',
     photo: null, // e.g. require('../../assets/developers/timothy.jpg')
+  },
+  {
+    name: 'June Angelo Pogio',
+    role: 'Tester', // not specified — change to the correct role
+    description: '',
+    photo: null, // e.g. require('../../assets/developers/june.jpg')
   },
 ];

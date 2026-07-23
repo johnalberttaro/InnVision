@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image, ActivityIndicator, Alert, Platform, Modal, TextInput } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import {
   subscribeToRoomTypes,
   subscribeToRooms,
   joinRoomsWithTypes,
   updateRoomStatus,
+  createRoom,
   seedInitialRooms,
   formatCurrency,
   ROOM_STATUS,
@@ -162,7 +164,7 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
       ) : (
         <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
           {section === 'types' && <RoomTypesSection roomTypes={roomTypes} />}
-          {section === 'list' && <RoomListSection rooms={roomsWithDetails} />}
+          {section === 'list' && <RoomListSection rooms={roomsWithDetails} roomTypes={roomTypes} />}
           {section === 'availability' && <AvailabilitySection rooms={roomsWithDetails} />}
           {section === 'status' && (
             <StatusSection
@@ -232,14 +234,129 @@ function RoomTypesSection({ roomTypes }) {
   );
 }
 
-function RoomListSection({ rooms }) {
+function RoomListSection({ rooms, roomTypes }) {
+  const [modalOpen, setModalOpen] = useState(false);
+
   return (
     <View>
-      <SectionIntro description="Every physical room on the property, live from Firestore (rooms collection, joined with roomTypes)." />
+      <View style={styles.sectionHeaderRow}>
+        <SectionIntro description="Every physical room on the property, live from Supabase (rooms table, joined with room_types)." />
+        <TouchableOpacity style={styles.addRoomBtn} onPress={() => setModalOpen(true)} activeOpacity={0.85}>
+          <Ionicons name="add" size={16} color={colors.white} />
+          <Text style={styles.addRoomBtnText}>Add Room</Text>
+        </TouchableOpacity>
+      </View>
       {rooms.map((room) => (
         <RoomRow key={room.roomNumber} room={room} showStatus />
       ))}
+
+      <AddRoomModal visible={modalOpen} onClose={() => setModalOpen(false)} roomTypes={roomTypes} existingRooms={rooms} />
     </View>
+  );
+}
+
+function AddRoomModal({ visible, onClose, roomTypes, existingRooms }) {
+  const [roomNumber, setRoomNumber] = useState('');
+  const [roomTypeId, setRoomTypeId] = useState(roomTypes[0]?.id || null);
+  const [floor, setFloor] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const close = () => {
+    setRoomNumber('');
+    setRoomTypeId(roomTypes[0]?.id || null);
+    setFloor('');
+    setError('');
+    onClose();
+  };
+
+  const handleSubmit = async () => {
+    const trimmed = roomNumber.trim();
+    if (!trimmed) { setError('Room number is required.'); return; }
+    if (!roomTypeId) { setError('Please select a room type.'); return; }
+    if (existingRooms.some((r) => r.roomNumber === trimmed)) {
+      setError(`Room ${trimmed} already exists.`);
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    try {
+      await createRoom({ roomNumber: trimmed, roomTypeId, floor: floor.trim() });
+      close();
+    } catch (err) {
+      console.error('Failed to create room:', err);
+      // Postgres unique_violation on room_number, in case the client-side
+      // duplicate check above raced with another admin adding the same
+      // room number at the same time.
+      setError(
+        err?.code === '23505'
+          ? `Room ${trimmed} already exists.`
+          : 'Could not add this room. Please try again.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
+      <View style={styles.dialogOverlay}>
+        <View style={styles.dialogCard}>
+          <Text style={styles.dialogTitle}>Add Room</Text>
+
+          <Text style={styles.dialogFieldLabel}>Room Number</Text>
+          <TextInput
+            style={styles.dialogInput}
+            value={roomNumber}
+            onChangeText={setRoomNumber}
+            placeholder="e.g. 109"
+            placeholderTextColor={colors.disabled}
+            keyboardType={Platform.OS === 'web' ? 'default' : 'number-pad'}
+          />
+
+          <Text style={styles.dialogFieldLabel}>Room Type</Text>
+          <View style={styles.dialogChipRow}>
+            {roomTypes.length === 0 ? (
+              <Text style={styles.dialogHint}>No room types yet — add one first under Room Types.</Text>
+            ) : (
+              roomTypes.map((rt) => (
+                <TouchableOpacity
+                  key={rt.id}
+                  style={[styles.dialogChip, roomTypeId === rt.id && styles.dialogChipActive]}
+                  onPress={() => setRoomTypeId(rt.id)}
+                >
+                  <Text style={[styles.dialogChipText, roomTypeId === rt.id && styles.dialogChipTextActive]}>{rt.name}</Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+
+          <Text style={styles.dialogFieldLabel}>Floor (optional)</Text>
+          <TextInput
+            style={styles.dialogInput}
+            value={floor}
+            onChangeText={setFloor}
+            placeholder="e.g. Ground Floor"
+            placeholderTextColor={colors.disabled}
+          />
+
+          {!!error && <Text style={styles.dialogError}>{error}</Text>}
+
+          <View style={styles.dialogActions}>
+            <TouchableOpacity style={styles.dialogCancelBtn} onPress={close} disabled={saving}>
+              <Text style={styles.dialogCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dialogSubmitBtn} onPress={handleSubmit} disabled={saving}>
+              {saving
+                ? <ActivityIndicator color={colors.white} size="small" />
+                : <Text style={styles.dialogSubmitText}>Add Room</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -575,6 +692,35 @@ const styles = StyleSheet.create({
 
   sectionIntro: { marginBottom: spacing.lg },
   sectionIntroDescription: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.md, marginBottom: spacing.lg },
+  addRoomBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: colors.primary, borderRadius: 999,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+  },
+  addRoomBtnText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.white },
+
+  dialogOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
+  dialogCard: { width: '100%', maxWidth: 420, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.xl },
+  dialogTitle: { fontSize: 17, fontFamily: fonts.headingBold, color: colors.primary, marginBottom: spacing.md },
+  dialogFieldLabel: { fontSize: 12, fontFamily: fonts.bodyMedium, color: colors.text, marginBottom: spacing.xs, marginTop: spacing.sm },
+  dialogInput: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+    fontSize: 13, fontFamily: fonts.body, color: colors.text, backgroundColor: colors.cardAlt,
+  },
+  dialogChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  dialogChip: { borderWidth: 1, borderColor: colors.border, borderRadius: 999, paddingVertical: 6, paddingHorizontal: spacing.md, backgroundColor: colors.cardAlt },
+  dialogChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  dialogChipText: { fontSize: 12, fontFamily: fonts.bodyMedium, color: colors.text },
+  dialogChipTextActive: { color: colors.white, fontFamily: fonts.bodySemiBold },
+  dialogHint: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic' },
+  dialogError: { fontSize: 12, fontFamily: fonts.body, color: '#B3261E', marginTop: spacing.md },
+  dialogActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
+  dialogCancelBtn: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 999, paddingVertical: spacing.sm + 2, alignItems: 'center' },
+  dialogCancelText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+  dialogSubmitBtn: { flex: 1, backgroundColor: colors.primary, borderRadius: 999, paddingVertical: spacing.sm + 2, alignItems: 'center' },
+  dialogSubmitText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.white },
 
   emptyText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginBottom: spacing.sm },
 

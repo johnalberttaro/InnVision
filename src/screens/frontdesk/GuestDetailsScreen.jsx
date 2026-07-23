@@ -79,7 +79,9 @@ export default function GuestDetailScreen({ guestId, onBack }) {
     email: row.email,
     phone: row.phone,
     linkedUid: row.user_id,
-    photoURL: row.photo_url,
+    // FIXED BUG: prefers profiles.photo_url (where the avatar upload
+    // actually writes) over guests.photo_url, which nothing populates.
+    photoURL: row.profiles?.photo_url || row.photo_url,
   });
 
   const reservationToCamel = (row) => ({
@@ -101,7 +103,7 @@ export default function GuestDetailScreen({ guestId, onBack }) {
     const loadGuest = async () => {
       const { data, error } = await supabase
         .from('guests')
-        .select('*')
+        .select('*, profiles(photo_url)')
         .eq('id', guestId)
         .maybeSingle();
       if (error) {

@@ -42,8 +42,8 @@ const GUEST_CYCLE = [
 ];
 
 const FEATURES = [
-  { icon: 'bed-outline',       text: 'Online room browsing and reservation (with or without an account)' },
-  { icon: 'pulse-outline',     text: 'Real-time room status monitoring (vacant, occupied, housekeeping, maintenance)' },
+  { icon: 'bed-outline',       text: 'Online room browsing and reservation' },
+  { icon: 'pulse-outline',     text: 'Real-time room status monitoring (vacant, occupied, reserved, maintenance)' },
   { icon: 'key-outline',       text: 'Front desk check-in and check-out processing' },
   { icon: 'receipt-outline',   text: 'Guest folio and billing management' },
   { icon: 'bar-chart-outline', text: 'Occupancy and revenue reporting for administrators' },

@@ -104,6 +104,7 @@ function roomTypeToCamel(rt) {
     floor: rt.floor,
     inclusions: rt.inclusions || [],
     images: rt.images || [],
+    isBookable: rt.is_bookable ?? true,
     createdAt: rt.created_at,
     updatedAt: rt.updated_at,
   };
@@ -239,14 +240,16 @@ export async function createRoomType(data) {
       floor: data.floor,
       inclusions: data.inclusions || [],
       images: data.images || [],
+      is_bookable: data.isBookable ?? true,
     })
     .select('id')
     .single();
   if (error) throw error;
+  await logRoomTypeAudit(inserted.id, data.name, 'created');
   return inserted.id;
 }
 
-export async function updateRoomType(roomTypeId, data) {
+export async function updateRoomType(roomTypeId, data, options = {}) {
   const patch = { updated_at: new Date().toISOString() };
   if ('name' in data) patch.name = data.name;
   if ('description' in data) patch.description = data.description;
@@ -262,12 +265,67 @@ export async function updateRoomType(roomTypeId, data) {
   if ('floor' in data) patch.floor = data.floor;
   if ('inclusions' in data) patch.inclusions = data.inclusions;
   if ('images' in data) patch.images = data.images;
+  if ('isBookable' in data) patch.is_bookable = data.isBookable;
 
   const { error } = await supabase.from('room_types').update(patch).eq('id', roomTypeId);
   if (error) throw error;
+
+  if (options.skipAudit) return;
+
+  // Name might not be part of this particular update — fetch it fresh
+  // if needed, so the audit log always has a real name snapshot rather
+  // than a blank one.
+  let auditName = data.name;
+  if (!auditName) {
+    const { data: row } = await supabase.from('room_types').select('name').eq('id', roomTypeId).single();
+    auditName = row?.name || 'Unknown room type';
+  }
+  const changedFields = Object.keys(patch).filter((k) => k !== 'updated_at');
+  await logRoomTypeAudit(roomTypeId, auditName, 'updated', `Changed: ${changedFields.join(', ')}`);
+}
+
+// Writes one row to room_type_audit_log — called from create/update/
+// delete below so every caller gets audit logging automatically,
+// without each screen needing to remember to log it separately. Never
+// throws: a logging failure shouldn't block the actual operation that
+// already succeeded.
+async function logRoomTypeAudit(roomTypeId, roomTypeName, action, details) {
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData?.user;
+    let performedByName = user?.email || null;
+    if (user) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('display_name, first_name, last_name')
+        .eq('id', user.id)
+        .single();
+      if (profile) {
+        performedByName =
+          profile.display_name || [profile.first_name, profile.last_name].filter(Boolean).join(' ') || performedByName;
+      }
+    }
+    await supabase.from('room_type_audit_log').insert({
+      room_type_id: roomTypeId,
+      room_type_name: roomTypeName,
+      action,
+      performed_by: user?.id || null,
+      performed_by_name: performedByName,
+      details: details || null,
+    });
+  } catch (err) {
+    console.error('Failed to write room type audit log:', err);
+  }
 }
 
 export async function deleteRoomType(roomTypeId) {
+  const { data: roomTypeRow, error: nameError } = await supabase
+    .from('room_types')
+    .select('name')
+    .eq('id', roomTypeId)
+    .single();
+  if (nameError) throw nameError;
+
   const { data: assignedRooms, error: checkError } = await supabase
     .from('rooms')
     .select('id')
@@ -286,6 +344,8 @@ export async function deleteRoomType(roomTypeId) {
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', roomTypeId);
   if (error) throw error;
+
+  await logRoomTypeAudit(roomTypeId, roomTypeRow.name, 'deleted');
 }
 
 /* ── One-time seed ────────────────────────────────────────────────────── */
@@ -364,6 +424,21 @@ const SEED_ROOMS_BY_TYPE_NAME = [
 // NOTE: room type IDs are now Postgres-generated UUIDs instead of the
 // fixed 'RM101'/'RM102'/'RM103' strings Firestore used, so seeding looks
 // types up by name after inserting them, then wires rooms to those IDs.
+// Adds a single physical room — e.g. "Room 109" — to an existing room
+// type. New rooms default to VACANT (ready to use) since there's no
+// prior guest/cleaning history to account for; front desk can change
+// that afterward from Room Status if it actually needs inspecting first
+// (e.g. a newly renovated room).
+export async function createRoom({ roomNumber, roomTypeId, floor, status }) {
+  const { error } = await supabase.from('rooms').insert({
+    room_number: roomNumber,
+    room_type_id: roomTypeId,
+    floor: floor || null,
+    status: status || ROOM_STATUS.VACANT,
+  });
+  if (error) throw error;
+}
+
 export async function seedInitialRooms() {
   const insertedTypes = {};
   for (const { placeholderKey, ...rt } of SEED_ROOM_TYPES) {

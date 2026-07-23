@@ -53,7 +53,7 @@ const SOCIAL_LINKS = {
 const FAQS = [
   {
     q: 'Do I need an account to book a room?',
-    a: 'No. InnVision supports hybrid guest access — you can reserve a room with or without creating an account.',
+    a: 'Yes. To book a room in InnVision, guests must create a registered account. This ensures secure payments, proper tracking of reservations, and access to receipts and booking history.',
   },
   {
     q: 'How can I check my reservation status?',
@@ -65,7 +65,7 @@ const FAQS = [
   },
   {
     q: 'Can I cancel or modify my reservation?',
-    a: 'Please contact our front desk directly using the phone number or email above, and our staff will assist you.',
+    a: 'Yes. Guests with a registered account can log in to the InnVision portal to cancel or modify their reservation directly. If you booked through the front desk or need assistance, please contact our staff using the phone number or email provided.',
   },
 ];
 
