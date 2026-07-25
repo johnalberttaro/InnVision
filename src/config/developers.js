@@ -21,24 +21,24 @@ export const DEVELOPERS = [
     name: 'James Ivan Jimenez',
     role: 'Project Manager',
     description: '',
-    photo: null, // e.g. require('../../assets/developers/james.jpg')
+    photo: require('../../assets/developers/jimenez.png'),
   },
   {
     name: 'John Albert Tabasa',
     role: 'Lead Developer',
     description: '',
-    photo: null, // e.g. require('../../assets/developers/john.jpg')
+    photo: require('../../assets/developers/tabasa.png'),
   },
   {
     name: 'Timothy John Largo',
     role: 'UI/UX Designer',
     description: '',
-    photo: null, // e.g. require('../../assets/developers/timothy.jpg')
+    photo: require('../../assets/developers/largo.png'),
   },
   {
     name: 'June Angelo Pogio',
     role: 'Tester', // not specified — change to the correct role
     description: '',
-    photo: null, // e.g. require('../../assets/developers/june.jpg')
+    photo: require('../../assets/developers/pogio.png'),
   },
 ];

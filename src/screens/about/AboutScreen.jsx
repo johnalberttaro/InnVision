@@ -13,17 +13,19 @@ import Appfooter from '../../components/shared/Appfooter';
 import { DEVELOPERS } from '../../config/developers';
 import { useTheme } from '../../context/ThemeContext';
 
+const LOGO_SOURCE = require('../../../assets/logo.png');
+
 /**
  * AboutScreen — informational screen describing InnVision, its purpose,
  * key features, dev team, and tech stack.
  *
- * MIGRATED TO CENTRALIZED THEME (useTheme()). One fix made during
- * migration: `logoText` used `colors.white` for text on top of
- * `logoBadge` (background = colors.primary). Since primary flips to a
- * light color in dark mode, that text would become invisible — changed
- * to `colors.onPrimary`. The header's white icon/title on
- * `colors.heroBackground` are left as literal white — that token stays a
+ * MIGRATED TO CENTRALIZED THEME (useTheme()). The header's white icon/title
+ * on `colors.heroBackground` are left as literal white — that token stays a
  * dark band in both palettes, so it doesn't need to flip.
+ *
+ * The brand block at the top renders the real InnVision logo image
+ * (`assets/logo.png`, same asset used on the header/login/sidebar screens)
+ * instead of a text badge.
  *
  * The "Developed By" section renders developer profile cards straight from
  * `src/config/developers.js` — to change photos, names, roles, or add new
@@ -52,8 +54,8 @@ const FEATURES = [
 
 const BUILT_WITH = [
   { label: 'Expo & React Native',     detail: 'Cross-platform mobile app', icon: 'phone-portrait-outline' },
-  { label: 'Firebase Firestore',      detail: 'Database',                  icon: 'server-outline' },
-  { label: 'Firebase Authentication', detail: 'User management',           icon: 'shield-checkmark-outline' },
+  { label: 'Supabase Postgres',       detail: 'Database',                  icon: 'server-outline' },
+  { label: 'Supabase Authentication', detail: 'User management',           icon: 'shield-checkmark-outline' },
 ];
 
 function getInitials(name) {
@@ -114,9 +116,7 @@ export default function AboutScreen({ onBack }) {
             {/* ── About the System (logo/name/tagline now live here) ── */}
             <View style={styles.card}>
               <View style={styles.brandBlock}>
-                <View style={styles.logoBadge}>
-                  <Text style={styles.logoText}>IV</Text>
-                </View>
+                <Image source={LOGO_SOURCE} style={styles.logoImage} resizeMode="contain" />
                 <Text style={styles.appName}>InnVision</Text>
                 <Text style={styles.tagline}>
                   Real-Time Front Office and Guest Service Management
@@ -315,20 +315,10 @@ function getStyles(colors, spacing, radius, fonts) {
       alignItems: 'center',
       paddingBottom: spacing.md,
     },
-    logoBadge: {
-      width: 52,
-      height: 52,
-      borderRadius: radius.lg,
-      backgroundColor: colors.primary,
-      alignItems: 'center',
-      justifyContent: 'center',
+    logoImage: {
+      width: 64,
+      height: 64,
       marginBottom: spacing.sm,
-    },
-    logoText: {
-      fontFamily: fonts.headingExtraBold,
-      fontSize: 18,
-      color: colors.onPrimary,
-      letterSpacing: -0.5,
     },
     appName: {
       fontSize: 20,

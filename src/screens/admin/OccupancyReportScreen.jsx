@@ -1,25 +1,58 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
-import { subscribeToRooms, ROOM_STATUS, statusMeta } from '../../utils/Roomsservice';
+import { subscribeToRooms, subscribeToRoomTypes, joinRoomsWithTypes, ROOM_STATUS, statusMeta } from '../../utils/Roomsservice';
+
+/**
+ * OccupancyReportScreen — SRS Module 6, Transaction 6.1: live room
+ * inventory and housekeeping status.
+ *
+ * FIXED: the "Rooms by Status" list was showing each room's raw
+ * roomTypeId (a UUID) instead of its actual type name (e.g. "King",
+ * "Twin") — subscribeToRooms() only returns the room_type_id foreign
+ * key, it was never joined against room_types to resolve a name, so the
+ * `room.roomTypeName || room.roomTypeId || ...` fallback always landed
+ * on the raw UUID. Now also subscribes to room types and joins them via
+ * joinRoomsWithTypes() (an existing helper built for exactly this, used
+ * elsewhere in the app) so this list reads the same way RevenueReport's
+ * "Recent Bookings" does — a real room type name, not an internal id.
+ */
 
 export default function OccupancyReportScreen() {
-  const [rooms, setRooms] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [rawRooms, setRawRooms] = useState([]);
+  const [roomTypes, setRoomTypes] = useState([]);
+  const [loadingRooms, setLoadingRooms] = useState(true);
+  const [loadingTypes, setLoadingTypes] = useState(true);
+  const loading = loadingRooms || loadingTypes;
 
   useEffect(() => {
-    const unsubscribe = subscribeToRooms(
+    const unsubscribeRooms = subscribeToRooms(
       (data) => {
-        setRooms(data);
-        setLoading(false);
+        setRawRooms(data);
+        setLoadingRooms(false);
       },
       (error) => {
         console.error('Failed to load room inventory:', error);
-        setLoading(false);
+        setLoadingRooms(false);
       }
     );
-    return unsubscribe;
+    const unsubscribeTypes = subscribeToRoomTypes(
+      (data) => {
+        setRoomTypes(data);
+        setLoadingTypes(false);
+      },
+      (error) => {
+        console.error('Failed to load room types:', error);
+        setLoadingTypes(false);
+      }
+    );
+    return () => {
+      unsubscribeRooms();
+      unsubscribeTypes();
+    };
   }, []);
+
+  const rooms = useMemo(() => joinRoomsWithTypes(rawRooms, roomTypes), [rawRooms, roomTypes]);
 
   const totals = rooms.reduce((acc, room) => {
     const status = room.status || 'unknown';
@@ -94,7 +127,7 @@ export default function OccupancyReportScreen() {
             <View key={room.id || room.roomNumber} style={styles.roomRow}>
               <View>
                 <Text style={styles.roomName}>{room.roomNumber || `Room ${room.id}`}</Text>
-                <Text style={styles.roomMeta}>{room.roomTypeName || room.roomTypeId || 'Unknown type'}</Text>
+                <Text style={styles.roomMeta}>{room.roomTypeName}</Text>
               </View>
               <View style={[styles.statusPill, { backgroundColor: statusMeta(room.status).bg }]}> 
                 <Text style={[styles.statusPillText, { color: statusMeta(room.status).color }]}>{statusMeta(room.status).label}</Text>

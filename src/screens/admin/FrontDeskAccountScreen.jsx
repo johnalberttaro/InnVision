@@ -2,12 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
+  Image,
   TextInput,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
   ActivityIndicator,
   Modal,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase, secondarySupabase } from '../../services/supabase';
@@ -67,6 +69,25 @@ import { colors, spacing, radius, fonts } from '../../utils/theme';
  * name and the sidebar's separate "Front Desk Accounts" item); creating
  * accounts with other roles would be a different, more sensitive flow
  * this screen doesn't attempt.
+ *
+ * DESKTOP/TABLET LAYOUT: this is an admin-only screen — nobody reaches
+ * it from a phone — but it previously had no max-width cap at all, so
+ * on an actual desktop monitor the form fields and account rows just
+ * stretched edge to edge and got uncomfortably wide. On wide viewports
+ * (>= WIDE_BREAKPOINT) "Create Front Desk Account" and "Existing Front
+ * Desk Accounts" now sit side by side as two panels instead of one long
+ * stacked page, and the overall content area is capped at a sane max
+ * width. Form field rows use flexWrap + a minWidth per field rather than
+ * a hardcoded row/column split, so they lay out sensibly whichever panel
+ * width they end up in. Narrower viewports (tablet portrait, or the
+ * mobile build) fall back to the original single stacked column.
+ *
+ * FIXED: the account list always showed an initials circle, even for
+ * staff who'd uploaded a real profile photo via their own self-service
+ * "My Profile" screen — photo_url was never fetched or rendered here
+ * (same gap as FrontDeskStaffScreen.jsx's roster, fixed the same way).
+ * Now shows the actual photo when one exists. Stays live automatically
+ * via the existing realtime subscription on the profiles table below.
  */
 
 // Writes one row to staff_account_audit_log. Never throws — a logging
@@ -130,8 +151,11 @@ function formatDateLabel(value) {
 }
 
 const EMPTY_FORM = { firstName: '', lastName: '', email: '', password: '', confirmPassword: '', phone: '' };
+const WIDE_BREAKPOINT = 1000;
 
 export default function FrontDeskAccountsScreen() {
+  const { width } = useWindowDimensions();
+  const isWide = width >= WIDE_BREAKPOINT;
   const [staffAccounts, setStaffAccounts] = useState([]);
   const [staffForm, setStaffForm] = useState(EMPTY_FORM);
   const [touched, setTouched] = useState({});
@@ -167,6 +191,7 @@ export default function FrontDeskAccountsScreen() {
           displayName: row.display_name,
           email: row.email,
           phone: row.phone,
+          photoUrl: row.photo_url,
           createdAt: row.created_at,
         }))
       );
@@ -379,7 +404,8 @@ export default function FrontDeskAccountsScreen() {
         </View>
       )}
 
-      <View style={styles.staffCard}>
+      <View style={isWide ? styles.columnsWrap : undefined}>
+      <View style={[styles.staffCard, isWide && styles.staffCardWide]}>
         <View style={styles.cardHeaderRow}>
           <Ionicons name="person-add-outline" size={16} color={colors.primary} />
           <Text style={styles.sectionTitle}>Create Front Desk Account</Text>
@@ -487,7 +513,7 @@ export default function FrontDeskAccountsScreen() {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.staffListCard}>
+      <View style={[styles.staffListCard, isWide && styles.staffListCardWide]}>
         <View style={styles.cardHeaderRow}>
           <Ionicons name="people-outline" size={16} color={colors.primary} />
           <Text style={styles.sectionTitle}>Existing Front Desk Accounts</Text>
@@ -520,7 +546,11 @@ export default function FrontDeskAccountsScreen() {
             return (
               <View key={staff.id} style={styles.staffRow}>
                 <View style={styles.staffAvatar}>
-                  <Text style={styles.staffAvatarText}>{initial}</Text>
+                  {staff.photoUrl ? (
+                    <Image source={{ uri: staff.photoUrl }} style={styles.staffAvatarImage} />
+                  ) : (
+                    <Text style={styles.staffAvatarText}>{initial}</Text>
+                  )}
                 </View>
                 <View style={styles.staffTextWrap}>
                   <View style={styles.staffNameRow}>
@@ -560,6 +590,7 @@ export default function FrontDeskAccountsScreen() {
             );
           })
         )}
+      </View>
       </View>
 
       {/* ── Remove confirmation ─────────────────────────────────────── */}
@@ -633,10 +664,16 @@ export default function FrontDeskAccountsScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.xl },
+  content: { padding: spacing.xl, maxWidth: 1200, width: '100%', alignSelf: 'center' },
   headerRow: { marginBottom: spacing.xl },
   pageTitle: { fontSize: 22, fontFamily: fonts.headingExtraBold, color: colors.primary, marginBottom: spacing.xs },
   pageSubtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
+
+  // Side-by-side panels on wide (desktop/tablet) viewports: the create
+  // form stays a fixed, comfortably-narrow width on the left, and the
+  // account list fills the rest on the right. Falls back to the
+  // original single stacked column below WIDE_BREAKPOINT.
+  columnsWrap: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xl },
 
   errorBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: colors.dangerBg, borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.lg },
   errorBannerText: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.danger },
@@ -644,11 +681,17 @@ const styles = StyleSheet.create({
   successBannerText: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: '#1E7B34' },
 
   staffCard: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.xl },
+  staffCardWide: { flexBasis: 420, flexGrow: 0, flexShrink: 0, marginBottom: 0 },
   cardHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.xs },
   sectionTitle: { fontSize: 16, fontFamily: fonts.headingBold, color: colors.text },
   helperText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginBottom: spacing.md },
-  formRow: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.md },
-  inputGroup: { flex: 1 },
+  // flexWrap + a minWidth per field (not a hardcoded row/column split)
+  // means this lays out sensibly whether it's in the narrower left
+  // panel on desktop, a full-width stacked card on tablet, or anything
+  // in between — fields wrap to their own line only if the container
+  // is too narrow to fit two comfortably.
+  formRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginBottom: spacing.md },
+  inputGroup: { flex: 1, minWidth: 160 },
   inputLabel: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text, marginBottom: spacing.xs },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: colors.cardAlt, fontFamily: fonts.body, fontSize: 13, color: colors.text },
   inputError: { borderColor: '#B3261E', backgroundColor: colors.dangerBg },
@@ -664,6 +707,7 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.7 },
 
   staffListCard: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg },
+  staffListCardWide: { flex: 1, minWidth: 0 },
   searchBar: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
@@ -673,7 +717,8 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
 
   staffRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
-  staffAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  staffAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' },
+  staffAvatarImage: { width: 40, height: 40 },
   staffAvatarText: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.primary },
   staffTextWrap: { flex: 1 },
   staffNameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' },

@@ -94,10 +94,10 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
     setSeeding(true);
     try {
       await seedInitialRooms();
-      notifyUser('Done', 'Seeded 3 room types and 8 rooms into Firestore.');
+      notifyUser('Done', 'Seeded 3 room types and 8 rooms into the database.');
     } catch (err) {
       console.error('Failed to seed rooms:', err);
-      notifyUser('Error', 'Could not seed room data. Check your Firestore connection/rules and try again.');
+      notifyUser('Error', 'Could not seed room data. Check your Supabase connection/policies and try again.');
     } finally {
       setSeeding(false);
     }
@@ -106,7 +106,7 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
   const handleSeedWithConfirm = () => {
     confirmAction(
       'Reseed room data?',
-      'This overwrites roomTypes/RM101, roomTypes/RM102, roomTypes/RM103, and rooms/101–108 with whatever is currently defined in Roomsservice.js. Any manual edits made directly in the Firebase console will be lost.',
+      'This overwrites the Twin, King, and Single Room room types, and rooms 101–108, with whatever is currently defined in Roomsservice.js. Any manual edits made directly in the Supabase table editor will be lost.',
       'Reseed',
       handleSeed
     );
@@ -144,10 +144,10 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
         <View style={styles.centerWrap}>
           <Text style={styles.emptyStateTitle}>No rooms seeded yet</Text>
           <Text style={styles.emptyStateText}>
-            The "rooms" collection doesn't exist in Firestore yet.{'\n'}
+            The "rooms" table has no rows yet.{'\n'}
             Tap below to create this property's fixed inventory:{'\n'}
             3 room types (Twin, King, Single Room) and 8 rooms (101–108).{'\n'}
-            {roomTypes.length > 0 ? 'This will overwrite any existing roomTypes documents with the correct seed data.' : ''}
+            {roomTypes.length > 0 ? 'This will overwrite any existing room_types rows with the correct seed data.' : ''}
           </Text>
           <TouchableOpacity
             style={[styles.seedBtn, seeding && styles.seedBtnDisabled]}
@@ -189,7 +189,7 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
 function RoomTypesSection({ roomTypes }) {
   return (
     <View>
-      <SectionIntro description="The property's fixed room categories, live from Firestore (roomTypes collection)." />
+      <SectionIntro description="The property's fixed room categories, live from the database (room_types table)." />
       {roomTypes.map((rt) => {
         const thumb = rt.images && rt.images.length > 0 ? rt.images[0] : null;
         return (
@@ -419,7 +419,7 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
     // isn't where you act on them.
     const inCleaningCycle = [];
     // Rooms whose status doesn't match any known STATUS_META key at all
-    // (missing field, stale data, a typo entered directly in Firestore).
+    // (missing field, stale data, a typo entered directly in Supabase).
     const unrecognized = [];
     rooms.forEach((room) => {
       if (byStatus[room.status]) {
@@ -435,7 +435,7 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
 
   return (
     <View>
-      <SectionIntro description="Current status of every room. Tap a status chip on any room to update it — the change is saved to Firestore immediately and reflected everywhere else in the system. Rooms mid-cleaning-cycle are managed from Housekeeping → Room Cleaning Status instead." />
+      <SectionIntro description="Current status of every room. Tap a status chip on any room to update it — the change is saved immediately and reflected everywhere else in the system. Rooms mid-cleaning-cycle are managed from Housekeeping → Room Cleaning Status instead." />
       {ADMIN_STATUS_KEYS.map((statusKey) => {
         const meta = STATUS_META[statusKey];
         const roomsInGroup = grouped.byStatus[statusKey] || [];

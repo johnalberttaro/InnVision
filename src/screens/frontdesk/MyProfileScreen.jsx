@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,13 @@ import {
   StyleSheet,
   ActivityIndicator,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { decode as decodeBase64 } from 'base64-arraybuffer';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { useTheme } from '../../context/ThemeContext';
 
 /**
  * MyProfileScreen — front desk staff's own self-service profile view,
@@ -23,18 +24,55 @@ import { colors, spacing, radius, fonts } from '../../utils/theme';
  * Distinct from FrontDeskStaffScreen.jsx (the admin-facing "Front Desk
  * Roster" that manages EVERYONE's profiles) — this shows only the
  * signed-in staff member's own record, and only lets them edit what a
- * real employee should reasonably self-manage: their profile photo and
- * phone number. Position, access level, responsibilities, training
- * context, and performance metrics are admin-assigned and shown
- * read-only here — same real vs. honest-manual data split as the admin
- * roster (Today's Transactions is computed live from payments; feedback/
- * error counts are whatever the admin has recorded).
+ * real employee should reasonably self-manage: their profile photo,
+ * phone number, and their own password. Position, access level,
+ * responsibilities, training context, and performance metrics are
+ * admin-assigned and shown read-only here — same real vs. honest-manual
+ * data split as the admin roster (Today's Transactions is computed live
+ * from payments; feedback/error counts are whatever the admin has
+ * recorded).
+ *
+ * MIGRATED TO CENTRALIZED THEME (useTheme()) — this screen previously
+ * imported the static `colors` object directly, so it always rendered
+ * in light mode regardless of the in-app dark mode toggle. While
+ * migrating, fixed three spots that hardcoded `colors.white` text/icons
+ * on top of `colors.primary` backgrounds (Save button, avatar upload
+ * badge, training context badge) — `primary` flips to a light cream
+ * color in dark mode, which made white-on-white nearly unreadable.
+ * Switched those to `colors.onPrimary`, the token meant to flip
+ * alongside `primary` so contrast stays correct in both modes.
+ *
+ * Change Password section: admins only set a default password when
+ * creating a Front Desk account (see FrontDeskAccountScreen.jsx) — staff
+ * need a way to set their own from here. Requires re-entering the
+ * current password, which is verified via a real
+ * supabase.auth.signInWithPassword() call before the change goes
+ * through — this matters because front desk devices are often shared,
+ * so a left-open session shouldn't be enough on its own to change the
+ * password without actually knowing it.
+ *
+ * DESKTOP/TABLET LAYOUT: everyone using this app (both front desk staff
+ * and admins) works from a desktop, laptop, or tablet, not a phone — but
+ * this screen used to cap out at a single 560px-wide column no matter
+ * how wide the viewport was, leaving most of a laptop screen empty. On
+ * wider viewports (>= WIDE_BREAKPOINT) it now splits into two side-by-
+ * side panels — identity/contact info on the left, security and work
+ * details on the right — so the available desktop width is actually put
+ * to use. Narrower viewports (the mobile build) keep the original
+ * single stacked-card layout, so nothing broke there.
  *
  * Props:
  *  - staffUid: string — the signed-in user's id
  *  - onBack: () => void (optional)
  */
+const WIDE_BREAKPOINT = 860;
+
 export default function MyProfileScreen({ staffUid, onBack }) {
+  const { colors, spacing, radius, fonts } = useTheme();
+  const { width } = useWindowDimensions();
+  const isWide = width >= WIDE_BREAKPOINT;
+  const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
+
   const [profile, setProfile] = useState(null);
   const [details, setDetails] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +82,15 @@ export default function MyProfileScreen({ staffUid, onBack }) {
   const [savingPhone, setSavingPhone] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [message, setMessage] = useState(null); // { type: 'success' | 'error', text }
+
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordErrors, setPasswordErrors] = useState({});
 
   useEffect(() => {
     if (!staffUid) return;
@@ -155,6 +202,58 @@ export default function MyProfileScreen({ staffUid, onBack }) {
     }
   };
 
+  const passwordStrength = scorePasswordStrength(newPassword, colors);
+
+  const handleChangePassword = async () => {
+    const errs = {};
+    if (!currentPassword) errs.currentPassword = 'Enter your current password.';
+    if (!newPassword) {
+      errs.newPassword = 'Enter a new password.';
+    } else if (newPassword.length < 8) {
+      errs.newPassword = 'Password must be at least 8 characters.';
+    } else if (currentPassword && newPassword === currentPassword) {
+      errs.newPassword = 'New password must be different from your current one.';
+    }
+    if (!confirmPassword) {
+      errs.confirmPassword = 'Confirm your new password.';
+    } else if (newPassword && confirmPassword !== newPassword) {
+      errs.confirmPassword = 'Passwords do not match.';
+    }
+    setPasswordErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+
+    setChangingPassword(true);
+    try {
+      // Re-verify the current password with a real sign-in call before
+      // allowing the change — front desk devices are often shared, so a
+      // session left open shouldn't be enough on its own to change the
+      // password without actually knowing it.
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: profile.email,
+        password: currentPassword,
+      });
+      if (verifyError) {
+        setPasswordErrors({ currentPassword: 'Current password is incorrect.' });
+        setChangingPassword(false);
+        return;
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+      if (updateError) throw updateError;
+
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordErrors({});
+      showMessage('success', 'Password updated successfully.');
+    } catch (err) {
+      console.error('Failed to change password:', err);
+      showMessage('error', 'Could not update your password. Please try again.');
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
   if (loading) {
     return <View style={styles.centerWrap}><ActivityIndicator color={colors.primary} size="large" /></View>;
   }
@@ -166,8 +265,213 @@ export default function MyProfileScreen({ staffUid, onBack }) {
   const responsibilities = details?.responsibilities || [];
   const trainingContext = details?.training_context;
 
+  // ── Left panel: identity + contact + admin-set account info ──────────
+  const identityPanel = (
+    <View style={[styles.card, isWide && styles.cardLeft]}>
+      <View style={styles.headerRow}>
+        <TouchableOpacity style={styles.avatarWrap} onPress={handlePhotoUpload} disabled={uploadingPhoto} activeOpacity={0.8}>
+          {profile.photo_url ? (
+            <Image source={{ uri: profile.photo_url }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.avatarFallback}>
+              <Text style={styles.avatarFallbackText}>{name.charAt(0).toUpperCase()}</Text>
+            </View>
+          )}
+          <View style={styles.avatarUploadBadge}>
+            {uploadingPhoto
+              ? <ActivityIndicator color={colors.onPrimary} size="small" />
+              : <Ionicons name="camera" size={15} color={colors.onPrimary} />
+            }
+          </View>
+        </TouchableOpacity>
+        <View style={styles.headerTextWrap}>
+          <Text style={styles.name}>{name}</Text>
+          {!!details?.position && <Text style={styles.position}>{details.position}</Text>}
+          <View style={styles.roleBadge}>
+            <Text style={styles.roleBadgeText}>FRONT DESK</Text>
+          </View>
+        </View>
+      </View>
+      <Text style={styles.photoHint}>Tap your photo to change it.</Text>
+
+      <SectionLabel icon="information-circle-outline" text="Basic Information" styles={styles} colors={colors} />
+      <View style={styles.infoGrid}>
+        <InfoItem label="Full Name" value={name} styles={styles} />
+        <InfoItem label="Email" value={profile.email || '—'} styles={styles} />
+      </View>
+      <Text style={styles.fieldLabel}>Phone</Text>
+      <View style={styles.phoneRow}>
+        <TextInput
+          style={styles.input}
+          value={phone}
+          onChangeText={setPhone}
+          placeholder="Phone number"
+          keyboardType="phone-pad"
+          placeholderTextColor={colors.disabled}
+        />
+        <TouchableOpacity
+          style={[styles.saveBtn, (savingPhone || phone.trim() === (profile.phone || '')) && styles.saveBtnDisabled]}
+          onPress={handleSavePhone}
+          disabled={savingPhone || phone.trim() === (profile.phone || '')}
+        >
+          {savingPhone ? <ActivityIndicator color={colors.onPrimary} size="small" /> : <Text style={styles.saveBtnText}>Save</Text>}
+        </TouchableOpacity>
+      </View>
+
+      <SectionLabel icon="key-outline" text="Account Details" styles={styles} colors={colors} />
+      <View style={styles.infoGrid}>
+        <InfoItem label="Username" value={details?.username || (profile.email ? profile.email.split('@')[0] : '—')} styles={styles} />
+        <InfoItem label="Role" value="Front Desk" styles={styles} />
+        <InfoItem label="Access Level" value={details?.access_level || 'Standard'} styles={styles} />
+      </View>
+      <Text style={styles.mutedNote}>These are set by an administrator.</Text>
+    </View>
+  );
+
+  // ── Right panel: security + work-related details ─────────────────────
+  const workPanel = (
+    <View style={[styles.card, isWide && styles.cardRight]}>
+      <SectionLabel icon="lock-closed-outline" text="Change Password" styles={styles} colors={colors} />
+      <Text style={styles.mutedNote}>
+        Your administrator only sets a default password when your account is created — change it to something only you know.
+      </Text>
+
+      <Text style={[styles.fieldLabel, { marginTop: spacing.sm }]}>Current Password</Text>
+      <View style={[styles.passwordInputRow, !!passwordErrors.currentPassword && styles.inputRowError]}>
+        <TextInput
+          style={styles.passwordInput}
+          value={currentPassword}
+          onChangeText={(v) => { setCurrentPassword(v); setPasswordErrors((e) => ({ ...e, currentPassword: undefined })); }}
+          placeholder="Enter your current password"
+          placeholderTextColor={colors.disabled}
+          secureTextEntry={!showCurrent}
+          autoCapitalize="none"
+        />
+        <TouchableOpacity onPress={() => setShowCurrent((s) => !s)} style={styles.eyeBtn} activeOpacity={0.7}>
+          <Ionicons name={showCurrent ? 'eye-off-outline' : 'eye-outline'} size={18} color={colors.textMuted} />
+        </TouchableOpacity>
+      </View>
+      {!!passwordErrors.currentPassword && <Text style={styles.fieldError}>{passwordErrors.currentPassword}</Text>}
+
+      <View style={[styles.passwordFieldsRow, isWide && styles.passwordFieldsRowWide]}>
+        <View style={isWide ? styles.passwordFieldWide : undefined}>
+          <Text style={[styles.fieldLabel, { marginTop: spacing.sm }]}>New Password</Text>
+          <View style={[styles.passwordInputRow, !!passwordErrors.newPassword && styles.inputRowError]}>
+            <TextInput
+              style={styles.passwordInput}
+              value={newPassword}
+              onChangeText={(v) => { setNewPassword(v); setPasswordErrors((e) => ({ ...e, newPassword: undefined })); }}
+              placeholder="At least 8 characters"
+              placeholderTextColor={colors.disabled}
+              secureTextEntry={!showNew}
+              autoCapitalize="none"
+            />
+            <TouchableOpacity onPress={() => setShowNew((s) => !s)} style={styles.eyeBtn} activeOpacity={0.7}>
+              <Ionicons name={showNew ? 'eye-off-outline' : 'eye-outline'} size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+          {!!newPassword && (
+            <View style={styles.strengthRow}>
+              <View style={styles.strengthTrack}>
+                <View style={[styles.strengthFill, { width: `${passwordStrength.score * 25}%`, backgroundColor: passwordStrength.color }]} />
+              </View>
+              <Text style={[styles.strengthLabel, { color: passwordStrength.color }]}>{passwordStrength.label}</Text>
+            </View>
+          )}
+          {!!passwordErrors.newPassword && <Text style={styles.fieldError}>{passwordErrors.newPassword}</Text>}
+        </View>
+
+        <View style={isWide ? styles.passwordFieldWide : undefined}>
+          <Text style={[styles.fieldLabel, { marginTop: spacing.sm }]}>Confirm New Password</Text>
+          <View style={[styles.passwordInputRow, !!passwordErrors.confirmPassword && styles.inputRowError]}>
+            <TextInput
+              style={styles.passwordInput}
+              value={confirmPassword}
+              onChangeText={(v) => { setConfirmPassword(v); setPasswordErrors((e) => ({ ...e, confirmPassword: undefined })); }}
+              placeholder="Re-enter your new password"
+              placeholderTextColor={colors.disabled}
+              secureTextEntry={!showConfirm}
+              autoCapitalize="none"
+            />
+            <TouchableOpacity onPress={() => setShowConfirm((s) => !s)} style={styles.eyeBtn} activeOpacity={0.7}>
+              <Ionicons name={showConfirm ? 'eye-off-outline' : 'eye-outline'} size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+          {!!passwordErrors.confirmPassword && <Text style={styles.fieldError}>{passwordErrors.confirmPassword}</Text>}
+        </View>
+      </View>
+
+      <TouchableOpacity
+        style={[styles.changePasswordBtn, changingPassword && styles.saveBtnDisabled]}
+        onPress={handleChangePassword}
+        disabled={changingPassword}
+        activeOpacity={0.85}
+      >
+        {changingPassword
+          ? <ActivityIndicator color={colors.onPrimary} size="small" />
+          : (
+            <>
+              <Ionicons name="shield-checkmark-outline" size={15} color={colors.onPrimary} />
+              <Text style={styles.changePasswordBtnText}>Update Password</Text>
+            </>
+          )
+        }
+      </TouchableOpacity>
+
+      <SectionLabel icon="checkmark-done-outline" text="Responsibilities" styles={styles} colors={colors} />
+      {responsibilities.length === 0 ? (
+        <Text style={styles.mutedNote}>No responsibilities assigned yet.</Text>
+      ) : (
+        <View style={styles.chipRow}>
+          {responsibilities.map((r) => (
+            <View key={r} style={styles.respChip}>
+              <Text style={styles.respChipText}>{r}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <SectionLabel icon="stats-chart-outline" text="My Performance" styles={styles} colors={colors} />
+      <View style={styles.metricsRow}>
+        <View style={styles.metricCard}>
+          <Text style={styles.metricValue}>{todaysTransactions}</Text>
+          <Text style={styles.metricLabel}>Today's Transactions</Text>
+        </View>
+        <View style={styles.metricCard}>
+          <Text style={styles.metricValue}>
+            {details?.customer_feedback_score != null ? `${details.customer_feedback_score}/5` : '—'}
+          </Text>
+          <Text style={styles.metricLabel}>Customer Feedback</Text>
+        </View>
+        <View style={styles.metricCard}>
+          <Text style={[styles.metricValue, (details?.error_reports_count || 0) > 0 && { color: '#B3261E' }]}>
+            {details?.error_reports_count ?? 0}
+          </Text>
+          <Text style={styles.metricLabel}>Error Reports</Text>
+        </View>
+      </View>
+
+      {!!trainingContext && (
+        <>
+          <SectionLabel icon="school-outline" text="Training Context" styles={styles} colors={colors} />
+          <View style={styles.trainingRow}>
+            <View style={styles.trainingBadge}>
+              <Text style={styles.trainingBadgeText}>{trainingContext}</Text>
+            </View>
+            {!!details?.supervisor_or_intern_name && (
+              <Text style={styles.trainingName}>
+                {trainingContext === 'Student Intern' ? 'Supervised by ' : 'Supervising '}
+                {details.supervisor_or_intern_name}
+              </Text>
+            )}
+          </View>
+        </>
+      )}
+    </View>
+  );
+
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.screen} contentContainerStyle={[styles.content, isWide && styles.contentWide]}>
       {onBack && (
         <TouchableOpacity onPress={onBack} style={styles.backLink}>
           <Ionicons name="chevron-back" size={16} color={colors.primary} />
@@ -176,7 +480,7 @@ export default function MyProfileScreen({ staffUid, onBack }) {
       )}
 
       <Text style={styles.pageTitle}>My Profile</Text>
-      <Text style={styles.pageSubtitle}>View your details and update your photo or phone number.</Text>
+      <Text style={styles.pageSubtitle}>View your details and update your photo, phone number, or password.</Text>
 
       {!!message && (
         <View style={[styles.messageBanner, message.type === 'error' ? styles.messageBannerError : styles.messageBannerSuccess]}>
@@ -189,120 +493,35 @@ export default function MyProfileScreen({ staffUid, onBack }) {
         </View>
       )}
 
-      <View style={styles.card}>
-        <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.avatarWrap} onPress={handlePhotoUpload} disabled={uploadingPhoto} activeOpacity={0.8}>
-            {profile.photo_url ? (
-              <Image source={{ uri: profile.photo_url }} style={styles.avatarImage} />
-            ) : (
-              <View style={styles.avatarFallback}>
-                <Text style={styles.avatarFallbackText}>{name.charAt(0).toUpperCase()}</Text>
-              </View>
-            )}
-            <View style={styles.avatarUploadBadge}>
-              {uploadingPhoto
-                ? <ActivityIndicator color={colors.white} size="small" />
-                : <Ionicons name="camera" size={13} color={colors.white} />
-              }
-            </View>
-          </TouchableOpacity>
-          <View style={styles.headerTextWrap}>
-            <Text style={styles.name}>{name}</Text>
-            {!!details?.position && <Text style={styles.position}>{details.position}</Text>}
-            <View style={styles.roleBadge}>
-              <Text style={styles.roleBadgeText}>FRONT DESK</Text>
-            </View>
-          </View>
-        </View>
-        <Text style={styles.photoHint}>Tap your photo to change it.</Text>
-
-        <SectionLabel icon="information-circle-outline" text="Basic Information" />
-        <View style={styles.infoGrid}>
-          <InfoItem label="Full Name" value={name} />
-          <InfoItem label="Email" value={profile.email || '—'} />
-        </View>
-        <Text style={styles.fieldLabel}>Phone</Text>
-        <View style={styles.phoneRow}>
-          <TextInput
-            style={styles.input}
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="Phone number"
-            keyboardType="phone-pad"
-            placeholderTextColor={colors.disabled}
-          />
-          <TouchableOpacity
-            style={[styles.saveBtn, (savingPhone || phone.trim() === (profile.phone || '')) && styles.saveBtnDisabled]}
-            onPress={handleSavePhone}
-            disabled={savingPhone || phone.trim() === (profile.phone || '')}
-          >
-            {savingPhone ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.saveBtnText}>Save</Text>}
-          </TouchableOpacity>
-        </View>
-
-        <SectionLabel icon="key-outline" text="Account Details" />
-        <View style={styles.infoGrid}>
-          <InfoItem label="Username" value={details?.username || (profile.email ? profile.email.split('@')[0] : '—')} />
-          <InfoItem label="Role" value="Front Desk" />
-          <InfoItem label="Access Level" value={details?.access_level || 'Standard'} />
-        </View>
-        <Text style={styles.mutedNote}>These are set by an administrator.</Text>
-
-        <SectionLabel icon="checkmark-done-outline" text="Responsibilities" />
-        {responsibilities.length === 0 ? (
-          <Text style={styles.mutedNote}>No responsibilities assigned yet.</Text>
-        ) : (
-          <View style={styles.chipRow}>
-            {responsibilities.map((r) => (
-              <View key={r} style={styles.respChip}>
-                <Text style={styles.respChipText}>{r}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        <SectionLabel icon="stats-chart-outline" text="My Performance" />
-        <View style={styles.metricsRow}>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>{todaysTransactions}</Text>
-            <Text style={styles.metricLabel}>Today's Transactions</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>
-              {details?.customer_feedback_score != null ? `${details.customer_feedback_score}/5` : '—'}
-            </Text>
-            <Text style={styles.metricLabel}>Customer Feedback</Text>
-          </View>
-          <View style={styles.metricCard}>
-            <Text style={[styles.metricValue, (details?.error_reports_count || 0) > 0 && { color: '#B3261E' }]}>
-              {details?.error_reports_count ?? 0}
-            </Text>
-            <Text style={styles.metricLabel}>Error Reports</Text>
-          </View>
-        </View>
-
-        {!!trainingContext && (
-          <>
-            <SectionLabel icon="school-outline" text="Training Context" />
-            <View style={styles.trainingRow}>
-              <View style={styles.trainingBadge}>
-                <Text style={styles.trainingBadgeText}>{trainingContext}</Text>
-              </View>
-              {!!details?.supervisor_or_intern_name && (
-                <Text style={styles.trainingName}>
-                  {trainingContext === 'Student Intern' ? 'Supervised by ' : 'Supervising '}
-                  {details.supervisor_or_intern_name}
-                </Text>
-              )}
-            </View>
-          </>
-        )}
+      <View style={isWide ? styles.columnsWrap : undefined}>
+        {identityPanel}
+        {workPanel}
       </View>
     </ScrollView>
   );
 }
 
-function SectionLabel({ icon, text }) {
+// Simple, dependency-free password strength scorer: length + character
+// variety. Not a substitute for a real policy check server-side, just a
+// quick visual signal while the person is typing. Mirrors the same
+// scorer used on the admin-side FrontDeskAccountScreen.jsx for a
+// consistent feel across both password-setting flows.
+function scorePasswordStrength(password, colors) {
+  if (!password) return { score: 0, label: '', color: colors.border };
+  let score = 0;
+  if (password.length >= 8) score++;
+  if (password.length >= 12) score++;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score++;
+  if (/\d/.test(password)) score++;
+  if (/[^A-Za-z0-9]/.test(password)) score++;
+
+  if (score <= 1) return { score: 1, label: 'Weak', color: '#B3261E' };
+  if (score <= 2) return { score: 2, label: 'Fair', color: '#C99400' };
+  if (score <= 3) return { score: 3, label: 'Good', color: '#B3792A' };
+  return { score: 4, label: 'Strong', color: '#1E7B34' };
+}
+
+function SectionLabel({ icon, text, styles, colors }) {
   return (
     <View style={styles.sectionLabelRow}>
       <Ionicons name={icon} size={13} color={colors.primary} />
@@ -311,7 +530,7 @@ function SectionLabel({ icon, text }) {
   );
 }
 
-function InfoItem({ label, value }) {
+function InfoItem({ label, value, styles }) {
   return (
     <View style={styles.infoItem}>
       <Text style={styles.infoItemLabel}>{label}</Text>
@@ -320,68 +539,122 @@ function InfoItem({ label, value }) {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.xl, maxWidth: 560, width: '100%', alignSelf: 'center' },
-  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  mutedNote: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic' },
+function getStyles(colors, spacing, radius, fonts) {
+  return StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.background },
+    content: { padding: spacing.xl, maxWidth: 560, width: '100%', alignSelf: 'center' },
+    // Wide (desktop/tablet) viewports get a much wider working area — the
+    // two-column layout below actually needs the room, and a laptop
+    // screen has plenty to give.
+    contentWide: { maxWidth: 1080 },
+    centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    mutedNote: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic' },
 
-  backLink: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md },
-  backLinkText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary, marginLeft: 2 },
+    backLink: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md },
+    backLinkText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary, marginLeft: 2 },
 
-  pageTitle: { fontSize: 22, fontFamily: fonts.headingExtraBold, color: colors.primary },
-  pageSubtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2, marginBottom: spacing.lg },
+    pageTitle: { fontSize: 22, fontFamily: fonts.headingExtraBold, color: colors.primary },
+    pageSubtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2, marginBottom: spacing.lg },
 
-  messageBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.lg },
-  messageBannerSuccess: { backgroundColor: '#DFF5E1' },
-  messageBannerError: { backgroundColor: '#FBE7E7' },
-  messageText: { fontSize: 13, fontFamily: fonts.body, flex: 1 },
+    messageBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.lg },
+    messageBannerSuccess: { backgroundColor: '#DFF5E1' },
+    messageBannerError: { backgroundColor: '#FBE7E7' },
+    messageText: { fontSize: 13, fontFamily: fonts.body, flex: 1 },
 
-  card: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    // Side-by-side panels on wide viewports: identity/contact info on the
+    // left (narrower, fixed-ish width), security/work details on the
+    // right (fills the rest). Stacks back to a single column below
+    // WIDE_BREAKPOINT, same as the original mobile-friendly layout.
+    columnsWrap: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.lg },
 
-  avatarWrap: { position: 'relative' },
-  avatarImage: { width: 64, height: 64, borderRadius: 32 },
-  avatarFallback: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center' },
-  avatarFallbackText: { fontSize: 22, fontFamily: fonts.headingBold, color: colors.primary },
-  avatarUploadBadge: {
-    position: 'absolute', bottom: -2, right: -2, width: 22, height: 22, borderRadius: 11,
-    backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 2, borderColor: colors.white,
-  },
-  headerTextWrap: { flex: 1 },
-  name: { fontSize: 17, fontFamily: fonts.headingBold, color: colors.text },
-  position: { fontSize: 12, fontFamily: fonts.bodyMedium, color: colors.textMuted, marginTop: 2 },
-  roleBadge: { backgroundColor: colors.primaryTint, borderRadius: 999, paddingVertical: 2, paddingHorizontal: spacing.sm, alignSelf: 'flex-start', marginTop: spacing.xs },
-  roleBadgeText: { fontSize: 9, fontFamily: fonts.bodySemiBold, color: colors.primary, letterSpacing: 0.4 },
-  photoHint: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: spacing.xs, marginBottom: spacing.sm },
+    card: {
+      backgroundColor: colors.card,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: spacing.lg,
+      marginBottom: spacing.lg,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.06,
+      shadowRadius: 10,
+      elevation: 2,
+    },
+    cardLeft: { flexBasis: 360, flexGrow: 0, flexShrink: 0, marginBottom: 0 },
+    cardRight: { flex: 1, marginBottom: 0, minWidth: 0 },
 
-  sectionLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: spacing.lg, marginBottom: spacing.sm },
-  sectionLabelText: { fontSize: 11, fontFamily: fonts.headingSemiBold, color: colors.text, textTransform: 'uppercase', letterSpacing: 0.4 },
+    headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
 
-  infoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginBottom: spacing.sm },
-  infoItem: { minWidth: 130, flexGrow: 1 },
-  infoItemLabel: { fontSize: 10, fontFamily: fonts.body, color: colors.textMuted },
-  infoItemValue: { fontSize: 12.5, fontFamily: fonts.bodyMedium, color: colors.text, marginTop: 1 },
+    avatarWrap: { position: 'relative' },
+    avatarImage: { width: 80, height: 80, borderRadius: 40 },
+    avatarFallback: { width: 80, height: 80, borderRadius: 40, backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center' },
+    avatarFallbackText: { fontSize: 26, fontFamily: fonts.headingBold, color: colors.primary },
+    avatarUploadBadge: {
+      position: 'absolute', bottom: -2, right: -2, width: 26, height: 26, borderRadius: 13,
+      backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center',
+      borderWidth: 2, borderColor: colors.card,
+    },
+    headerTextWrap: { flex: 1 },
+    name: { fontSize: 20, fontFamily: fonts.headingBold, color: colors.text },
+    position: { fontSize: 13, fontFamily: fonts.bodyMedium, color: colors.textMuted, marginTop: 2 },
+    roleBadge: { backgroundColor: colors.primaryTint, borderRadius: 999, paddingVertical: 3, paddingHorizontal: spacing.sm, alignSelf: 'flex-start', marginTop: spacing.xs },
+    roleBadgeText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.primary, letterSpacing: 0.4 },
+    photoHint: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: spacing.xs, marginBottom: spacing.sm },
 
-  fieldLabel: { fontSize: 12, fontFamily: fonts.bodyMedium, color: colors.text, marginBottom: spacing.xs },
-  phoneRow: { flexDirection: 'row', gap: spacing.sm },
-  input: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, paddingVertical: spacing.sm, paddingHorizontal: spacing.md, fontSize: 13, fontFamily: fonts.body, color: colors.text, backgroundColor: colors.cardAlt },
-  saveBtn: { backgroundColor: colors.primary, borderRadius: 999, paddingHorizontal: spacing.lg, alignItems: 'center', justifyContent: 'center' },
-  saveBtnDisabled: { opacity: 0.5 },
-  saveBtnText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.white },
+    sectionLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: spacing.lg, marginBottom: spacing.sm },
+    sectionLabelText: { fontSize: 11, fontFamily: fonts.headingSemiBold, color: colors.text, textTransform: 'uppercase', letterSpacing: 0.4 },
 
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-  respChip: { backgroundColor: colors.accentTint, borderRadius: 999, paddingVertical: 4, paddingHorizontal: spacing.sm },
-  respChipText: { fontSize: 10, fontFamily: fonts.bodySemiBold, color: colors.accent },
+    infoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginBottom: spacing.sm },
+    infoItem: { minWidth: 130, flexGrow: 1 },
+    infoItemLabel: { fontSize: 10, fontFamily: fonts.body, color: colors.textMuted },
+    infoItemValue: { fontSize: 12.5, fontFamily: fonts.bodyMedium, color: colors.text, marginTop: 1 },
 
-  metricsRow: { flexDirection: 'row', gap: spacing.sm },
-  metricCard: { flex: 1, backgroundColor: colors.cardAlt, borderRadius: radius.sm, padding: spacing.sm, alignItems: 'center' },
-  metricValue: { fontSize: 18, fontFamily: fonts.headingExtraBold, color: colors.primary },
-  metricLabel: { fontSize: 9, fontFamily: fonts.bodySemiBold, color: colors.textMuted, textAlign: 'center', marginTop: 2 },
+    fieldLabel: { fontSize: 12, fontFamily: fonts.bodyMedium, color: colors.text, marginBottom: spacing.xs },
+    fieldError: { fontSize: 11, fontFamily: fonts.body, color: '#B3261E', marginTop: spacing.xs },
+    phoneRow: { flexDirection: 'row', gap: spacing.sm },
+    input: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, paddingVertical: spacing.sm, paddingHorizontal: spacing.md, fontSize: 13, fontFamily: fonts.body, color: colors.text, backgroundColor: colors.cardAlt },
+    saveBtn: { backgroundColor: colors.primary, borderRadius: 999, paddingHorizontal: spacing.lg, alignItems: 'center', justifyContent: 'center' },
+    saveBtnDisabled: { opacity: 0.5 },
+    saveBtnText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.onPrimary },
 
-  trainingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
-  trainingBadge: { backgroundColor: colors.primary, borderRadius: 999, paddingVertical: 4, paddingHorizontal: spacing.md },
-  trainingBadgeText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.white },
-  trainingName: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
-});
+    // On wide viewports, New Password / Confirm New Password sit side by
+    // side instead of stacked — there's room, and it reads faster.
+    passwordFieldsRow: { flexDirection: 'column' },
+    passwordFieldsRowWide: { flexDirection: 'row', gap: spacing.md },
+    passwordFieldWide: { flex: 1, minWidth: 0 },
+
+    passwordInputRow: {
+      flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.border,
+      borderRadius: radius.sm, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.md,
+    },
+    inputRowError: { borderColor: '#B3261E' },
+    passwordInput: { flex: 1, paddingVertical: spacing.sm, fontSize: 13, fontFamily: fonts.body, color: colors.text },
+    eyeBtn: { paddingLeft: spacing.xs, paddingVertical: spacing.xs },
+
+    strengthRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.xs },
+    strengthTrack: { flex: 1, height: 4, borderRadius: 2, backgroundColor: colors.border, overflow: 'hidden' },
+    strengthFill: { height: '100%', borderRadius: 2 },
+    strengthLabel: { fontSize: 10, fontFamily: fonts.bodySemiBold, minWidth: 42 },
+
+    changePasswordBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
+      backgroundColor: colors.primary, borderRadius: 999, paddingVertical: spacing.sm + 2,
+      marginTop: spacing.md,
+    },
+    changePasswordBtnText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.onPrimary },
+
+    chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+    respChip: { backgroundColor: colors.accentTint, borderRadius: 999, paddingVertical: 4, paddingHorizontal: spacing.sm },
+    respChipText: { fontSize: 10, fontFamily: fonts.bodySemiBold, color: colors.accent },
+
+    metricsRow: { flexDirection: 'row', gap: spacing.sm },
+    metricCard: { flex: 1, backgroundColor: colors.cardAlt, borderRadius: radius.sm, padding: spacing.sm, alignItems: 'center' },
+    metricValue: { fontSize: 18, fontFamily: fonts.headingExtraBold, color: colors.primary },
+    metricLabel: { fontSize: 9, fontFamily: fonts.bodySemiBold, color: colors.textMuted, textAlign: 'center', marginTop: 2 },
+
+    trainingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' },
+    trainingBadge: { backgroundColor: colors.primary, borderRadius: 999, paddingVertical: 4, paddingHorizontal: spacing.md },
+    trainingBadgeText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.onPrimary },
+    trainingName: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
+  });
+}

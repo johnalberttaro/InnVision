@@ -2,79 +2,109 @@ import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
+  Image,
   ScrollView,
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
-import {
-  collection,
-  onSnapshot,
-  query,
-  orderBy,
-  where,
-  getDocs,
-} from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
-import { resolveUserRole } from '../../utils/roleHelpers';
 import { formatCurrency } from '../../utils/Roomsservice';
 
 /**
  * FrontDeskStaffScreen — Admin-only read-only roster of front desk staff.
+ *
+ * MIGRATED TO SUPABASE. Reads `profiles` rows where role='frontdesk' AND
+ * active=true — the same filter FrontDeskAccountScreen.jsx uses to list
+ * accounts — instead of the old Firestore `guests` collection +
+ * resolveUserRole() guess against differently-shaped legacy fields.
+ * Per-staff activity (payments recorded, total collected) now comes from
+ * the `payments` table's `processed_by`/`amount_paid` columns instead of
+ * `billingRecords`/`processedByUid`/`amountPaid`.
  *
  * This is the "list / summarize front desk roles" view inside the Admin
  * Portal. It is intentionally READ-ONLY: account creation / removal /
  * role changes live in FrontDeskAccountScreen (the "Front Desk Accounts"
  * menu item), so the admin keeps strictly more access here. This screen
  * just shows who is on the front desk team, their contact info, what they
- * can do, and a per-staff activity summary (payments recorded, total
- * collected) derived from billing records tagged with processedByUid.
+ * can do, and a per-staff activity summary.
+ *
+ * FIXED: this roster always showed an initials circle, even for staff
+ * who'd uploaded a real profile photo via their own self-service "My
+ * Profile" screen — photo_url was never fetched or rendered here. Now
+ * shows the actual photo when one exists, still falling back to
+ * initials otherwise. Stays live automatically: the existing realtime
+ * subscription below already re-fetches on any `profiles` row change,
+ * so a staff member updating their photo reflects here right away,
+ * with no separate plumbing needed.
  */
 export default function FrontDeskStaffScreen() {
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activity, setActivity] = useState({});
 
   useEffect(() => {
-    const staffQuery = query(collection(db, 'guests'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(
-      staffQuery,
-      (snapshot) => {
-        const roster = snapshot.docs
-          .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-          .filter((guest) => resolveUserRole(guest) === 'frontdesk' && guest.role !== 'inactive');
-        setStaff(roster);
-        setLoading(false);
-        loadStaffActivity(roster);
-      },
-      (error) => {
+    let cancelled = false;
+
+    const loadStaff = async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'frontdesk')
+        .eq('active', true)
+        .order('created_at', { ascending: false });
+      if (cancelled) return;
+      if (error) {
         console.error('Failed to load front desk roster:', error);
         setLoading(false);
+        return;
       }
-    );
+      const roster = (data || []).map((row) => ({
+        id: row.id,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        displayName: row.display_name,
+        email: row.email,
+        phone: row.phone,
+        photoUrl: row.photo_url,
+        createdAt: row.created_at,
+      }));
+      setStaff(roster);
+      setLoading(false);
+      loadStaffActivity();
+    };
 
-    return unsubscribe;
+    loadStaff();
+
+    const channel = supabase
+      .channel('frontdesk-roster')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, loadStaff)
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, []);
 
-  // Activity is derived from billing records where processedByUid matches a
-  // staff member — i.e. payments they recorded at the front desk. We avoid
-  // subscribing (one-time fetch is enough for a summary), and guard against
-  // open rules / read errors so the roster still renders if this fails.
-  const [activity, setActivity] = useState({});
-  const loadStaffActivity = async (roster) => {
-    if (roster.length === 0) {
-      setActivity({});
-      return;
-    }
+  // Activity is derived from payments where processed_by is set — i.e.
+  // payments a staff member recorded at the front desk. A one-time fetch
+  // (not a subscription) is enough for a summary, and it's guarded so the
+  // roster still renders if this fails.
+  const loadStaffActivity = async () => {
     try {
-      const snap = await getDocs(query(collection(db, 'billingRecords'), where('processedByUid', '!=', null)));
+      const { data, error } = await supabase
+        .from('payments')
+        .select('processed_by, amount_paid')
+        .not('processed_by', 'is', null);
+      if (error) throw error;
       const totals = {};
-      snap.forEach((docSnap) => {
-        const rec = docSnap.data();
-        const uid = rec.processedByUid;
+      (data || []).forEach((rec) => {
+        const uid = rec.processed_by;
         if (!uid) return;
         if (!totals[uid]) totals[uid] = { payments: 0, collected: 0 };
         totals[uid].payments += 1;
-        totals[uid].collected += Number(rec.amountPaid) || 0;
+        totals[uid].collected += Number(rec.amount_paid) || 0;
       });
       setActivity(totals);
     } catch (err) {
@@ -116,11 +146,15 @@ export default function FrontDeskStaffScreen() {
         staff.map((member) => (
           <View key={member.id} style={styles.staffCard}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {(member.displayName || `${member.firstName || ''} ${member.lastName || ''}`.trim() || '?')
-                  .charAt(0)
-                  .toUpperCase()}
-              </Text>
+              {member.photoUrl ? (
+                <Image source={{ uri: member.photoUrl }} style={styles.avatarImage} />
+              ) : (
+                <Text style={styles.avatarText}>
+                  {(member.displayName || `${member.firstName || ''} ${member.lastName || ''}`.trim() || '?')
+                    .charAt(0)
+                    .toUpperCase()}
+                </Text>
+              )}
             </View>
 
             <View style={styles.staffTextWrap}>
@@ -168,8 +202,8 @@ export default function FrontDeskStaffScreen() {
 }
 
 // Summary of what a front desk role can do in this app. Display-only —
-// the authoritative access control still lives in Firestore rules + the
-// role field, not in this list.
+// the authoritative access control lives in the profiles RLS policies +
+// the role column, not in this list.
 const FRONTDESK_PERMISSIONS = [
   'Manage Reservations',
   'Room Status',
@@ -180,9 +214,6 @@ const FRONTDESK_PERMISSIONS = [
 function formatDateLabel(value) {
   try {
     if (!value) return '—';
-    if (typeof value?.toDate === 'function') {
-      return value.toDate().toLocaleDateString();
-    }
     return new Date(value).toLocaleDateString();
   } catch {
     return '—';
@@ -242,7 +273,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.md,
+    overflow: 'hidden',
   },
+  avatarImage: { width: 44, height: 44 },
   avatarText: { color: colors.white, fontFamily: fonts.headingBold, fontSize: 16 },
   staffTextWrap: { flex: 1, marginRight: spacing.md },
   staffName: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.text, marginBottom: spacing.xs },

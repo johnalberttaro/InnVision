@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,10 @@ import {
   ActivityIndicator,
   Linking,
   useWindowDimensions,
-  useColorScheme,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, fonts, radius } from '../../utils/theme';
+import { useTheme } from '../../context/ThemeContext';
 
 /**
  * ContactUsScreen — hotel info, inquiry form, map placeholder, social
@@ -28,9 +27,13 @@ import { colors, spacing, fonts, radius } from '../../utils/theme';
  * requiring an App.jsx change. If nobody's logged in, the form shows a
  * "please log in" message instead of submitting.
  *
- * Dark mode: follows the device's OS-level dark mode setting via
- * useColorScheme(). Brand colors (primary/accent/hero) come from theme.js
- * and are shared across both modes; neutral surface colors swap locally.
+ * MIGRATED TO CENTRALIZED THEME (useTheme()). Previously this screen only
+ * followed the device's OS-level dark mode via useColorScheme(), with a
+ * hand-rolled palette that swapped just a few neutral tokens — it never
+ * responded to the app's own in-app dark mode toggle (ThemeContext),
+ * unlike every other migrated screen. Now it renders from
+ * useTheme().colors like the rest of the app, so it flips correctly
+ * with the in-app toggle and stays in sync across devices.
  *
  * Props:
  *  - onBack: () => void
@@ -69,34 +72,11 @@ const FAQS = [
   },
 ];
 
-function getPalette(isDark) {
-  return isDark
-    ? {
-        background: '#121212',
-        card: '#1E1E1E',
-        cardAlt: '#252525',
-        border: '#333333',
-        text: '#F5F5F5',
-        textMuted: '#A0A0A0',
-        inputBg: '#252525',
-      }
-    : {
-        background: colors.background,
-        card: colors.card,
-        cardAlt: colors.cardAlt,
-        border: colors.border,
-        text: colors.text,
-        textMuted: colors.textMuted,
-        inputBg: colors.white,
-      };
-}
-
 export default function ContactUsScreen({ onBack }) {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
-  const isDark = useColorScheme() === 'dark';
-  const p = getPalette(isDark);
-  const styles = getStyles(p);
+  const { colors, spacing, radius, fonts } = useTheme();
+  const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail]       = useState('');
@@ -193,7 +173,7 @@ export default function ContactUsScreen({ onBack }) {
             <View style={styles.card}>
               <View style={styles.brandBlock}>
                 <View style={styles.logoBadge}>
-                  <Ionicons name="business-outline" size={24} color={colors.white} />
+                  <Ionicons name="business-outline" size={24} color={colors.onPrimary} />
                 </View>
                 <Text style={styles.brandName}>{HOTEL_INFO.name}</Text>
                 <Text style={styles.brandTagline}>We're here to help, anytime you need us</Text>
@@ -294,7 +274,7 @@ export default function ContactUsScreen({ onBack }) {
                   placeholder="Juan Dela Cruz"
                   error={errors.fullName}
                   styles={styles}
-                  palette={p}
+                  palette={colors}
                 />
                 <FormField
                   wide={isWide}
@@ -307,7 +287,7 @@ export default function ContactUsScreen({ onBack }) {
                   autoCapitalize="none"
                   error={errors.email}
                   styles={styles}
-                  palette={p}
+                  palette={colors}
                 />
               </View>
 
@@ -321,7 +301,7 @@ export default function ContactUsScreen({ onBack }) {
                   placeholder="0970 175 6831"
                   keyboardType="phone-pad"
                   styles={styles}
-                  palette={p}
+                  palette={colors}
                 />
                 <FormField
                   wide={isWide}
@@ -332,7 +312,7 @@ export default function ContactUsScreen({ onBack }) {
                   placeholder="What's this about?"
                   error={errors.subject}
                   styles={styles}
-                  palette={p}
+                  palette={colors}
                 />
               </View>
 
@@ -345,7 +325,7 @@ export default function ContactUsScreen({ onBack }) {
                 error={errors.message}
                 multiline
                 styles={styles}
-                palette={p}
+                palette={colors}
               />
 
               <TouchableOpacity
@@ -355,10 +335,10 @@ export default function ContactUsScreen({ onBack }) {
                 activeOpacity={0.85}
               >
                 {submitting
-                  ? <ActivityIndicator color={colors.white} size="small" />
+                  ? <ActivityIndicator color={colors.onPrimary} size="small" />
                   : (
                     <>
-                      <Ionicons name="send" size={15} color={colors.white} />
+                      <Ionicons name="send" size={15} color={colors.onPrimary} />
                       <Text style={styles.sendButtonText}>Send Inquiry</Text>
                     </>
                   )
@@ -380,7 +360,7 @@ export default function ContactUsScreen({ onBack }) {
                 <Text style={styles.mapTapHint}>Tap to open in Maps</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.directionsButton} onPress={handleGetDirections} activeOpacity={0.85}>
-                <Ionicons name="navigate-outline" size={16} color={colors.white} />
+                <Ionicons name="navigate-outline" size={16} color={colors.onPrimary} />
                 <Text style={styles.directionsButtonText}>Get Directions</Text>
               </TouchableOpacity>
             </View>
@@ -397,18 +377,21 @@ export default function ContactUsScreen({ onBack }) {
                   label="Facebook"
                   onPress={() => Linking.openURL(SOCIAL_LINKS.facebook)}
                   styles={styles}
+                  iconColor={colors.primary}
                 />
                 <SocialButton
                   icon="logo-instagram"
                   label="Instagram"
                   onPress={() => Linking.openURL(SOCIAL_LINKS.instagram)}
                   styles={styles}
+                  iconColor={colors.primary}
                 />
                 <SocialButton
                   icon="mail-outline"
                   label="Email"
                   onPress={() => Linking.openURL(SOCIAL_LINKS.email)}
                   styles={styles}
+                  iconColor={colors.primary}
                 />
               </View>
             </View>
@@ -434,7 +417,7 @@ export default function ContactUsScreen({ onBack }) {
                         <Ionicons
                           name={isOpen ? 'remove' : 'add'}
                           size={16}
-                          color={isOpen ? colors.white : colors.primary}
+                          color={isOpen ? colors.onPrimary : colors.primary}
                         />
                       </View>
                     </View>
@@ -484,23 +467,23 @@ function FormField({ label, error, multiline, icon, wide, styles, palette, ...in
 }
 
 /* ── Reusable social button ───────────────────────────────────────────── */
-function SocialButton({ icon, label, onPress, styles }) {
+function SocialButton({ icon, label, onPress, styles, iconColor }) {
   return (
     <TouchableOpacity style={styles.socialButton} onPress={onPress} activeOpacity={0.85}>
       <View style={styles.socialIconRing}>
-        <Ionicons name={icon} size={20} color={colors.primary} />
+        <Ionicons name={icon} size={20} color={iconColor} />
       </View>
       <Text style={styles.socialButtonText}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-/* ── Styles (built from the light/dark palette) ──────────────────────── */
-function getStyles(p) {
+/* ── Styles (built from the active theme palette) ────────────────────── */
+function getStyles(colors, spacing, radius, fonts) {
   return StyleSheet.create({
     screen: {
       flex: 1,
-      backgroundColor: p.background,
+      backgroundColor: colors.background,
     },
     scroll: {
       flex: 1,
@@ -546,10 +529,10 @@ function getStyles(p) {
     },
 
     card: {
-      backgroundColor: p.card,
+      backgroundColor: colors.card,
       borderRadius: radius.lg,
       borderWidth: 1,
-      borderColor: p.border,
+      borderColor: colors.border,
       padding: spacing.lg,
       marginBottom: spacing.lg,
       shadowColor: '#000',
@@ -587,19 +570,19 @@ function getStyles(p) {
     brandName: {
       fontSize: 18,
       fontFamily: fonts.headingExtraBold,
-      color: p.text,
+      color: colors.text,
       textAlign: 'center',
       marginBottom: spacing.xs,
     },
     brandTagline: {
       fontSize: 12,
       fontFamily: fonts.bodyMedium,
-      color: p.textMuted,
+      color: colors.textMuted,
       textAlign: 'center',
     },
     brandDivider: {
       height: 1,
-      backgroundColor: p.border,
+      backgroundColor: colors.border,
       marginBottom: spacing.lg,
     },
 
@@ -614,10 +597,10 @@ function getStyles(p) {
     infoChip: {
       flexDirection: 'row',
       alignItems: 'flex-start',
-      backgroundColor: p.cardAlt,
+      backgroundColor: colors.cardAlt,
       borderRadius: radius.md,
       borderWidth: 1,
-      borderColor: p.border,
+      borderColor: colors.border,
       padding: spacing.md,
       gap: spacing.sm,
     },
@@ -636,7 +619,7 @@ function getStyles(p) {
     infoLabel: {
       fontSize: 10,
       fontFamily: fonts.bodySemiBold,
-      color: p.textMuted,
+      color: colors.textMuted,
       letterSpacing: 0.4,
       marginBottom: 2,
       textTransform: 'uppercase',
@@ -644,7 +627,7 @@ function getStyles(p) {
     infoValue: {
       fontSize: 13,
       fontFamily: fonts.body,
-      color: p.text,
+      color: colors.text,
       lineHeight: 18,
     },
     infoLink: {
@@ -669,16 +652,16 @@ function getStyles(p) {
     fieldLabel: {
       fontSize: 12,
       fontFamily: fonts.bodySemiBold,
-      color: p.textMuted,
+      color: colors.textMuted,
       marginBottom: spacing.xs,
     },
     fieldInputRow: {
       flexDirection: 'row',
       alignItems: 'center',
       borderWidth: 1,
-      borderColor: p.border,
+      borderColor: colors.border,
       borderRadius: radius.md,
-      backgroundColor: p.inputBg,
+      backgroundColor: colors.card,
       paddingHorizontal: spacing.md,
     },
     fieldInputRowMultiline: {
@@ -700,7 +683,7 @@ function getStyles(p) {
       paddingVertical: spacing.sm + 2,
       fontSize: 13,
       fontFamily: fonts.body,
-      color: p.text,
+      color: colors.text,
     },
     fieldInputMultiline: {
       minHeight: 90,
@@ -760,7 +743,7 @@ function getStyles(p) {
       opacity: 0.7,
     },
     sendButtonText: {
-      color: colors.white,
+      color: colors.onPrimary,
       fontFamily: fonts.headingSemiBold,
       fontSize: 14,
       letterSpacing: 0.3,
@@ -771,9 +754,9 @@ function getStyles(p) {
       minHeight: 150,
       borderRadius: radius.md,
       borderWidth: 1.5,
-      borderColor: p.border,
+      borderColor: colors.border,
       borderStyle: 'dashed',
-      backgroundColor: p.cardAlt,
+      backgroundColor: colors.cardAlt,
       alignItems: 'center',
       justifyContent: 'center',
       gap: spacing.xs,
@@ -793,7 +776,7 @@ function getStyles(p) {
     mapPlaceholderText: {
       fontSize: 12,
       fontFamily: fonts.bodyMedium,
-      color: p.text,
+      color: colors.text,
       textAlign: 'center',
     },
     mapTapHint: {
@@ -812,7 +795,7 @@ function getStyles(p) {
       paddingVertical: spacing.sm + 2,
     },
     directionsButtonText: {
-      color: colors.white,
+      color: colors.onPrimary,
       fontFamily: fonts.headingSemiBold,
       fontSize: 13,
     },
@@ -832,21 +815,21 @@ function getStyles(p) {
       borderRadius: 26,
       backgroundColor: colors.primaryTint,
       borderWidth: 1,
-      borderColor: p.border,
+      borderColor: colors.border,
       alignItems: 'center',
       justifyContent: 'center',
     },
     socialButtonText: {
       fontSize: 11,
       fontFamily: fonts.bodySemiBold,
-      color: p.text,
+      color: colors.text,
     },
 
     /* FAQ */
     faqRow: {
       paddingVertical: spacing.md,
       borderBottomWidth: 0.5,
-      borderBottomColor: p.border,
+      borderBottomColor: colors.border,
     },
     faqQuestionRow: {
       flexDirection: 'row',
@@ -858,7 +841,7 @@ function getStyles(p) {
       flex: 1,
       fontSize: 13,
       fontFamily: fonts.bodySemiBold,
-      color: p.text,
+      color: colors.text,
     },
     faqChevronWrap: {
       width: 24,
@@ -875,7 +858,7 @@ function getStyles(p) {
     faqAnswer: {
       fontSize: 12,
       fontFamily: fonts.body,
-      color: p.textMuted,
+      color: colors.textMuted,
       lineHeight: 18,
       marginTop: spacing.sm,
       paddingRight: spacing.xl,

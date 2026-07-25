@@ -18,6 +18,7 @@ import RangeCalendar from '../../components/reservation/RangeCalendar';
 import GuestRoomSelector from '../../components/reservation/GuestRoomSelector';
 import DropdownTrigger from '../../components/reservation/DropdownTrigger';
 import { useTheme } from '../../context/ThemeContext';
+import { lightColors } from '../../utils/theme';
 import { formatDate, isCheckOutValid, nightsBetween } from '../../utils/dateHelpers';
 
 const logo = require('../../../assets/logo.png');
@@ -37,9 +38,13 @@ const TRUST_POINTS = [
  * ReservationScreen — STAY DETAILS ONLY.
  *
  * ENHANCED: five concrete fixes/upgrades over the previous version:
- *  1. FIXED DARK-MODE BUG: the close button hardcoded `lightColors.primary`
- *     instead of reading from useTheme()'s `colors` — every other color on
- *     this screen already flips correctly in dark mode, this one didn't.
+ *  1. FIXED DARK-MODE BUG: the close button's icon/text used useTheme()'s
+ *     `colors.primary`, which flips to a light cream color in dark mode —
+ *     but the button's pill background (`colors.white`) is intentionally
+ *     fixed white in both modes, so the flipped text became nearly
+ *     unreadable against it. Now uses `lightColors.primary` directly (a
+ *     fixed dark color) so it always contrasts against the fixed-white
+ *     pill, regardless of the active theme.
  *  2. Emoji icons (📅 👤) replaced with real Ionicons (calendar-outline,
  *     people-outline) — every other screen in the app uses vector icons;
  *     this was the one remaining holdout.
@@ -164,7 +169,7 @@ export default function ReservationScreen({ user, onSearch, onClose }) {
             <Image source={logo} style={styles.logoImage} resizeMode="contain" />
           </View>
           <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityLabel="Close">
-            <Ionicons name="close-outline" size={20} color={colors.primary} />
+            <Ionicons name="close-outline" size={20} color={lightColors.primary} />
             <Text style={styles.closeText}>Close</Text>
           </TouchableOpacity>
         </View>
@@ -370,7 +375,7 @@ function getStyles(colors, spacing, radius, fonts, isDesktop) {
     closeText: {
       fontFamily: fonts.bodySemiBold,
       fontSize: 13,
-      color: colors.primary,
+      color: lightColors.primary,
     },
 
     /* Scroll */

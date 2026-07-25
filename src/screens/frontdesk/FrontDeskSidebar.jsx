@@ -106,6 +106,8 @@ const MENU_SECTIONS = [
  *  - onLogout: () => void
  *  - staffName?: string
  *  - staffRole?: string
+ *  - staffPhotoUrl?: string        current profile photo, if any (falls
+ *                                  back to an initials avatar when absent)
  *  - collapsed: boolean            (mobile only) whether the overlay is open
  *  - onClose: () => void           (mobile only) close the overlay
  */
@@ -115,6 +117,7 @@ export default function FrontDeskSidebar({
   onLogout,
   staffName = 'Front Desk Staff',
   staffRole = 'Front Desk',
+  staffPhotoUrl,
   collapsed = false,
   onClose,
 }) {
@@ -131,6 +134,7 @@ export default function FrontDeskSidebar({
       onLogout={onLogout}
       staffName={staffName}
       staffRole={staffRole}
+      staffPhotoUrl={staffPhotoUrl}
     />
   );
 
@@ -150,7 +154,7 @@ export default function FrontDeskSidebar({
   );
 }
 
-function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole }) {
+function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole, staffPhotoUrl }) {
   // Auto-expand whichever section contains the active leaf item, so the
   // active page is always visible without staff needing to manually
   // re-open its parent section.
@@ -250,7 +254,11 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole 
           accessibilityLabel="View my profile"
         >
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{staffName.charAt(0).toUpperCase()}</Text>
+            {staffPhotoUrl ? (
+              <Image source={{ uri: staffPhotoUrl }} style={styles.avatarImage} />
+            ) : (
+              <Text style={styles.avatarText}>{staffName.charAt(0).toUpperCase()}</Text>
+            )}
           </View>
           <View style={styles.profileTextWrap}>
             <Text style={styles.profileName} numberOfLines={1}>{staffName}</Text>
@@ -418,29 +426,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.sm,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: 44,
+    height: 44,
   },
   avatarText: {
     color: colors.white,
     fontFamily: fonts.headingBold,
-    fontSize: 14,
+    fontSize: 16,
   },
   profileTextWrap: {
     flex: 1,
   },
   profileName: {
-    fontSize: 12,
+    fontSize: 14,
     fontFamily: fonts.bodySemiBold,
     color: colors.white,
   },
   profileRole: {
-    fontSize: 10,
+    fontSize: 11,
     fontFamily: fonts.body,
     color: 'rgba(255,255,255,0.6)',
     marginTop: 1,

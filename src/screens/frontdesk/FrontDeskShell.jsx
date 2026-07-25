@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import FrontDeskSidebar from './FrontDeskSidebar';
 import FrontDeskDashboardScreen from './FrontDeskDashboardScreen';
@@ -19,6 +19,7 @@ import ReceiptsScreen from './ReceiptsScreen';
 import MyProfileScreen from './MyProfileScreen';
 import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import DashboardFooter from '../../components/shared/DashboardFooter';
+import { supabase } from '../../services/supabase';
 import { colors, spacing, fonts } from '../../utils/theme';
 
 const WIDE_BREAKPOINT = 1024;
@@ -28,6 +29,41 @@ export default function FrontDeskShell({ onLoggedOut, staffName, staffRole, staf
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
+
+  // Sidebar avatar — fetched here (rather than passed in from App.jsx,
+  // which doesn't track it) so it stays in sync with whatever the staff
+  // member sets on MyProfileScreen.jsx. Subscribed to realtime updates
+  // too, so uploading a new photo there reflects in the sidebar
+  // immediately without needing to reload.
+  const [staffPhotoUrl, setStaffPhotoUrl] = useState(null);
+  useEffect(() => {
+    if (!staffUid) return;
+
+    let cancelled = false;
+    const loadPhoto = async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('photo_url')
+        .eq('id', staffUid)
+        .single();
+      if (!cancelled && !error) setStaffPhotoUrl(data?.photo_url || null);
+    };
+    loadPhoto();
+
+    const channel = supabase
+      .channel(`sidebar-avatar-${staffUid}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${staffUid}` },
+        (payload) => setStaffPhotoUrl(payload.new?.photo_url || null)
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [staffUid]);
 
   const [selectedGuestId, setSelectedGuestId] = useState(null);
   const [profileOrigin, setProfileOrigin] = useState('guests:records');
@@ -124,6 +160,7 @@ export default function FrontDeskShell({ onLoggedOut, staffName, staffRole, staf
         onLogout={handleLogout}
         staffName={staffName}
         staffRole={staffRole}
+        staffPhotoUrl={staffPhotoUrl}
         collapsed={mobileSidebarOpen}
         onClose={() => setMobileSidebarOpen(false)}
       />
