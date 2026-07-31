@@ -418,7 +418,7 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
             <Text style={styles.modalTitle}>Assign Cleaning Task</Text>
 
             <Text style={styles.fieldLabel}>Room</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pickerRow}>
+            <View style={styles.pickerWrapRow}>
               {eligibleRooms.length === 0 ? (
                 <Text style={styles.noEligibleText}>No rooms currently need cleaning.</Text>
               ) : (
@@ -434,10 +434,10 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
                   </TouchableOpacity>
                 ))
               )}
-            </ScrollView>
+            </View>
 
             <Text style={styles.fieldLabel}>Assign to</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pickerRow}>
+            <View style={styles.pickerWrapRow}>
               {staffList.length === 0 ? (
                 <Text style={styles.noEligibleText}>No active front desk staff found.</Text>
               ) : (
@@ -453,7 +453,7 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
                   </TouchableOpacity>
                 ))
               )}
-            </ScrollView>
+            </View>
 
             <Text style={styles.fieldLabel}>Priority</Text>
             <View style={styles.priorityRow}>
@@ -607,7 +607,7 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 17, fontFamily: fonts.headingBold, color: colors.primary, marginBottom: spacing.md },
   fieldLabel: { fontSize: 12, fontFamily: fonts.bodyMedium, color: colors.text, marginBottom: spacing.xs, marginTop: spacing.sm },
 
-  pickerRow: { flexDirection: 'row' },
+  pickerWrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   pickerChip: {
     borderWidth: 1, borderColor: colors.border, borderRadius: 999,
     paddingVertical: 6, paddingHorizontal: spacing.md, marginRight: spacing.xs,
