@@ -10,6 +10,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 
 const WIDE_BREAKPOINT = 1024; // sidebar is fixed/always-visible above this
 const SIDEBAR_WIDTH = 264;
@@ -44,6 +45,7 @@ const MENU_SECTIONS = [
     subItems: [
       { key: 'staff:accounts', label: 'Front Desk Accounts' },
       { key: 'staff:frontdesk', label: 'Front Desk Roster' },
+      { key: 'staff:housekeeping', label: 'Housekeeping Accounts', comingSoon: true },
     ],
   },
   {
@@ -146,6 +148,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
     section.subItems?.some((sub) => sub.key === activeKey)
   )?.key;
   const [expandedKey, setExpandedKey] = useState(initialExpanded || null);
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
 
   const toggleSection = (section) => {
     if (!section.subItems) {
@@ -200,13 +203,25 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
                       <TouchableOpacity
                         key={sub.key}
                         style={[styles.subMenuItem, isActive && styles.subMenuItemActive]}
-                        onPress={() => onNavigate(sub.key)}
-                        activeOpacity={0.75}
+                        onPress={() => !sub.comingSoon && onNavigate(sub.key)}
+                        activeOpacity={sub.comingSoon ? 1 : 0.75}
+                        disabled={sub.comingSoon}
                       >
                         <View style={[styles.subDot, isActive && styles.subDotActive]} />
-                        <Text style={[styles.subMenuLabel, isActive && styles.subMenuLabelActive]}>
+                        <Text
+                          style={[
+                            styles.subMenuLabel,
+                            isActive && styles.subMenuLabelActive,
+                            sub.comingSoon && styles.subMenuLabelDisabled,
+                          ]}
+                        >
                           {sub.label}
                         </Text>
+                        {sub.comingSoon && (
+                          <View style={styles.comingSoonBadge}>
+                            <Text style={styles.comingSoonBadgeText}>Soon</Text>
+                          </View>
+                        )}
                       </TouchableOpacity>
                     );
                   })}
@@ -218,7 +233,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
 
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => onNavigate('logout')}
+          onPress={() => setConfirmingLogout(true)}
           activeOpacity={0.75}
         >
           <Text style={styles.menuIcon}>🚪</Text>
@@ -235,10 +250,24 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
           <Text style={styles.profileName} numberOfLines={1}>{adminName}</Text>
           <Text style={styles.profileRole} numberOfLines={1}>Administrator</Text>
         </View>
-        <TouchableOpacity onPress={onLogout} style={styles.quickLogout} accessibilityLabel="Log out">
+        <TouchableOpacity onPress={() => setConfirmingLogout(true)} style={styles.quickLogout} accessibilityLabel="Log out">
           <Text style={styles.quickLogoutIcon}>⏻</Text>
         </TouchableOpacity>
       </View>
+
+      <ConfirmDialog
+        visible={confirmingLogout}
+        title="Log Out?"
+        message="Are you sure you want to log out?"
+        confirmLabel="Yes"
+        cancelLabel="No"
+        destructive
+        onCancel={() => setConfirmingLogout(false)}
+        onConfirm={() => {
+          setConfirmingLogout(false);
+          onLogout && onLogout();
+        }}
+      />
     </View>
   );
 }
@@ -371,11 +400,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: fonts.body,
     color: 'rgba(255,255,255,0.65)',
+    flex: 1,
     flexShrink: 1,
   },
   subMenuLabelActive: {
     color: colors.white,
     fontFamily: fonts.bodySemiBold,
+  },
+  subMenuLabelDisabled: {
+    color: 'rgba(255,255,255,0.35)',
+  },
+  comingSoonBadge: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 999,
+    paddingVertical: 2,
+    paddingHorizontal: spacing.xs,
+    marginLeft: spacing.xs,
+  },
+  comingSoonBadgeText: {
+    fontSize: 9,
+    fontFamily: fonts.bodySemiBold,
+    color: 'rgba(255,255,255,0.55)',
+    letterSpacing: 0.3,
   },
 
   profileFooter: {

@@ -161,6 +161,15 @@ export default function FrontDeskAccountsScreen() {
   const [touched, setTouched] = useState({});
   const [staffError, setStaffError] = useState('');
   const [staffSuccess, setStaffSuccess] = useState('');
+
+  // Success banners (create/edit/remove/reset) auto-dismiss after 3s
+  // rather than sitting on screen until the admin's next action
+  // replaces or manually clears them.
+  useEffect(() => {
+    if (!staffSuccess) return;
+    const timer = setTimeout(() => setStaffSuccess(''), 3000);
+    return () => clearTimeout(timer);
+  }, [staffSuccess]);
   const [creatingStaff, setCreatingStaff] = useState(false);
   const [removingStaffId, setRemovingStaffId] = useState(null);
   const [pendingStaffRemoval, setPendingStaffRemoval] = useState(null);
@@ -170,6 +179,13 @@ export default function FrontDeskAccountsScreen() {
   const [editForm, setEditForm] = useState({ firstName: '', lastName: '', phone: '' });
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState('');
+
+  const [resettingStaff, setResettingStaff] = useState(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetConfirm, setResetConfirm] = useState('');
+  const [resetShowPw, setResetShowPw] = useState(false);
+  const [resetSubmitting, setResetSubmitting] = useState(false);
+  const [resetError, setResetError] = useState('');
 
   useEffect(() => {
     const loadStaff = async () => {
@@ -380,6 +396,79 @@ export default function FrontDeskAccountsScreen() {
     }
   };
 
+  // ── Reset Password ──────────────────────────────────────────────────
+  // Lets an administrator set a new password for a staff member who's
+  // forgotten theirs — the same idea as the default password an admin
+  // sets when first creating the account. Requires the admin-reset-
+  // password Edge Function: changing another user's password needs
+  // Supabase's Admin API, which only works with the service_role key —
+  // that key can never live in this app, so the actual privileged call
+  // happens server-side. This screen only calls it and shows the result.
+  const openReset = (staff) => {
+    setResetError('');
+    setResetPassword('');
+    setResetConfirm('');
+    setResetShowPw(false);
+    setResettingStaff(staff);
+  };
+
+  const closeReset = () => {
+    setResettingStaff(null);
+    setResetError('');
+  };
+
+  const resetPasswordStrength = scorePasswordStrength(resetPassword);
+
+  const handleResetPassword = async () => {
+    if (!resettingStaff) return;
+    if (!resetPassword || resetPassword.length < 8) {
+      setResetError('Enter a new password of at least 8 characters.');
+      return;
+    }
+    if (resetPassword !== resetConfirm) {
+      setResetError('Passwords do not match.');
+      return;
+    }
+
+    const name = resettingStaff.displayName || `${resettingStaff.firstName || ''} ${resettingStaff.lastName || ''}`.trim() || 'this staff member';
+
+    setResetSubmitting(true);
+    setResetError('');
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-reset-password', {
+        body: { staffUid: resettingStaff.id, newPassword: resetPassword },
+      });
+      if (error) {
+        // supabase-js only gives a generic "non-2xx status code" message
+        // by default — the function's actual error text (e.g. "Only
+        // administrators can reset a password") is in the raw response
+        // body, reachable via error.context. Read it so the admin (and
+        // we, debugging) can see what actually went wrong.
+        let message = error.message;
+        if (error.context && typeof error.context.json === 'function') {
+          try {
+            const body = await error.context.json();
+            if (body?.error) message = body.error;
+          } catch (parseErr) {
+            console.error('Could not parse Edge Function error body:', parseErr);
+          }
+        }
+        throw new Error(message);
+      }
+      if (data?.error) throw new Error(data.error);
+
+      await logStaffAudit(resettingStaff.id, name, resettingStaff.email, 'password_reset', 'Password reset by administrator');
+
+      setStaffSuccess(`Password reset for ${name}. Share it with them directly.`);
+      closeReset();
+    } catch (err) {
+      console.error('Failed to reset password:', err);
+      setResetError(err.message || 'Could not reset the password. Please try again.');
+    } finally {
+      setResetSubmitting(false);
+    }
+  };
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.headerRow}>
@@ -569,6 +658,10 @@ export default function FrontDeskAccountsScreen() {
                     <Ionicons name="pencil-outline" size={13} color={colors.text} />
                     <Text style={styles.editButtonText}>Edit</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity style={styles.editButton} onPress={() => openReset(staff)} activeOpacity={0.8}>
+                    <Ionicons name="key-outline" size={13} color={colors.text} />
+                    <Text style={styles.editButtonText}>Reset Password</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.removeButton}
                     onPress={() => confirmRemoveStaffAccount(staff)}
@@ -621,7 +714,7 @@ export default function FrontDeskAccountsScreen() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Edit Staff Account</Text>
-            <Text style={styles.editHint}>Email and password aren't editable here — that staff member can reset their own password from Login.</Text>
+            <Text style={styles.editHint}>Email isn't editable here. To reset a forgotten password, use Reset Password from the account list instead.</Text>
 
             <Text style={styles.inputLabel}>First name</Text>
             <TextInput
@@ -653,6 +746,64 @@ export default function FrontDeskAccountsScreen() {
               </TouchableOpacity>
               <TouchableOpacity style={styles.modalSaveButton} onPress={handleSaveEdit} disabled={savingEdit}>
                 {savingEdit ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.modalConfirmText}>Save Changes</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Reset Password ──────────────────────────────────────────── */}
+      <Modal transparent visible={!!resettingStaff} animationType="fade" onRequestClose={closeReset}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Reset Password</Text>
+            <Text style={styles.editHint}>
+              Sets a new password for {resettingStaff?.displayName || `${resettingStaff?.firstName || ''} ${resettingStaff?.lastName || ''}`.trim() || 'this staff member'}, the same way a default password is set when creating an account. Share it with them directly — they can change it themselves from My Profile once logged in.
+            </Text>
+
+            <Text style={styles.inputLabel}>New password</Text>
+            <View style={styles.passwordInputRow}>
+              <TextInput
+                style={styles.passwordInput}
+                value={resetPassword}
+                onChangeText={setResetPassword}
+                placeholder="At least 8 characters"
+                secureTextEntry={!resetShowPw}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity onPress={() => setResetShowPw((s) => !s)} style={styles.eyeBtn} activeOpacity={0.7}>
+                <Ionicons name={resetShowPw ? 'eye-off-outline' : 'eye-outline'} size={18} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            {!!resetPassword && (
+              <View style={styles.strengthRow}>
+                <View style={styles.strengthTrack}>
+                  <View style={[styles.strengthFill, { width: `${resetPasswordStrength.score * 25}%`, backgroundColor: resetPasswordStrength.color }]} />
+                </View>
+                <Text style={[styles.strengthLabel, { color: resetPasswordStrength.color }]}>{resetPasswordStrength.label}</Text>
+              </View>
+            )}
+
+            <Text style={[styles.inputLabel, { marginTop: spacing.sm }]}>Confirm new password</Text>
+            <View style={styles.passwordInputRow}>
+              <TextInput
+                style={styles.passwordInput}
+                value={resetConfirm}
+                onChangeText={setResetConfirm}
+                placeholder="Re-enter the new password"
+                secureTextEntry={!resetShowPw}
+                autoCapitalize="none"
+              />
+            </View>
+
+            {!!resetError && <Text style={styles.fieldErrorText}>{resetError}</Text>}
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalCancelButton} onPress={closeReset} disabled={resetSubmitting}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalSaveButton} onPress={handleResetPassword} disabled={resetSubmitting}>
+                {resetSubmitting ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.modalConfirmText}>Reset Password</Text>}
               </TouchableOpacity>
             </View>
           </View>
@@ -701,6 +852,12 @@ const styles = StyleSheet.create({
   strengthTrack: { flex: 1, height: 4, borderRadius: 2, backgroundColor: colors.border, overflow: 'hidden' },
   strengthFill: { height: '100%', borderRadius: 2 },
   strengthLabel: { fontSize: 10, fontFamily: fonts.bodySemiBold, minWidth: 42 },
+  passwordInputRow: {
+    flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.md, marginTop: spacing.xs,
+  },
+  passwordInput: { flex: 1, paddingVertical: spacing.sm, fontFamily: fonts.body, fontSize: 13, color: colors.text },
+  eyeBtn: { paddingLeft: spacing.xs, paddingVertical: spacing.xs },
 
   createButton: { backgroundColor: colors.primary, borderRadius: 999, paddingVertical: spacing.md, alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },
   createButtonText: { fontFamily: fonts.headingSemiBold, fontSize: 13, color: colors.white },
@@ -727,7 +884,7 @@ const styles = StyleSheet.create({
   roleBadgeText: { fontSize: 10, fontFamily: fonts.bodySemiBold, color: colors.primary },
   staffMeta: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
 
-  staffActions: { flexDirection: 'row', gap: spacing.xs },
+  staffActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: spacing.xs, maxWidth: 260 },
   editButton: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: colors.border, borderRadius: 999, paddingHorizontal: spacing.md, paddingVertical: 8 },
   editButtonText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.text },
   removeButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: colors.danger, borderRadius: 999, paddingHorizontal: spacing.md, paddingVertical: 8, minWidth: 88 },

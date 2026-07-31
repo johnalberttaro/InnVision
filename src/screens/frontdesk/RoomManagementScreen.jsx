@@ -13,6 +13,7 @@ import {
   STATUS_META,
   statusMeta,
 } from '../../utils/Roomsservice';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 
 const SECTION_TITLES = {
@@ -51,6 +52,7 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
   const [loadingRooms, setLoadingRooms] = useState(true);
   const [updatingRoomNumber, setUpdatingRoomNumber] = useState(null);
   const [seeding, setSeeding] = useState(false);
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
 
   useEffect(() => {
     const unsubTypes = subscribeToRoomTypes(
@@ -75,7 +77,7 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
   const loading = loadingTypes || loadingRooms;
   const isEmpty = !loading && rooms.length === 0;
 
-  const handleLogout = () => onLogout();
+  const handleLogout = () => setConfirmingLogout(true);
 
   const handleStatusChange = async (room, status, extra = {}) => {
     if (room.status === status && !Object.keys(extra).length) return;
@@ -182,6 +184,19 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
           )}
         </ScrollView>
       )}
+      <ConfirmDialog
+        visible={confirmingLogout}
+        title="Log Out?"
+        message="Are you sure you want to log out?"
+        confirmLabel="Yes"
+        cancelLabel="No"
+        destructive
+        onCancel={() => setConfirmingLogout(false)}
+        onConfirm={() => {
+          setConfirmingLogout(false);
+          onLogout && onLogout();
+        }}
+      />
     </View>
   );
 }

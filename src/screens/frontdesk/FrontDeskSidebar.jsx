@@ -10,6 +10,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 
 const WIDE_BREAKPOINT = 1024; // sidebar is fixed/always-visible above this
 const SIDEBAR_WIDTH = 264;
@@ -162,6 +163,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole,
     section.subItems?.some((sub) => sub.key === activeKey)
   )?.key;
   const [expandedKey, setExpandedKey] = useState(initialExpanded || null);
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
 
   const toggleSection = (section) => {
     if (!section.subItems) {
@@ -234,7 +236,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole,
 
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => onNavigate('logout')}
+          onPress={() => setConfirmingLogout(true)}
           activeOpacity={0.75}
         >
           <Text style={styles.menuIcon}>🚪</Text>
@@ -265,10 +267,24 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole,
             <Text style={styles.profileRole} numberOfLines={1}>{staffRole}</Text>
           </View>
         </TouchableOpacity>
-        <TouchableOpacity onPress={onLogout} style={styles.quickLogout} accessibilityLabel="Log out">
+        <TouchableOpacity onPress={() => setConfirmingLogout(true)} style={styles.quickLogout} accessibilityLabel="Log out">
           <Text style={styles.quickLogoutIcon}>⏻</Text>
         </TouchableOpacity>
       </View>
+
+      <ConfirmDialog
+        visible={confirmingLogout}
+        title="Log Out?"
+        message="Are you sure you want to log out?"
+        confirmLabel="Yes"
+        cancelLabel="No"
+        destructive
+        onCancel={() => setConfirmingLogout(false)}
+        onConfirm={() => {
+          setConfirmingLogout(false);
+          onLogout && onLogout();
+        }}
+      />
     </View>
   );
 }

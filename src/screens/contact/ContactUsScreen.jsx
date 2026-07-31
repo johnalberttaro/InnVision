@@ -60,7 +60,7 @@ const FAQS = [
   },
   {
     q: 'How can I check my reservation status?',
-    a: 'Use the "Find My Booking" feature on the home page and search by the phone number you booked with, or your reservation reference.',
+    a: 'Use the "My Reservations" feature on the home page and search by the phone number you booked with, or your reservation reference.',
   },
   {
     q: 'What payment methods are accepted?',

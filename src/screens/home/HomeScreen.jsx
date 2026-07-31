@@ -57,7 +57,7 @@ const homeBackground = Platform.OS === 'web'
  * Props:
  *  - onBookNow:       () => void
  *  - onSignIn:        () => void
- *  - onLogout:        () => void
+ *  - onLogout:        () => void  — forwarded to the hamburger menu's Sign Out item
  *  - onProfilePress:  () => void
  *  - onAboutPress:    () => void
  *  - onContactPress:  () => void
@@ -164,9 +164,6 @@ export default function HomeScreen({
             <TouchableOpacity style={styles.bottomCtaButton} onPress={onBookNow}>
               <Text style={styles.bottomCtaText}>Book Your Stay</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.logoutBtn} onPress={onLogout}>
-              <Text style={styles.logoutText}>Sign Out</Text>
-            </TouchableOpacity>
           </View>
         )}
 
@@ -180,6 +177,7 @@ export default function HomeScreen({
         onAboutPress={onAboutPress}
         onContactPress={onContactPress}
         onFindBooking={onFindBooking}
+        onLogout={onLogout}
         isAuthenticated={isAuthenticated}
       />
 
@@ -362,20 +360,6 @@ function getStyles(colors, spacing, fonts) {
       color: colors.onPrimary,
       fontFamily: fonts.headingSemiBold,
       fontSize: 15,
-    },
-
-    /* Sign out */
-    logoutBtn: {
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.lg,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    logoutText: {
-      fontSize: 13,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.textMuted,
     },
   });
 }

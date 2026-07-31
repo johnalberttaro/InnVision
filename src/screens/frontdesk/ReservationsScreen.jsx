@@ -101,7 +101,16 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
     return () => supabase.removeChannel(channel);
   }, []);
 
-  const handleLogout = () => onLogout();
+  const handleLogout = () => {
+    setDialogState({
+      title: 'Log Out?',
+      message: 'Are you sure you want to log out?',
+      confirmLabel: 'Yes',
+      cancelLabel: 'No',
+      onConfirm: () => onLogout(),
+      destructive: true,
+    });
+  };
 
   const formatDateRange = (checkIn, checkOut) => {
     try {
@@ -588,7 +597,7 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
                   onPress={() => setDialogState(null)}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.dialogCancelText}>Cancel</Text>
+                  <Text style={styles.dialogCancelText}>{dialogState.cancelLabel || 'Cancel'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.dialogConfirmBtn, dialogState.destructive && styles.dialogConfirmBtnDestructive]}

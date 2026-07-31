@@ -79,7 +79,7 @@ export default function HomeHeader({
     { label: 'About',            onPress: () => onAboutPress && onAboutPress() },
     { label: 'Promos',           onPress: () => {} },
     { label: 'Contact Us',       onPress: () => onContactPress && onContactPress() },
-    { label: 'Find My Booking',  onPress: () => onFindBooking && onFindBooking() },
+    { label: 'My Reservations',  onPress: () => onFindBooking && onFindBooking() },
     ...(isAuthenticated
       ? [{ label: 'Profile', onPress: () => onProfilePress && onProfilePress(), isAccent: true }]
       : []

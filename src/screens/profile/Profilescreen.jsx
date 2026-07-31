@@ -20,6 +20,7 @@ import { decode as decodeBase64 } from 'base64-arraybuffer';
 import { supabase } from '../../services/supabase';
 import { useTheme } from '../../context/ThemeContext';
 import { formatDate } from '../../utils/dateHelpers';
+import ConfirmDialog from '../../components/shared/ConfirmDialog';
 
 /**
  * ProfileScreen — Guest profile dashboard for InnVision.
@@ -90,6 +91,7 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
   const { width } = useWindowDimensions();
   const isWide    = width >= 768;
   const { colors, spacing, radius, fonts, isDark, setDarkMode } = useTheme();
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
   const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
 
   const notify = (title, message) => {
@@ -538,7 +540,7 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
                 <Text style={styles.btnPrimaryText}>Edit profile</Text>
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={styles.btnOutline} onPress={onLogout} activeOpacity={0.85}>
+            <TouchableOpacity style={styles.btnOutline} onPress={() => setConfirmingLogout(true)} activeOpacity={0.85}>
               <Ionicons name="log-out-outline" size={15} color={colors.danger} />
               <Text style={[styles.btnOutlineText, { color: colors.danger }]}>Log out</Text>
             </TouchableOpacity>
@@ -864,6 +866,20 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
 
         <View style={{ height: spacing.xxl }} />
       </ScrollView>
+
+      <ConfirmDialog
+        visible={confirmingLogout}
+        title="Log Out?"
+        message="Are you sure you want to log out?"
+        confirmLabel="Yes"
+        cancelLabel="No"
+        destructive
+        onCancel={() => setConfirmingLogout(false)}
+        onConfirm={() => {
+          setConfirmingLogout(false);
+          onLogout && onLogout();
+        }}
+      />
     </SafeAreaView>
   );
 }

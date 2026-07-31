@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, StyleSheet, SafeAreaView, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, fonts } from '../../utils/theme';
+import ConfirmDialog from '../shared/ConfirmDialog';
 
 const logo = require('../../../assets/logo.png');
 
@@ -15,7 +16,8 @@ const logo = require('../../../assets/logo.png');
  *  - onAboutPress:    () => void  — navigate to AboutScreen
  *  - onContactPress:  () => void  — navigate to ContactUsScreen
  *  - onFindBooking:   () => void  — navigate to BookingLookupScreen
- *  - isAuthenticated: boolean     — show Profile item only when logged in
+ *  - onLogout:        () => void  — sign out (only shown when authenticated)
+ *  - isAuthenticated: boolean     — show Profile/Sign Out items only when logged in
  */
 export default function HamburgerMenu({
   visible,
@@ -24,8 +26,10 @@ export default function HamburgerMenu({
   onAboutPress,
   onContactPress,
   onFindBooking,
+  onLogout,
   isAuthenticated,
 }) {
+  const [confirmingLogout, setConfirmingLogout] = useState(false);
 
   const menuItems = [
     {
@@ -46,8 +50,8 @@ export default function HamburgerMenu({
       },
     },
     {
-      label: 'Find My Booking',
-      icon: 'search-outline',
+      label: 'My Reservations',
+      icon: 'calendar-outline',
       onPress: () => {
         onClose();
         onFindBooking && onFindBooking();
@@ -111,10 +115,38 @@ export default function HamburgerMenu({
           ))}
         </View>
 
+        {isAuthenticated && (
+          <TouchableOpacity
+            style={styles.signOutItem}
+            onPress={() => setConfirmingLogout(true)}
+            activeOpacity={0.75}
+          >
+            <View style={styles.menuItemLeft}>
+              <Ionicons name="log-out-outline" size={20} color="#FF8A80" />
+              <Text style={styles.signOutText}>Sign Out</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
         <Text style={styles.placeholderNote}>
           These sections are placeholders for the student prototype.
         </Text>
       </SafeAreaView>
+
+      <ConfirmDialog
+        visible={confirmingLogout}
+        title="Log Out?"
+        message="Are you sure you want to log out?"
+        confirmLabel="Yes"
+        cancelLabel="No"
+        destructive
+        onCancel={() => setConfirmingLogout(false)}
+        onConfirm={() => {
+          setConfirmingLogout(false);
+          onClose();
+          onLogout && onLogout();
+        }}
+      />
     </Modal>
   );
 }
@@ -193,6 +225,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: fonts.headingSemiBold,
     color: colors.white,
+  },
+
+  // Sign out — visually separated from the main list, tinted to signal
+  // it ends the session rather than navigating somewhere.
+  signOutItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    marginTop: spacing.md,
+    borderTopWidth: 0.5,
+    borderTopColor: 'rgba(255,255,255,0.15)',
+  },
+  signOutText: {
+    fontSize: 16,
+    fontFamily: fonts.headingSemiBold,
+    color: '#FF8A80',
   },
 
   // Footer note
