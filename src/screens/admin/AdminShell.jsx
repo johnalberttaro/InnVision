@@ -3,7 +3,9 @@ import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'r
 import AdminSidebar from './AdminSidebar';
 import AdminDashboardScreen from './AdmindashboardScreen';
 import RoomTypesRatesScreen from './RoomTypeRatesScreen';
+import FoodMenuScreen from './FoodMenuScreen';
 import FrontDeskAccountsScreen from './FrontDeskAccountScreen';
+import FnbAccountsScreen from './FnbAccountScreen';
 import FrontDeskStaffScreen from './FrontDeskStaffScreen';
 import OccupancyReportScreen from './OccupancyReportScreen';
 import RevenueReportScreen from './RevenueReportScreen';
@@ -163,8 +165,14 @@ function renderActiveScreen(props) {
   if (activeKey === 'rooms:types') {
     return <RoomTypesRatesScreen />;
   }
+  if (activeKey === 'food:menu') {
+    return <FoodMenuScreen />;
+  }
   if (activeKey === 'staff:accounts') {
     return <FrontDeskAccountsScreen />;
+  }
+  if (activeKey === 'staff:fnb') {
+    return <FnbAccountsScreen />;
   }
   if (activeKey === 'staff:frontdesk') {
     return <FrontDeskStaffScreen />;

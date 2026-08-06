@@ -16,8 +16,9 @@ const logo = require('../../../assets/logo.png');
  *  - onAboutPress:    () => void  — navigate to AboutScreen
  *  - onContactPress:  () => void  — navigate to ContactUsScreen
  *  - onFindBooking:   () => void  — navigate to BookingLookupScreen
+ *  - onOrderFood:     () => void  — navigate to OrderFoodScreen (only shown when authenticated)
  *  - onLogout:        () => void  — sign out (only shown when authenticated)
- *  - isAuthenticated: boolean     — show Profile/Sign Out items only when logged in
+ *  - isAuthenticated: boolean     — show Profile/Order Food/Sign Out items only when logged in
  */
 export default function HamburgerMenu({
   visible,
@@ -26,6 +27,7 @@ export default function HamburgerMenu({
   onAboutPress,
   onContactPress,
   onFindBooking,
+  onOrderFood,
   onLogout,
   isAuthenticated,
 }) {
@@ -58,14 +60,24 @@ export default function HamburgerMenu({
       },
     },
     ...(isAuthenticated
-      ? [{
-          label: 'Profile',
-          icon: 'person-circle-outline',
-          onPress: () => {
-            onClose();
-            onProfilePress && onProfilePress();
+      ? [
+          {
+            label: 'Order Food',
+            icon: 'restaurant-outline',
+            onPress: () => {
+              onClose();
+              onOrderFood && onOrderFood();
+            },
           },
-        }]
+          {
+            label: 'Profile',
+            icon: 'person-circle-outline',
+            onPress: () => {
+              onClose();
+              onProfilePress && onProfilePress();
+            },
+          },
+        ]
       : []
     ),
   ];

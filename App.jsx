@@ -23,8 +23,10 @@ import ReservationScreen    from './src/screens/reservation/ReservationScreen';
 import RoomSelectionScreen  from './src/screens/roomRates/RoomSelectionScreen';
 import ReviewPayScreen      from './src/screens/reviewPay/ReviewPayScreen';
 import FrontDeskShell       from './src/screens/frontdesk/FrontDeskShell';
+import FnbShell             from './src/screens/fnb/FnbShell';
 import AdminShell           from './src/screens/admin/AdminShell';
 import LoadingScreen        from './src/screens/LoadingScreen';
+import OrderFoodScreen      from './src/foodservice/OrderFoodScreen';
 import { fonts }            from './src/utils/theme';
 import { ThemeProvider }    from './src/context/ThemeContext';
 
@@ -87,6 +89,16 @@ import { ThemeProvider }    from './src/context/ThemeContext';
  * now, set at signup by the on_auth_user_created trigger and defaulting
  * to 'guest' — no more resolveUserRole() guessing across differently-
  * shaped legacy fields the way the Firestore `guests` docs needed.
+ *
+ * NOTE ON FOOD SERVICE (Phase 1):
+ * OrderFoodScreen.jsx lives at ./src/foodservice/ — NOT under
+ * ./src/screens/ like every other guest screen. That's an inconsistency
+ * worth cleaning up eventually (moving it under src/screens/foodservice/
+ * for consistency with everything else), but for now the import path
+ * above matches wherever the file actually is. goToOrderFood() below
+ * mirrors goToMyReservations()'s pattern — bounce to login first if
+ * nobody's signed in, since the screen itself needs a real user.id to
+ * do anything.
  */
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -133,7 +145,7 @@ export default function App() {
       } catch (roleLookupError) {
         console.warn('Role lookup failed on session restore, defaulting to guest:', roleLookupError);
       }
-      const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : 'home';
+      const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : role === 'fnb' ? 'fnb' : 'home';
       setScreen(nextScreen);
     };
 
@@ -171,7 +183,8 @@ export default function App() {
 
   // ── Screen state ────────────────────────────────────────────────────
   // 'home' | 'login' | 'register' | 'forgotPassword' | 'profile' | 'about'
-  // | 'contact' | 'myReservations' | 'roomRates' | 'reviewPay' | 'frontdesk' | 'admin'
+  // | 'contact' | 'myReservations' | 'orderFood' | 'roomRates' | 'reviewPay'
+  // | 'frontdesk' | 'fnb' | 'admin'
   const [screen, setScreen]                   = useState('home');
   const [showReservation, setShowReservation] = useState(false);
   const [bookingDetails, setBookingDetails]   = useState(null);
@@ -180,7 +193,7 @@ export default function App() {
   // ── Auth handlers ───────────────────────────────────────────────────
   const handleLogin = (supabaseUser, role) => {
     setUser(supabaseUser);
-    const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : 'home';
+    const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : role === 'fnb' ? 'fnb' : 'home';
     setScreen(nextScreen);
   };
 
@@ -232,6 +245,12 @@ export default function App() {
   // instead of opening the screen with nothing to show.
   const goToMyReservations = () => setScreen(user ? 'myReservations' : 'login');
 
+  // Order Food (Food Service, Phase 1) is guest-account-only too — the
+  // screen itself queries reservations by user.id, so it's a no-op
+  // without a signed-in user. Same bounce-to-login pattern as My
+  // Reservations, for the same reason.
+  const goToOrderFood = () => setScreen(user ? 'orderFood' : 'login');
+
   // ── Loading gate ────────────────────────────────────────────────────
   if (!fontsLoaded || authLoading || !minLoadTimeElapsed) {
     return (
@@ -261,6 +280,7 @@ export default function App() {
               onAboutPress={() => setScreen('about')}
               onContactPress={() => setScreen('contact')}
               onFindBooking={goToMyReservations}
+              onOrderFood={goToOrderFood}
               isAuthenticated={!!user}
               user={user}
               onLogout={handleLogout}
@@ -282,6 +302,15 @@ export default function App() {
               onLoggedOut={handleLogout}
               staffName={user?.user_metadata?.display_name || user?.email || 'Front Desk Staff'}
               staffRole="Front Desk"
+              staffUid={user?.id}
+            />
+          )}
+
+          {/* ── Kitchen / F&B ─────────────────────────────────────── */}
+          {screen === 'fnb' && (
+            <FnbShell
+              onLoggedOut={handleLogout}
+              staffName={user?.user_metadata?.display_name || user?.email || 'F&B Staff'}
               staffUid={user?.id}
             />
           )}
@@ -312,6 +341,7 @@ export default function App() {
             <ProfileScreen
               user={user}
               onBookNow={openReservation}
+              onOrderFood={goToOrderFood}
               onLogout={handleLogout}
               onBackPress={() => setScreen('home')}
             />
@@ -335,6 +365,14 @@ export default function App() {
           {screen === 'myReservations' && (
             <MyReservationsScreen
               onBack={() => setScreen('home')}
+            />
+          )}
+
+          {/* ── Order Food (Food Service, Phase 1) ───────────────────── */}
+          {screen === 'orderFood' && (
+            <OrderFoodScreen
+              user={user}
+              onBackPress={() => setScreen('home')}
             />
           )}
 

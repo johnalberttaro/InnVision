@@ -84,10 +84,13 @@ import ConfirmDialog from '../../components/shared/ConfirmDialog';
  * Props:
  *  - user:       Supabase Auth user object
  *  - onBookNow:  () => void
+ *  - onOrderFood: () => void  — opens OrderFoodScreen.jsx (Food & Dining,
+ *                Phase 1). Always shown in Quick Actions; the screen
+ *                itself handles the "not checked in yet" case.
  *  - onLogout:   () => void
  *  - onBackPress:() => void
  */
-export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }) {
+export default function ProfileScreen({ user, onBookNow, onOrderFood, onLogout, onBackPress }) {
   const { width } = useWindowDimensions();
   const isWide    = width >= 768;
   const { colors, spacing, radius, fonts, isDark, setDarkMode } = useTheme();
@@ -551,8 +554,9 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
         <SectionTitle title="Quick actions" styles={styles} />
         <View style={styles.quickGrid}>
           {[
-            { icon: 'bed-outline',    label: 'Book a room',  onPress: onBookNow },
-            { icon: 'person-outline', label: 'Edit profile', onPress: startEditingPersonal },
+            { icon: 'bed-outline',        label: 'Book a room',  onPress: onBookNow },
+            { icon: 'restaurant-outline', label: 'Order food',   onPress: onOrderFood },
+            { icon: 'person-outline',     label: 'Edit profile', onPress: startEditingPersonal },
           ].map((q, i) => (
             <TouchableOpacity key={i} style={styles.quickBtn} onPress={q.onPress} activeOpacity={0.8}>
               <Ionicons name={q.icon} size={22} color={colors.primary} />

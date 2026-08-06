@@ -88,6 +88,11 @@ const MENU_SECTIONS = [
       { key: 'housekeeping:maintenance', label: 'Maintenance Requests' },
     ],
   },
+  {
+    key: 'foodorders',
+    icon: '🍽',
+    label: 'Food Orders',
+  },
 ];
 
 /**
@@ -380,7 +385,7 @@ const styles = StyleSheet.create({
   },
   menuLabel: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 15,
     fontFamily: fonts.bodySemiBold,
     color: 'rgba(255,255,255,0.85)',
   },
@@ -417,7 +422,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
   },
   subMenuLabel: {
-    fontSize: 12,
+    fontSize: 14,
     fontFamily: fonts.body,
     color: 'rgba(255,255,255,0.65)',
     flexShrink: 1,

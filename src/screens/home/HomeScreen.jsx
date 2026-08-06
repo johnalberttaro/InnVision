@@ -62,6 +62,7 @@ const homeBackground = Platform.OS === 'web'
  *  - onAboutPress:    () => void
  *  - onContactPress:  () => void
  *  - onFindBooking:   () => void
+ *  - onOrderFood:     () => void  — forwarded to the hamburger menu's Order Food item
  *  - isAuthenticated: boolean
  */
 export default function HomeScreen({
@@ -72,6 +73,7 @@ export default function HomeScreen({
   onAboutPress,
   onContactPress,
   onFindBooking,
+  onOrderFood,
   isAuthenticated,
 }) {
   const [menuVisible, setMenuVisible] = useState(false);
@@ -177,6 +179,7 @@ export default function HomeScreen({
         onAboutPress={onAboutPress}
         onContactPress={onContactPress}
         onFindBooking={onFindBooking}
+        onOrderFood={onOrderFood}
         onLogout={onLogout}
         isAuthenticated={isAuthenticated}
       />

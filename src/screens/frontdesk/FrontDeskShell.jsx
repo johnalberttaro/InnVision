@@ -7,6 +7,7 @@ import RoomManagementScreen from './RoomManagementScreen';
 import RoomCleaningStatusScreen from './RoomCleaningStatusScreen';
 import HousekeepingScheduleScreen from './HousekeepingSchedule';
 import MaintenanceRequestScreen from './MaintenanceRequest';
+import FoodOrdersScreen from './FoodOrdersScreen';
 import GuestRecordsScreen from './GuestRecordsScreen';
 import GuestDetailsScreen from './GuestDetailsScreen';
 import GuestProfileTableScreen from './GuestProfileTableScreen';
@@ -244,6 +245,9 @@ function renderActiveScreen(
   }
   if (activeKey === 'housekeeping:maintenance') {
     return <MaintenanceRequestScreen staffUid={staffUid} staffName={staffName} />;
+  }
+  if (activeKey === 'foodorders') {
+    return <FoodOrdersScreen staffUid={staffUid} staffName={staffName} />;
   }
   if (activeKey === 'guests:records') {
     return <GuestRecordsScreen onSelectGuest={openGuestProfile} />;

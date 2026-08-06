@@ -39,12 +39,21 @@ const MENU_SECTIONS = [
     ],
   },
   {
+    key: 'food',
+    icon: '🍽',
+    label: 'Food & Dining',
+    subItems: [
+      { key: 'food:menu', label: 'Food Menu' },
+    ],
+  },
+  {
     key: 'staff',
     icon: '👥',
     label: 'Staff',
     subItems: [
       { key: 'staff:accounts', label: 'Front Desk Accounts' },
       { key: 'staff:frontdesk', label: 'Front Desk Roster' },
+      { key: 'staff:fnb', label: 'F&B Accounts' },
       { key: 'staff:housekeeping', label: 'Housekeeping Accounts', comingSoon: true },
     ],
   },
@@ -361,7 +370,7 @@ const styles = StyleSheet.create({
   },
   menuLabel: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 15,
     fontFamily: fonts.bodySemiBold,
     color: 'rgba(255,255,255,0.85)',
   },
@@ -397,7 +406,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
   },
   subMenuLabel: {
-    fontSize: 12,
+    fontSize: 14,
     fontFamily: fonts.body,
     color: 'rgba(255,255,255,0.65)',
     flex: 1,
