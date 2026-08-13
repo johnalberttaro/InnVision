@@ -62,7 +62,9 @@ const homeBackground = Platform.OS === 'web'
  *  - onAboutPress:    () => void
  *  - onContactPress:  () => void
  *  - onFindBooking:   () => void
- *  - onOrderFood:     () => void  — forwarded to the hamburger menu's Order Food item
+ *  - onOrderFood:     () => void  — forwarded to both the wide-screen
+ *                                   navbar (authenticated only) and the
+ *                                   hamburger menu's Order Food item
  *  - isAuthenticated: boolean
  */
 export default function HomeScreen({
@@ -92,6 +94,7 @@ export default function HomeScreen({
         onAboutPress={onAboutPress}
         onContactPress={onContactPress}
         onFindBooking={onFindBooking}
+        onOrderFood={onOrderFood}
         isAuthenticated={isAuthenticated}
       />
 
@@ -184,7 +187,7 @@ export default function HomeScreen({
         isAuthenticated={isAuthenticated}
       />
 
-      <FeedbackWidget />
+      <FeedbackWidget autoOpenOnRecentBooking />
     </View>
   );
 }

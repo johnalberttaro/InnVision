@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
 function escapeHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -116,6 +116,14 @@ function minutesElapsed(dateString) {
   if (!dateString) return 0;
   return Math.max(0, Math.floor((Date.now() - new Date(dateString).getTime()) / 60000));
 }
+
+// An escalated order still waiting in "To Prepare" past this many
+// minutes gets flagged as stale — catches an order that got missed in
+// a busy kitchen, rather than it just sitting there unnoticed. Uses
+// escalated_at (see 011_food_service_status_timestamps.sql) when
+// available — the actual moment it reached the kitchen — falling back
+// to created_at for older orders from before that column existed.
+const STALE_THRESHOLD_MINUTES = 15;
 
 // Itemized bill for a food order — meant to be printed and physically
 // delivered together with the food, per the original plan ("the
@@ -276,6 +284,7 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
   const [assignTarget, setAssignTarget] = useState(null);
   const [assignStaffId, setAssignStaffId] = useState(null);
   const [assignSaving, setAssignSaving] = useState(false);
+  const [assignSearchQuery, setAssignSearchQuery] = useState('');
 
   const [deliverTarget, setDeliverTarget] = useState(null);
   const [deliverSaving, setDeliverSaving] = useState(false);
@@ -361,10 +370,12 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
     roomNumber: row.room_number,
     status: row.status,
     notes: row.notes,
+    allergyInfo: row.allergy_info,
     totalAmount: row.total_amount,
     assignedTo: row.assigned_to,
     assignedToName: row.assigned_to_name,
     createdAt: row.created_at,
+    escalatedAt: row.escalated_at,
     guestPhotoUrl: null, // filled in by the guest-photo lookup pass below
     items: (row.food_order_items || []).map((i) => ({
       id: i.id,
@@ -480,10 +491,13 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
 
   // ── Board columns ────────────────────────────────────────────────────
   const boardColumns = useMemo(() => {
-    return BOARD_COLUMNS.map((col) => ({
-      ...col,
-      orders: orders.filter((o) => o.status === col.status && matchesSearch(o)),
-    }));
+    return BOARD_COLUMNS.map((col) => {
+      const colOrders = orders.filter((o) => o.status === col.status && matchesSearch(o));
+      const staleCount = col.status === 'escalated'
+        ? colOrders.filter((o) => minutesElapsed(o.escalatedAt || o.createdAt) >= STALE_THRESHOLD_MINUTES).length
+        : 0;
+      return { ...col, orders: colOrders, staleCount };
+    });
   }, [orders, searchQuery]);
 
   const totalOrders = orders.length;
@@ -526,6 +540,7 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
     // choice to make — pre-select them instead of making the person
     // tap their own name in a list of one before they can confirm.
     setAssignStaffId(fnbStaff.length === 1 ? fnbStaff[0].id : null);
+    setAssignSearchQuery('');
     setAssignTarget(order);
   };
 
@@ -569,14 +584,17 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
       // orders land at 'pending_confirmation' until Front Desk clears
       // them (see FoodOrdersScreen.jsx's "Payment Pending" tab).
       const paymentStatus = paymentMethod === 'cash' ? 'paid' : 'pending_confirmation';
+      const deliveredAt = new Date().toISOString();
+      // delivered_at feeds the F&B dashboard's "average time from
+      // escalated to delivered" stat — see 011_food_service_status_timestamps.sql
       const { error } = await supabase
         .from('food_orders')
-        .update({ status: 'delivered', payment_status: paymentStatus, payment_method: paymentMethod })
+        .update({ status: 'delivered', payment_status: paymentStatus, payment_method: paymentMethod, delivered_at: deliveredAt })
         .eq('id', deliverTarget.id);
       if (error) throw error;
       setOrders((prev) => prev.map((o) => (
         o.id === deliverTarget.id
-          ? { ...o, status: 'delivered', paymentStatus, paymentMethod }
+          ? { ...o, status: 'delivered', paymentStatus, paymentMethod, deliveredAt }
           : o
       )));
       setDeliverTarget(null);
@@ -600,8 +618,11 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
     // know an actual target time.
     const elapsedPct = Math.min(100, Math.round((elapsed / 20) * 100));
 
+    const waitingMinutes = order.status === 'escalated' ? minutesElapsed(order.escalatedAt || order.createdAt) : 0;
+    const isStale = order.status === 'escalated' && waitingMinutes >= STALE_THRESHOLD_MINUTES;
+
     return (
-      <View key={order.id} style={styles.orderCard}>
+      <View key={order.id} style={[styles.orderCard, isStale && styles.orderCardStale]}>
         <View style={styles.orderTopRow}>
           <View style={{ flex: 1 }}>
             <Text style={styles.orderNumber}>Order #{order.orderNumber ?? '—'}</Text>
@@ -627,6 +648,20 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
         </View>
 
         <Text style={styles.guestName}>{order.guestName}</Text>
+
+        {isStale && (
+          <View style={styles.staleBanner}>
+            <Ionicons name="alert-circle" size={14} color="#B3261E" />
+            <Text style={styles.staleBannerText}>Waiting {waitingMinutes}m — needs attention</Text>
+          </View>
+        )}
+
+        {!!order.allergyInfo && (
+          <View style={styles.allergyBanner}>
+            <Ionicons name="warning" size={14} color="#B3792A" />
+            <Text style={styles.allergyBannerText}>Allergy/Dietary: {order.allergyInfo}</Text>
+          </View>
+        )}
 
         {order.status === 'preparing' && (
           <View style={styles.progressWrap}>
@@ -776,15 +811,24 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
                     <Ionicons name={col.icon} size={16} color={colors.white} />
                     <Text style={styles.columnHeaderTitle}>{col.title}</Text>
                   </View>
-                  <Animated.View
-                    style={[
-                      styles.columnHeaderBadge,
-                      col.status === 'escalated' && { transform: [{ scale: pulseAnim }] },
-                    ]}
-                  >
-                    <Text style={styles.columnHeaderBadgeText}>{col.orders.length}</Text>
-                  </Animated.View>
+                  <View style={styles.columnHeaderRight}>
+                    {col.staleCount > 0 && (
+                      <View style={styles.staleCountPill}>
+                        <Ionicons name="alert-circle" size={11} color="#B3261E" />
+                        <Text style={styles.staleCountPillText}>{col.staleCount}</Text>
+                      </View>
+                    )}
+                    <Animated.View
+                      style={[
+                        styles.columnHeaderBadge,
+                        col.status === 'escalated' && { transform: [{ scale: pulseAnim }] },
+                      ]}
+                    >
+                      <Text style={styles.columnHeaderBadgeText}>{col.orders.length}</Text>
+                    </Animated.View>
+                  </View>
                 </View>
+
                 <View style={styles.columnBody}>
                   {col.orders.length === 0 ? (
                     <View style={styles.emptyColumnWrap}>
@@ -828,17 +872,46 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
             {fnbStaff.length === 0 ? (
               <Text style={styles.noStaffText}>No active F&amp;B staff found. Ask an admin to create one under F&amp;B Accounts.</Text>
             ) : (
-              <View style={styles.pickerWrapRow}>
-                {fnbStaff.map((s) => (
-                  <TouchableOpacity
-                    key={s.id}
-                    style={[styles.pickerChip, assignStaffId === s.id && styles.pickerChipActive]}
-                    onPress={() => setAssignStaffId(s.id)}
-                  >
-                    <Text style={[styles.pickerChipText, assignStaffId === s.id && styles.pickerChipTextActive]}>{s.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              <>
+                {fnbStaff.length > 5 && (
+                  <View style={styles.assignSearchBar}>
+                    <Ionicons name="search-outline" size={15} color={colors.textMuted} />
+                    <TextInput
+                      style={styles.assignSearchInput}
+                      value={assignSearchQuery}
+                      onChangeText={setAssignSearchQuery}
+                      placeholder="Search staff by name"
+                      placeholderTextColor={colors.disabled}
+                    />
+                    {!!assignSearchQuery && (
+                      <TouchableOpacity onPress={() => setAssignSearchQuery('')}>
+                        <Ionicons name="close-circle" size={15} color={colors.disabled} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+                {(() => {
+                  const q = assignSearchQuery.trim().toLowerCase();
+                  const filteredStaff = q ? fnbStaff.filter((s) => s.name.toLowerCase().includes(q)) : fnbStaff;
+                  return filteredStaff.length === 0 ? (
+                    <Text style={styles.noStaffText}>No staff match "{assignSearchQuery}".</Text>
+                  ) : (
+                    <View style={styles.pickerWrapRow}>
+                      {filteredStaff.map((s) => (
+                        <TouchableOpacity
+                          key={s.id}
+                          style={[styles.pickerChip, assignStaffId === s.id && styles.pickerChipActive]}
+                          onPress={() => setAssignStaffId(s.id)}
+                        >
+                          <Text style={[styles.pickerChipText, assignStaffId === s.id && styles.pickerChipTextActive]}>
+                            {s.name}{s.id === staffUid ? ' (You)' : ''}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  );
+                })()}
+              </>
             )}
 
             <View style={styles.modalActions}>
@@ -942,11 +1015,17 @@ const styles = StyleSheet.create({
   },
   columnHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   columnHeaderTitle: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.white },
+  columnHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   columnHeaderBadge: {
     backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 999,
     minWidth: 24, height: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6,
   },
   columnHeaderBadgeText: { fontSize: 12, fontFamily: fonts.headingBold, color: colors.white },
+  staleCountPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 3,
+    backgroundColor: colors.white, borderRadius: 999, height: 24, paddingHorizontal: 8,
+  },
+  staleCountPillText: { fontSize: 11, fontFamily: fonts.headingBold, color: '#B3261E' },
   columnBody: { padding: spacing.sm + 2, gap: spacing.sm + 2, alignItems: 'center' },
 
   emptyColumnWrap: { alignItems: 'center', paddingVertical: spacing.lg, gap: spacing.xs },
@@ -958,6 +1037,7 @@ const styles = StyleSheet.create({
     maxWidth: 400, width: '100%',
     shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 1,
   },
+  orderCardStale: { borderColor: '#B3261E', borderWidth: 1.5 },
 
   orderTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   orderNumber: { fontSize: 15, fontFamily: fonts.headingExtraBold, color: colors.primary },
@@ -978,6 +1058,22 @@ const styles = StyleSheet.create({
   // Bold for hierarchy, per the request — the guest's name is the
   // second thing (after the room) staff actually need to confirm.
   guestName: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.text, marginTop: spacing.xs },
+
+  // Deliberately loud — this is a safety flag, not a general note, and
+  // should be impossible to scroll past without noticing.
+  allergyBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#FFF4D6', borderRadius: radius.sm, borderWidth: 1, borderColor: '#F0D896',
+    paddingVertical: 6, paddingHorizontal: spacing.sm, marginTop: spacing.xs,
+  },
+  allergyBannerText: { flex: 1, fontSize: 11.5, fontFamily: fonts.bodySemiBold, color: '#7A5C00' },
+
+  staleBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#FBE7E7', borderRadius: radius.sm, borderWidth: 1, borderColor: '#F0C4C4',
+    paddingVertical: 6, paddingHorizontal: spacing.sm, marginTop: spacing.xs,
+  },
+  staleBannerText: { flex: 1, fontSize: 11.5, fontFamily: fonts.bodySemiBold, color: '#B3261E' },
 
   // Elapsed-time indicator, "Preparing" cards only.
   progressWrap: { marginTop: spacing.xs },
@@ -1064,6 +1160,12 @@ const styles = StyleSheet.create({
   modalSubtitle: { fontSize: 12.5, fontFamily: fonts.body, color: colors.textMuted, marginTop: spacing.xs, marginBottom: spacing.md },
   noStaffText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic' },
 
+  assignSearchBar: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs,
+    backgroundColor: colors.cardAlt, borderRadius: 999, paddingHorizontal: spacing.md, paddingVertical: 8,
+    marginBottom: spacing.sm,
+  },
+  assignSearchInput: { flex: 1, fontSize: 13, fontFamily: fonts.body, color: colors.text, padding: 0 },
   pickerWrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   pickerChip: {
     borderWidth: 1, borderColor: colors.border, borderRadius: 999,

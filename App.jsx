@@ -25,6 +25,8 @@ import ReviewPayScreen      from './src/screens/reviewPay/ReviewPayScreen';
 import FrontDeskShell       from './src/screens/frontdesk/FrontDeskShell';
 import FnbShell             from './src/screens/fnb/FnbShell';
 import AdminShell           from './src/screens/admin/AdminShell';
+import HousekeepingShell    from './src/screens/housekeeping/HousekeepingShell';
+import MaintenanceShell     from './src/screens/maintenance/MaintenanceShell';
 import LoadingScreen        from './src/screens/LoadingScreen';
 import OrderFoodScreen      from './src/foodservice/OrderFoodScreen';
 import { fonts }            from './src/utils/theme';
@@ -99,6 +101,14 @@ import { ThemeProvider }    from './src/context/ThemeContext';
  * mirrors goToMyReservations()'s pattern — bounce to login first if
  * nobody's signed in, since the screen itself needs a real user.id to
  * do anything.
+ *
+ * NOTE ON HOUSEKEEPING / MAINTENANCE (new staff portals):
+ * profiles.role now also allows 'housekeeping' and 'maintenance' (added
+ * via sql/housekeeping_maintenance_roles.sql — a Postgres enum, so those
+ * values had to be added with ALTER TYPE before anything could route to
+ * them). Same shape as the frontdesk/fnb routing right above/below:
+ * HousekeepingShell/MaintenanceShell take the identical
+ * onLoggedOut/staffName/staffUid props FnbShell already does.
  */
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -145,7 +155,13 @@ export default function App() {
       } catch (roleLookupError) {
         console.warn('Role lookup failed on session restore, defaulting to guest:', roleLookupError);
       }
-      const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : role === 'fnb' ? 'fnb' : 'home';
+      const nextScreen =
+        role === 'admin' ? 'admin'
+        : role === 'frontdesk' ? 'frontdesk'
+        : role === 'fnb' ? 'fnb'
+        : role === 'housekeeping' ? 'housekeeping'
+        : role === 'maintenance' ? 'maintenance'
+        : 'home';
       setScreen(nextScreen);
     };
 
@@ -184,7 +200,7 @@ export default function App() {
   // ── Screen state ────────────────────────────────────────────────────
   // 'home' | 'login' | 'register' | 'forgotPassword' | 'profile' | 'about'
   // | 'contact' | 'myReservations' | 'orderFood' | 'roomRates' | 'reviewPay'
-  // | 'frontdesk' | 'fnb' | 'admin'
+  // | 'frontdesk' | 'fnb' | 'admin' | 'housekeeping' | 'maintenance'
   const [screen, setScreen]                   = useState('home');
   const [showReservation, setShowReservation] = useState(false);
   const [bookingDetails, setBookingDetails]   = useState(null);
@@ -193,7 +209,13 @@ export default function App() {
   // ── Auth handlers ───────────────────────────────────────────────────
   const handleLogin = (supabaseUser, role) => {
     setUser(supabaseUser);
-    const nextScreen = role === 'admin' ? 'admin' : role === 'frontdesk' ? 'frontdesk' : role === 'fnb' ? 'fnb' : 'home';
+    const nextScreen =
+      role === 'admin' ? 'admin'
+      : role === 'frontdesk' ? 'frontdesk'
+      : role === 'fnb' ? 'fnb'
+      : role === 'housekeeping' ? 'housekeeping'
+      : role === 'maintenance' ? 'maintenance'
+      : 'home';
     setScreen(nextScreen);
   };
 
@@ -311,6 +333,24 @@ export default function App() {
             <FnbShell
               onLoggedOut={handleLogout}
               staffName={user?.user_metadata?.display_name || user?.email || 'F&B Staff'}
+              staffUid={user?.id}
+            />
+          )}
+
+          {/* ── Housekeeping ──────────────────────────────────────── */}
+          {screen === 'housekeeping' && (
+            <HousekeepingShell
+              onLoggedOut={handleLogout}
+              staffName={user?.user_metadata?.display_name || user?.email || 'Housekeeping Staff'}
+              staffUid={user?.id}
+            />
+          )}
+
+          {/* ── Maintenance ───────────────────────────────────────── */}
+          {screen === 'maintenance' && (
+            <MaintenanceShell
+              onLoggedOut={handleLogout}
+              staffName={user?.user_metadata?.display_name || user?.email || 'Maintenance Staff'}
               staffUid={user?.id}
             />
           )}

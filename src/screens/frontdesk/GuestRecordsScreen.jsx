@@ -15,9 +15,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { formatDate } from '../../utils/dateHelpers';
 import { formatCurrency } from '../../utils/roomRates';
+import Pagination from '../../components/shared/Pagination';
 
 /**
  * GuestRecordsScreen — the master guest directory (Guest Management → Guest
@@ -82,6 +83,7 @@ import { formatCurrency } from '../../utils/roomRates';
 const SOURCE_OPTIONS = ['Mobile App', 'Website', 'Walk-In', 'Front Desk'];
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'upcoming', 'checked-in'];
+const PAGE_SIZE = 5;
 
 // Internal status strings → PMS-friendly display labels + badge colors.
 // (Internal values stay exactly as AdminBookingsScreen already uses them
@@ -157,6 +159,7 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [form, setForm] = useState(emptyForm());
@@ -301,6 +304,18 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
     });
   }, [joinedGuests, searchText]);
 
+  // Jump back to page 1 whenever the search narrows/changes the result
+  // set — otherwise a stale page number could point past the end of a
+  // newly-filtered (shorter) list and show nothing.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchText]);
+
+  const pagedGuests = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredGuests.slice(start, start + PAGE_SIZE);
+  }, [filteredGuests, currentPage]);
+
   // ── Add Guest form ─────────────────────────────────────────────────
   const updateField = (key, value) => {
     setForm((p) => ({ ...p, [key]: value }));
@@ -394,19 +409,19 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
     const isVip = !!item.vipTier;
     const reservation = item._currentReservation;
     const statusMeta = reservation ? RESERVATION_STATUS_META[reservation.status] : null;
-    const { totalStays, totalReservations, lifetimeSpend, lastStayDate } = item._stats;
     const isDeleting = deletingId === item.id;
+    const accentColor = statusMeta ? statusMeta.text : colors.border;
 
     return (
       <TouchableOpacity
-        style={styles.card}
+        style={[styles.card, { borderLeftColor: accentColor }]}
         activeOpacity={0.7}
         onPress={() => onSelectGuest && onSelectGuest(item)}
         disabled={isDeleting}
       >
         {/* ── Guest Information ─────────────────────────────── */}
         <View style={styles.identityRow}>
-          <View style={styles.avatarWrap}>
+          <View style={[styles.avatarWrap, { borderColor: accentColor }]}>
             {item.photoURL ? (
               <Image source={{ uri: item.photoURL }} style={styles.avatarImage} resizeMode="cover" />
             ) : (
@@ -428,14 +443,11 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
             </View>
 
             <View style={styles.contactRow}>
-              <View style={styles.contactItem}>
-                <Ionicons name="call-outline" size={12} color={colors.textMuted} />
-                <Text style={styles.contactText}>{item.phone || '—'}</Text>
-              </View>
-              <View style={styles.contactItem}>
-                <Ionicons name="mail-outline" size={12} color={colors.textMuted} />
-                <Text style={styles.contactText} numberOfLines={1}>{item.email || '—'}</Text>
-              </View>
+              <Ionicons name="call-outline" size={12} color={colors.textMuted} />
+              <Text style={styles.contactText}>{item.phone || '—'}</Text>
+              <View style={styles.contactDot} />
+              <Ionicons name="mail-outline" size={12} color={colors.textMuted} />
+              <Text style={styles.contactText} numberOfLines={1}>{item.email || '—'}</Text>
             </View>
           </View>
 
@@ -453,41 +465,35 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
             {isDeleting ? (
               <ActivityIndicator size="small" color={colors.danger} />
             ) : (
-              <Ionicons name="trash-outline" size={16} color={colors.danger} />
+              <Ionicons name="trash-outline" size={15} color={colors.danger} />
             )}
           </TouchableOpacity>
 
           <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
         </View>
 
-        <View style={styles.divider} />
-
         {/* ── Current Reservation Information ───────────────── */}
-        {reservation ? (
-          <View style={styles.reservationRow}>
-            <InfoChip label="Room Type" value={reservation.roomType || '—'} />
-            {statusMeta && (
-              <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
-                <Text style={[styles.statusBadgeText, { color: statusMeta.text }]}>
-                  {statusMeta.label}
-                </Text>
-              </View>
-            )}
-            <InfoChip label="Check-in"  value={formatDateTime(reservation.checkIn)} />
-            <InfoChip label="Check-out" value={formatDateTime(reservation.checkOut)} />
+        <View style={styles.reservationBox}>
+          <View style={styles.sectionLabelRow}>
+            <Ionicons name="calendar-outline" size={11} color={colors.textMuted} />
+            <Text style={styles.sectionLabelText}>Current Stay</Text>
           </View>
-        ) : (
-          <Text style={styles.noReservationText}>No reservation on file</Text>
-        )}
-
-        <View style={styles.divider} />
-
-        {/* ── Guest Statistics ───────────────────────────────── */}
-        <View style={styles.statsRow}>
-          <Stat label="Total Stays" value={String(totalStays)} />
-          <Stat label="Total Reservations" value={String(totalReservations)} />
-          <Stat label="Lifetime Spend" value={formatCurrency(lifetimeSpend)} />
-          <Stat label="Last Stay" value={lastStayDate ? (() => { try { return formatDate(new Date(lastStayDate)); } catch { return '—'; } })() : '—'} />
+          {reservation ? (
+            <View style={styles.reservationRow}>
+              <InfoChip label="Room Type" value={reservation.roomType || '—'} />
+              {statusMeta && (
+                <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
+                  <Text style={[styles.statusBadgeText, { color: statusMeta.text }]}>
+                    {statusMeta.label}
+                  </Text>
+                </View>
+              )}
+              <InfoChip label="Check-in"  value={formatDateTime(reservation.checkIn)} />
+              <InfoChip label="Check-out" value={formatDateTime(reservation.checkOut)} />
+            </View>
+          ) : (
+            <Text style={styles.noReservationText}>No reservation on file</Text>
+          )}
         </View>
       </TouchableOpacity>
     );
@@ -545,11 +551,20 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
         </View>
       ) : (
         <FlatList
-          data={filteredGuests}
+          data={pagedGuests}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           renderItem={renderGuestCard}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
+        />
+      )}
+
+      {!loading && filteredGuests.length > 0 && (
+        <Pagination
+          currentPage={currentPage}
+          totalItems={filteredGuests.length}
+          pageSize={PAGE_SIZE}
+          onPageChange={setCurrentPage}
         />
       )}
 
@@ -719,9 +734,10 @@ function InfoChip({ label, value }) {
   );
 }
 
-function Stat({ label, value }) {
+function Stat({ icon, label, value }) {
   return (
     <View style={styles.statItem}>
+      {!!icon && <Ionicons name={icon} size={13} color={colors.textMuted} style={styles.statIcon} />}
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
@@ -770,18 +786,24 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text },
 
-  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
+  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, backgroundColor: colors.background },
   emptyText: { fontSize: 14, fontFamily: fonts.body, color: colors.textMuted, textAlign: 'center' },
 
-  listContent: { padding: spacing.lg },
-  separator: { height: spacing.sm },
+  listContent: { padding: spacing.lg, paddingBottom: spacing.sm },
+  separator: { height: 8 },
 
   card: {
     backgroundColor: colors.white,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: spacing.md,
+    borderLeftWidth: 4,
+    padding: spacing.sm,
+    shadowColor: '#332B22',
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
   },
 
   identityRow: {
@@ -790,23 +812,22 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   avatarWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: colors.primaryTint,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
     flexShrink: 0,
   },
   avatarImage: { width: '100%', height: '100%' },
-  avatarInitials: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.primary },
+  avatarInitials: { fontSize: 13, fontFamily: fonts.headingBold, color: colors.primary },
 
   identityMain: { flex: 1, minWidth: 0 },
   nameLine: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.xs },
-  guestName: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.text },
+  guestName: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.text },
 
   vipBadge: {
     flexDirection: 'row',
@@ -819,20 +840,34 @@ const styles = StyleSheet.create({
   },
   vipBadgeText: { fontSize: 9, fontFamily: fonts.bodySemiBold, color: '#8A6D00', letterSpacing: 0.3 },
 
-  contactRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.xs },
-  contactItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  contactText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
+  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  contactText: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, flexShrink: 1 },
+  contactDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: colors.disabled, marginHorizontal: 4 },
 
   deleteBtn: {
     width: 28,
     height: 28,
     borderRadius: 14,
+    backgroundColor: '#FDECEA',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
 
-  divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.sm },
+  reservationBox: {
+    backgroundColor: colors.cardAlt,
+    borderRadius: radius.sm,
+    padding: 6,
+    marginTop: spacing.sm,
+  },
+  sectionLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 2 },
+  sectionLabelText: {
+    fontSize: 9,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
 
   reservationRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm },
   noReservationText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic' },
@@ -844,8 +879,17 @@ const styles = StyleSheet.create({
   statusBadge: { paddingVertical: 3, paddingHorizontal: spacing.sm, borderRadius: radius.sm },
   statusBadgeText: { fontSize: 10, fontFamily: fonts.bodySemiBold, letterSpacing: 0.3 },
 
-  statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.lg },
-  statItem: { minWidth: 90 },
+  statsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  statDivider: { width: 1, height: 28, backgroundColor: colors.border, marginHorizontal: spacing.md },
+  statItem: { flex: 1 },
+  statIcon: { marginBottom: 2 },
   statValue: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.text },
   statLabel: { fontSize: 9, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1 },
 

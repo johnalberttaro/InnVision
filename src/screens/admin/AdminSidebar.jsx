@@ -9,7 +9,7 @@ import {
   Modal,
   useWindowDimensions,
 } from 'react-native';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 
 const WIDE_BREAKPOINT = 1024; // sidebar is fixed/always-visible above this
@@ -54,7 +54,8 @@ const MENU_SECTIONS = [
       { key: 'staff:accounts', label: 'Front Desk Accounts' },
       { key: 'staff:frontdesk', label: 'Front Desk Roster' },
       { key: 'staff:fnb', label: 'F&B Accounts' },
-      { key: 'staff:housekeeping', label: 'Housekeeping Accounts', comingSoon: true },
+      { key: 'staff:housekeeping', label: 'Housekeeping Accounts' },
+      { key: 'staff:maintenance', label: 'Maintenance Accounts' },
     ],
   },
   {
@@ -72,6 +73,7 @@ const MENU_SECTIONS = [
       { key: 'fd:reservations:confirmed', label: 'Confirmed Reservations' },
       { key: 'fd:reservations:checkins', label: 'Check-ins' },
       { key: 'fd:reservations:checkouts', label: 'Check-outs' },
+      { key: 'fd:reservations:refunds', label: 'Refunds Pending' },
       { key: 'fd:rooms:list', label: 'Room List' },
       { key: 'fd:rooms:types', label: 'Room Types' },
       { key: 'fd:rooms:availability', label: 'Room Availability' },
@@ -97,6 +99,7 @@ const MENU_SECTIONS = [
     subItems: [
       { key: 'reports:occupancy', label: 'Occupancy Report' },
       { key: 'reports:revenue', label: 'Revenue Report' },
+      { key: 'reports:ratings', label: 'Guest Ratings' },
     ],
   },
 ];

@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 import AddFoodItemScreen from './AddFoodItemScreen';
 
@@ -377,7 +377,7 @@ export default function FoodMenuScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
   emptyText: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic', padding: spacing.lg },
 
   header: {

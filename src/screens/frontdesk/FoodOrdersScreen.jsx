@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import KpiCard from '../../components/dashboard/KpiCard';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 
@@ -104,6 +104,7 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
     paymentStatus: row.payment_status,
     paymentMethod: row.payment_method,
     notes: row.notes,
+    allergyInfo: row.allergy_info,
     totalAmount: row.total_amount,
     placedBy: row.placed_by,
     createdAt: row.created_at,
@@ -162,12 +163,15 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
     setBusyOrderId(order.id);
     setActionError('');
     try {
-      const { error } = await supabase.from('food_orders').update({ status: 'escalated' }).eq('id', order.id);
+      const escalatedAt = new Date().toISOString();
+      // escalated_at feeds the F&B dashboard's "average time from
+      // escalated to delivered" stat — see 011_food_service_status_timestamps.sql
+      const { error } = await supabase.from('food_orders').update({ status: 'escalated', escalated_at: escalatedAt }).eq('id', order.id);
       if (error) throw error;
       // Update our own view immediately rather than waiting on the
       // realtime round-trip — this succeeded, no reason to wait to see
       // it reflected on the very screen that just did it.
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: 'escalated' } : o)));
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status: 'escalated', escalatedAt } : o)));
     } catch (err) {
       console.error('Failed to escalate order:', err);
       setActionError(err?.message || 'Could not escalate this order. Please try again.');
@@ -283,6 +287,14 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
                 </View>
 
                 <Text style={styles.guestName}>{order.guestName}</Text>
+
+                {!!order.allergyInfo && (
+                  <View style={styles.allergyBanner}>
+                    <Ionicons name="warning" size={14} color="#B3792A" />
+                    <Text style={styles.allergyBannerText}>Allergy/Dietary: {order.allergyInfo}</Text>
+                  </View>
+                )}
+
                 <Text style={styles.itemsSummary} numberOfLines={2}>{itemsSummary(order.items)}</Text>
                 {!!order.notes && <Text style={styles.orderNotes}>"{order.notes}"</Text>}
 
@@ -412,6 +424,13 @@ const styles = StyleSheet.create({
   statusBadgeText: { fontSize: 10, fontFamily: fonts.bodySemiBold },
 
   guestName: { fontSize: 14, fontFamily: fonts.headingSemiBold, color: colors.text, marginTop: spacing.sm },
+
+  allergyBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#FFF4D6', borderRadius: radius.sm, borderWidth: 1, borderColor: '#F0D896',
+    paddingVertical: 6, paddingHorizontal: spacing.sm, marginTop: spacing.xs,
+  },
+  allergyBannerText: { flex: 1, fontSize: 11.5, fontFamily: fonts.bodySemiBold, color: '#7A5C00' },
   itemsSummary: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
   orderNotes: { fontSize: 11.5, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic', marginTop: spacing.xs },
 

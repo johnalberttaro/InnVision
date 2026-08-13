@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import FnbSidebar from './FnbSidebar';
+import FnbDashboardScreen from './FnbDashboardScreen';
 import KitchenOrdersScreen from './KitchenOrdersScreen';
 import OrderHistoryScreen from './OrderHistoryScreen';
 import MenuAvailabilityScreen from './MenuAvailabilityScreen';
 import MyProfileScreen from '../frontdesk/MyProfileScreen';
 import DashboardFooter from '../../components/shared/DashboardFooter';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, fonts } from '../../utils/theme';
+import { colors, spacing, fonts } from '../../utils/portalTheme';
 
 const WIDE_BREAKPOINT = 1024;
 
@@ -18,6 +19,8 @@ const WIDE_BREAKPOINT = 1024;
  * Same shape as FrontDeskShell.jsx (sidebar + top bar + content area +
  * footer, same responsive sidebar-overlay behavior, same live-synced
  * sidebar avatar), scaled down to what this role actually needs:
+ *  - Dashboard — today's orders, revenue, average escalated-to-delivered
+ *    time, and top items, at a glance.
  *  - Kitchen Orders — active work: prepare an escalated order, assign
  *    a delivery staff member, mark an order delivered + record how it
  *    was paid.
@@ -44,7 +47,7 @@ const WIDE_BREAKPOINT = 1024;
  *  - staffUid: string
  */
 export default function FnbShell({ onLoggedOut, staffName, staffUid }) {
-  const [activeKey, setActiveKey] = useState('kitchenorders');
+  const [activeKey, setActiveKey] = useState('dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
@@ -117,8 +120,10 @@ export default function FnbShell({ onLoggedOut, staffName, staffUid }) {
             <OrderHistoryScreen staffUid={staffUid} staffName={staffName} />
           ) : activeKey === 'menuavailability' ? (
             <MenuAvailabilityScreen staffUid={staffUid} staffName={staffName} />
-          ) : (
+          ) : activeKey === 'kitchenorders' ? (
             <KitchenOrdersScreen staffUid={staffUid} staffName={staffName} />
+          ) : (
+            <FnbDashboardScreen staffUid={staffUid} staffName={staffName} onNavigate={handleNavigate} />
           )}
         </View>
 

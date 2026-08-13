@@ -798,7 +798,7 @@ function getStyles(colors, spacing, radius, fonts) {
       width: '100%',
       maxWidth: 560,
       backgroundColor: colors.card,
-      borderRadius: radius.xl,
+      borderRadius: radius.lg,
       borderWidth: 1,
       borderColor: colors.border,
       padding: spacing.xl,

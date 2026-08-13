@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../services/supabase';
+import { submitFoodReview, fetchReviewedIds } from '../utils/ReviewsService';
+import RatingModal from '../components/shared/RatingModal';
 import { useTheme } from '../context/ThemeContext';
 
 const LOGO_SOURCE = require('../../assets/logo.png');
@@ -105,6 +107,7 @@ export default function OrderFoodScreen({ user, onBackPress }) {
   const [menuItems, setMenuItems] = useState([]);
   const [cart, setCart] = useState({}); // { [menuItemId]: quantity }
   const [notes, setNotes] = useState('');
+  const [allergyInfo, setAllergyInfo] = useState('');
   const [view, setView] = useState('menu'); // 'menu' | 'cart' | 'confirmed'
   const [placingOrder, setPlacingOrder] = useState(false);
   const [orderError, setOrderError] = useState('');
@@ -124,6 +127,18 @@ export default function OrderFoodScreen({ user, onBackPress }) {
   // same pattern KitchenOrdersScreen.jsx's new-order chime uses to
   // avoid re-alerting on things already seen.
   const seenStatusKeysRef = useRef(new Set());
+
+  // Which of this guest's delivered orders already have a food rating
+  // submitted — hides the "Rate this order" prompt for those.
+  const [reviewedOrderIds, setReviewedOrderIds] = useState(new Set());
+  const [foodRatingTarget, setFoodRatingTarget] = useState(null); // order being rated
+
+  useEffect(() => {
+    if (!user?.id) return;
+    fetchReviewedIds(user.id, 'food')
+      .then(setReviewedOrderIds)
+      .catch((err) => console.error('Failed to load reviewed orders:', err));
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -388,6 +403,7 @@ export default function OrderFoodScreen({ user, onBackPress }) {
           guest_name: guestName,
           room_number: roomNumber || 'Unknown',
           notes: notes.trim() || null,
+          allergy_info: allergyInfo.trim() || null,
           total_amount: cartTotal,
           placed_by: 'guest',
         })
@@ -448,7 +464,7 @@ export default function OrderFoodScreen({ user, onBackPress }) {
   if (view === 'confirmed') {
     return (
       <SafeAreaView style={styles.safe}>
-        <View style={styles.centerWrap}>
+        <ScrollView contentContainerStyle={styles.confirmScrollContent}>
           <View style={styles.confirmIconWrap}>
             <Ionicons name="checkmark" size={32} color={colors.onPrimary} />
           </View>
@@ -456,11 +472,36 @@ export default function OrderFoodScreen({ user, onBackPress }) {
           <Text style={styles.emptyText}>
             Your order for Room {roomNumber} has been sent to our staff. When it's delivered, we'll bring an itemized bill and a QR code — you can pay by cash or e-wallet at that time.
           </Text>
+
+          {cartLines.length > 0 && (
+            <View style={styles.confirmSummaryCard}>
+              <Text style={styles.confirmSummaryTitle}>What you ordered</Text>
+              {cartLines.map((line) => (
+                <View key={line.id} style={styles.confirmSummaryRow}>
+                  <Text style={styles.confirmSummaryItemText} numberOfLines={1}>{line.quantity}× {line.name}</Text>
+                  <Text style={styles.confirmSummaryItemPrice}>{formatCurrency(line.subtotal)}</Text>
+                </View>
+              ))}
+              <View style={styles.confirmSummaryDivider} />
+              <View style={styles.confirmSummaryRow}>
+                <Text style={styles.confirmSummaryTotalLabel}>Total</Text>
+                <Text style={styles.confirmSummaryTotalValue}>{formatCurrency(cartTotal)}</Text>
+              </View>
+              {!!allergyInfo.trim() && (
+                <View style={styles.confirmAllergyNote}>
+                  <Ionicons name="warning-outline" size={13} color="#B3792A" />
+                  <Text style={styles.confirmAllergyNoteText}>Allergy/Dietary note included</Text>
+                </View>
+              )}
+            </View>
+          )}
+
           <TouchableOpacity
             style={styles.primaryBtn}
             onPress={() => {
               setCart({});
               setNotes('');
+              setAllergyInfo('');
               setView('menu');
             }}
           >
@@ -471,7 +512,7 @@ export default function OrderFoodScreen({ user, onBackPress }) {
               <Text style={styles.backLinkText}>Back to Profile</Text>
             </TouchableOpacity>
           )}
-        </View>
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -649,6 +690,21 @@ export default function OrderFoodScreen({ user, onBackPress }) {
               </View>
             ))}
 
+            <View style={styles.allergyFieldWrap}>
+              <View style={styles.allergyFieldLabelRow}>
+                <Ionicons name="warning-outline" size={15} color="#B3792A" />
+                <Text style={styles.allergyFieldLabel}>Allergies or dietary restrictions? (optional)</Text>
+              </View>
+              <TextInput
+                style={styles.allergyInput}
+                value={allergyInfo}
+                onChangeText={setAllergyInfo}
+                placeholder="e.g. Shellfish allergy, no peanuts"
+                placeholderTextColor={colors.disabled}
+                multiline
+              />
+            </View>
+
             <Text style={styles.fieldLabel}>Notes for the kitchen (optional)</Text>
             <TextInput
               style={styles.notesInput}
@@ -708,6 +764,23 @@ export default function OrderFoodScreen({ user, onBackPress }) {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.notifRowText}>{meta.text}</Text>
                       <Text style={styles.notifRowMeta}>Room {o.room_number} · {timeAgo(o.created_at)}</Text>
+                      {o.status === 'delivered' && (
+                        reviewedOrderIds.has(o.id) ? (
+                          <View style={styles.notifRatedBadge}>
+                            <Ionicons name="checkmark-circle" size={13} color={colors.text} />
+                            <Text style={styles.notifRatedText}>Rated</Text>
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            style={styles.notifRateBtn}
+                            onPress={() => setFoodRatingTarget(o)}
+                            activeOpacity={0.85}
+                          >
+                            <Ionicons name="star-outline" size={13} color={colors.onPrimary} />
+                            <Text style={styles.notifRateBtnText}>Rate this order</Text>
+                          </TouchableOpacity>
+                        )
+                      )}
                     </View>
                   </View>
                 );
@@ -716,6 +789,27 @@ export default function OrderFoodScreen({ user, onBackPress }) {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      <RatingModal
+        visible={!!foodRatingTarget}
+        onClose={() => setFoodRatingTarget(null)}
+        subjectTitle={foodRatingTarget ? `Order — Room ${foodRatingTarget.room_number}` : ''}
+        subjectSubtitle={foodRatingTarget ? timeAgo(foodRatingTarget.created_at) : ''}
+        onSubmit={async (rating, comment) => {
+          const guestNameForReview = checkedInReservation?.guest_details
+            ? `${checkedInReservation.guest_details.firstName || ''} ${checkedInReservation.guest_details.lastName || ''}`.trim()
+            : (checkedInReservation?.guest_email || user?.email || 'Guest');
+          await submitFoodReview({
+            userId: user.id,
+            guestName: guestNameForReview,
+            orderId: foodRatingTarget.id,
+            subjectLabel: `Order — Room ${foodRatingTarget.room_number}`,
+            rating,
+            comment,
+          });
+          setReviewedOrderIds((prev) => new Set(prev).add(foodRatingTarget.id));
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -724,6 +818,23 @@ function getStyles(colors, spacing, radius, fonts) {
   return StyleSheet.create({
     safe: { flex: 1, backgroundColor: colors.background },
     centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
+    confirmScrollContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
+
+    confirmSummaryCard: {
+      width: '100%', maxWidth: 380, backgroundColor: colors.cardAlt, borderRadius: radius.md,
+      borderWidth: 1, borderColor: colors.border,
+      padding: spacing.lg, marginTop: spacing.lg,
+      shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 1,
+    },
+    confirmSummaryTitle: { fontFamily: fonts.headingSemiBold, fontSize: 13, color: colors.text, marginBottom: spacing.sm },
+    confirmSummaryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, gap: spacing.sm },
+    confirmSummaryItemText: { flex: 1, fontFamily: fonts.body, fontSize: 12.5, color: colors.text },
+    confirmSummaryItemPrice: { fontFamily: fonts.bodyMedium, fontSize: 12.5, color: colors.textMuted },
+    confirmSummaryDivider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.xs },
+    confirmSummaryTotalLabel: { fontFamily: fonts.headingSemiBold, fontSize: 13, color: colors.text },
+    confirmSummaryTotalValue: { fontFamily: fonts.headingBold, fontSize: 15, color: colors.primary },
+    confirmAllergyNote: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: spacing.sm },
+    confirmAllergyNoteText: { fontFamily: fonts.bodyMedium, fontSize: 11, color: '#7A5C00' },
     emptyTitle: { fontFamily: fonts.headingBold, fontSize: 17, color: colors.text, marginTop: spacing.md, textAlign: 'center' },
     emptyText: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, textAlign: 'center', marginTop: spacing.xs, maxWidth: 320 },
     backLinkBtn: { marginTop: spacing.lg },
@@ -779,6 +890,25 @@ function getStyles(colors, spacing, radius, fonts) {
     },
     notifRowText: { fontFamily: fonts.bodySemiBold, fontSize: 14, color: colors.text },
     notifRowMeta: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, marginTop: 3 },
+    notifRateBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      gap: 5,
+      marginTop: spacing.sm,
+      paddingVertical: 6,
+      paddingHorizontal: spacing.sm,
+      borderRadius: radius.sm,
+      backgroundColor: colors.primary,
+    },
+    notifRateBtnText: { fontFamily: fonts.bodySemiBold, fontSize: 11, color: colors.onPrimary },
+    notifRatedBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      marginTop: spacing.sm,
+    },
+    notifRatedText: { fontFamily: fonts.bodySemiBold, fontSize: 11, color: colors.text },
 
 
     // Brand row sits on its own, directly above the greeting — the
@@ -890,6 +1020,17 @@ function getStyles(colors, spacing, radius, fonts) {
       padding: spacing.sm, fontFamily: fonts.body, fontSize: 13, color: colors.text, minHeight: 70, textAlignVertical: 'top',
     },
 
+    // Deliberately styled to stand apart from the plain notes field
+    // above — this is a safety field, not a preference, and should
+    // read that way even before anyone types anything into it.
+    allergyFieldWrap: { marginTop: spacing.md, backgroundColor: '#FFF4D6', borderRadius: radius.md, padding: spacing.sm, borderWidth: 1, borderColor: '#F0D896' },
+    allergyFieldLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: spacing.xs },
+    allergyFieldLabel: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: '#7A5C00' },
+    allergyInput: {
+      borderWidth: 1, borderColor: '#F0D896', borderRadius: radius.sm, backgroundColor: colors.white,
+      padding: spacing.sm, fontFamily: fonts.body, fontSize: 13, color: colors.text, minHeight: 50, textAlignVertical: 'top',
+    },
+
     paymentNote: {
       flexDirection: 'row', backgroundColor: colors.cardAlt, borderRadius: radius.md,
       padding: spacing.sm, marginTop: spacing.md,
@@ -902,7 +1043,13 @@ function getStyles(colors, spacing, radius, fonts) {
     totalLabel: { fontFamily: fonts.headingSemiBold, fontSize: 15, color: colors.text },
     totalValue: { fontFamily: fonts.headingExtraBold, fontSize: 20, color: colors.primary },
 
-    primaryBtn: { backgroundColor: colors.primary, borderRadius: 999, paddingVertical: spacing.md, alignItems: 'center', justifyContent: 'center', marginTop: spacing.lg },
+    primaryBtn: {
+      backgroundColor: colors.primary, borderRadius: 999,
+      paddingVertical: spacing.md, paddingHorizontal: spacing.xxl,
+      minWidth: 180,
+      alignItems: 'center', justifyContent: 'center', marginTop: spacing.lg,
+      shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 6, elevation: 3,
+    },
     primaryBtnDisabled: { opacity: 0.5 },
     primaryBtnText: { fontFamily: fonts.headingSemiBold, fontSize: 14, color: colors.onPrimary },
   });

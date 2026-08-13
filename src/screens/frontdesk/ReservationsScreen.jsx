@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { formatCurrency } from '../../utils/roomRates';
 import { createBillingRecord } from '../../utils/BillingService';
 import { updateRoomStatus, ROOM_STATUS } from '../../utils/Roomsservice';

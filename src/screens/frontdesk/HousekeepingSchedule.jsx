@@ -13,8 +13,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import KpiCard from '../../components/dashboard/KpiCard';
+import Pagination from '../../components/shared/Pagination';
 import {
   subscribeToRooms,
   updateRoomStatus,
@@ -24,6 +25,7 @@ import {
 } from '../../utils/Roomsservice';
 
 const MOBILE_BREAKPOINT = 900;
+const SECTION_PAGE_SIZE = 6;
 
 /**
  * HousekeepingScheduleScreen — a real-time task board for room cleaning
@@ -68,6 +70,14 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
   const [staffList, setStaffList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState(null);
+  // One page number per section — desktop layout paginates each section
+  // independently (see SECTION_PAGE_SIZE below) so a busy day with many
+  // completed tasks doesn't turn into one long scroll.
+  const [assignedPage, setAssignedPage] = useState(1);
+  const [inProgressPage, setInProgressPage] = useState(1);
+  // Completed uses a "Show All" expand toggle instead of pagination (see
+  // Section's mode='expand') — starts collapsed to the first 10.
+  const [completedExpanded, setCompletedExpanded] = useState(false);
 
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignRoom, setAssignRoom] = useState(null);
@@ -127,7 +137,7 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
       const { data, error } = await supabase
         .from('profiles')
         .select('id, first_name, last_name, display_name')
-        .eq('role', 'frontdesk')
+        .eq('role', 'housekeeping')
         .eq('active', true)
         .order('first_name');
       if (error) {
@@ -175,6 +185,12 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
       return sum + diffMs / 60000;
     }, 0);
     const avgMins = totalMins / withBothTimes.length;
+    // Distinguishes "genuinely averaging under a minute" from "there's
+    // real data, it just rounds down to 0" — the latter reading as "0m"
+    // looks like a broken/empty stat rather than a fast (or, more
+    // likely in test data, near-identical started_at/completed_at
+    // timestamps) real number.
+    if (avgMins > 0 && avgMins < 1) return '<1m';
     return avgMins < 60 ? `${Math.round(avgMins)}m` : `${(avgMins / 60).toFixed(1)}h`;
   }, [tasks]);
 
@@ -188,7 +204,11 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
     const mins = Math.max(0, Math.round((Date.now() - new Date(isoString).getTime()) / 60000));
     if (mins < 60) return `${mins}m ago`;
     const hrs = Math.round(mins / 60);
-    return `${hrs}h ago`;
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.round(hrs / 24);
+    if (days < 7) return `${days}d ago`;
+    const weeks = Math.round(days / 7);
+    return `${weeks}w ago`;
   };
 
   // ── Task lifecycle actions ───────────────────────────────────────────
@@ -270,15 +290,19 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
     const isUpdating = updatingId === task.id;
     const meta = roomStatusMeta(task.roomNumber);
     const isMine = staffUid && task.assignedTo === staffUid;
+    // Urgency only visually matters while the task is still outstanding —
+    // once it's done, a red "Urgent" flag next to a green "Done" check
+    // reads as contradictory rather than informative.
+    const isUrgent = task.priority === 'urgent' && task.status !== 'completed';
 
     return (
-      <View style={[styles.taskCard, task.priority === 'urgent' && styles.taskCardUrgent]}>
+      <View style={[styles.taskCard, isUrgent && styles.taskCardUrgent]}>
         <View style={styles.taskCardTop}>
           <View style={styles.roomBadge}>
             <Ionicons name="key-outline" size={12} color={colors.white} />
             <Text style={styles.roomBadgeText}>Room {task.roomNumber}</Text>
           </View>
-          {task.priority === 'urgent' && (
+          {isUrgent && (
             <View style={styles.urgentBadge}>
               <Ionicons name="alert-circle" size={11} color="#B3261E" />
               <Text style={styles.urgentBadgeText}>Urgent</Text>
@@ -349,12 +373,80 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
         </View>
       </View>
       {tasksInColumn.length === 0 ? (
-        <Text style={styles.columnEmpty}>No tasks here.</Text>
+        <View style={styles.columnEmptyWrap}>
+          <Ionicons name="checkmark-done-outline" size={20} color={colors.disabled} />
+          <Text style={styles.columnEmpty}>No tasks here</Text>
+        </View>
       ) : (
         tasksInColumn.map((task) => <TaskCard key={task.id} task={task} />)
       )}
     </View>
   );
+
+  // Desktop-only: a full-width section (not a narrow fixed-width lane)
+  // whose cards wrap into a responsive grid — 2, 3, or more per row
+  // depending on how wide the window actually is — instead of one card
+  // per row in a 300px column. Paginated (SECTION_PAGE_SIZE per page) so
+  // a section with many tasks (e.g. Completed on a busy day) still has a
+  // hard cap on scroll length instead of growing without bound.
+  const Section = ({ title, count, tasksInColumn, accentColor, page, setPage, mode = 'paginate', limit, expanded, onToggleExpand }) => {
+    const isExpandMode = mode === 'expand';
+
+    const totalPages = Math.max(1, Math.ceil(tasksInColumn.length / SECTION_PAGE_SIZE));
+    const safePage = Math.min(page || 1, totalPages);
+
+    const pageItems = isExpandMode
+      ? (expanded ? tasksInColumn : tasksInColumn.slice(0, limit))
+      : tasksInColumn.slice((safePage - 1) * SECTION_PAGE_SIZE, safePage * SECTION_PAGE_SIZE);
+
+    return (
+      <View style={styles.section}>
+        <View style={styles.columnHeader}>
+          <View style={[styles.columnDot, { backgroundColor: accentColor }]} />
+          <Text style={styles.columnTitle}>{title}</Text>
+          <View style={styles.columnCount}>
+            <Text style={styles.columnCountText}>{count}</Text>
+          </View>
+        </View>
+        {tasksInColumn.length === 0 ? (
+          <View style={styles.columnEmptyWrap}>
+            <Ionicons name="checkmark-done-outline" size={20} color={colors.disabled} />
+            <Text style={styles.columnEmpty}>No tasks here</Text>
+          </View>
+        ) : (
+          <>
+            <View style={styles.taskGrid}>
+              {pageItems.map((task) => (
+                <View key={task.id} style={styles.taskGridItem}>
+                  <TaskCard task={task} />
+                </View>
+              ))}
+            </View>
+
+            {isExpandMode ? (
+              tasksInColumn.length > limit && (
+                <TouchableOpacity style={styles.showMoreBtn} onPress={onToggleExpand} activeOpacity={0.8}>
+                  <Text style={styles.showMoreBtnText}>
+                    {expanded ? 'Show Less' : `Show All Completed (${tasksInColumn.length})`}
+                  </Text>
+                  <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.primary} />
+                </TouchableOpacity>
+              )
+            ) : (
+              tasksInColumn.length > SECTION_PAGE_SIZE && (
+                <Pagination
+                  currentPage={safePage}
+                  totalItems={tasksInColumn.length}
+                  pageSize={SECTION_PAGE_SIZE}
+                  onPageChange={setPage}
+                />
+              )
+            )}
+          </>
+        )}
+      </View>
+    );
+  };
 
   if (loading) {
     return (
@@ -401,15 +493,46 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
         />
       </View>
 
-      <ScrollView
-        horizontal={isMobile}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={[styles.boardContent, !isMobile && styles.boardContentWide]}
-      >
-        <Column title="Assigned" count={columns.assigned.length} tasksInColumn={columns.assigned} accentColor="#9A7B00" />
-        <Column title="In Progress" count={columns.in_progress.length} tasksInColumn={columns.in_progress} accentColor="#B3792A" />
-        <Column title="Completed" count={columns.completed.length} tasksInColumn={columns.completed} accentColor="#1E7B34" />
-      </ScrollView>
+      {isMobile ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.boardContent}
+        >
+          <Column title="Assigned" count={columns.assigned.length} tasksInColumn={columns.assigned} accentColor="#9A7B00" />
+          <Column title="In Progress" count={columns.in_progress.length} tasksInColumn={columns.in_progress} accentColor="#B3792A" />
+          <Column title="Completed" count={columns.completed.length} tasksInColumn={columns.completed} accentColor="#1E7B34" />
+        </ScrollView>
+      ) : (
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.sectionsStack} showsVerticalScrollIndicator={false}>
+          <Section
+            title="Assigned"
+            count={columns.assigned.length}
+            tasksInColumn={columns.assigned}
+            accentColor="#9A7B00"
+            page={assignedPage}
+            setPage={setAssignedPage}
+          />
+          <Section
+            title="In Progress"
+            count={columns.in_progress.length}
+            tasksInColumn={columns.in_progress}
+            accentColor="#B3792A"
+            page={inProgressPage}
+            setPage={setInProgressPage}
+          />
+          <Section
+            title="Completed"
+            count={columns.completed.length}
+            tasksInColumn={columns.completed}
+            accentColor="#1E7B34"
+            mode="expand"
+            limit={8}
+            expanded={completedExpanded}
+            onToggleExpand={() => setCompletedExpanded((v) => !v)}
+          />
+        </ScrollView>
+      )}
 
       {/* ── Assign Task modal ──────────────────────────────────────── */}
       <Modal visible={assignModalOpen} transparent animationType="fade" onRequestClose={() => setAssignModalOpen(false)}>
@@ -506,7 +629,7 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
 
   header: {
     flexDirection: 'row',
@@ -534,7 +657,39 @@ const styles = StyleSheet.create({
   kpiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, padding: spacing.lg, paddingBottom: 0 },
 
   boardContent: { padding: spacing.lg, gap: spacing.md },
-  boardContentWide: { flexDirection: 'row', alignItems: 'flex-start' },
+
+  // Desktop layout: full-width stacked sections (not narrow side-by-side
+  // lanes) — each section's own cards wrap into a grid via taskGrid/
+  // taskGridItem below, so the section actually uses however wide the
+  // window is instead of being capped at a fixed column width.
+  sectionsStack: { padding: spacing.lg, gap: spacing.xl },
+  section: {},
+  taskGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
+  // flexBasis (not a fixed width) + flexGrow lets cards stretch to fill
+  // any leftover space in the last row, while maxWidth stops them from
+  // getting too wide/sparse-looking when only 1-2 cards are on a row on
+  // a very wide monitor. Wrapping itself (how many fit per row) is
+  // whatever the actual window width allows — 2 on a laptop, 4+ on an
+  // ultrawide — rather than a number hardcoded here.
+  // flexGrow: 0 (not 1) — cards stay a consistent, even size instead of
+  // stretching to fill leftover space in a partial last row. flexBasis
+  // still drives how many fit per row based on actual window width.
+  taskGridItem: { flexGrow: 0, flexBasis: 300, width: 300 },
+  showMoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  showMoreBtnText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.primary },
 
   column: { width: 300 },
   columnMobile: { width: 300, marginRight: spacing.md },
@@ -543,7 +698,8 @@ const styles = StyleSheet.create({
   columnTitle: { fontSize: 13, fontFamily: fonts.headingSemiBold, color: colors.text, flex: 1 },
   columnCount: { backgroundColor: colors.cardAlt, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
   columnCountText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
-  columnEmpty: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic', padding: spacing.sm },
+  columnEmptyWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xl, gap: spacing.sm },
+  columnEmpty: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
 
   taskCard: {
     backgroundColor: colors.white,

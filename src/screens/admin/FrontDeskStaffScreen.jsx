@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { formatCurrency } from '../../utils/Roomsservice';
 
 /**

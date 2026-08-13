@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { decode as decodeBase64 } from 'base64-arraybuffer';
 import { supabase } from '../../services/supabase';
-import { useTheme } from '../../context/ThemeContext';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
 /**
  * MyProfileScreen — front desk staff's own self-service profile view,
@@ -32,15 +32,19 @@ import { useTheme } from '../../context/ThemeContext';
  * from payments; feedback/error counts are whatever the admin has
  * recorded).
  *
- * MIGRATED TO CENTRALIZED THEME (useTheme()) — this screen previously
- * imported the static `colors` object directly, so it always rendered
- * in light mode regardless of the in-app dark mode toggle. While
- * migrating, fixed three spots that hardcoded `colors.white` text/icons
- * on top of `colors.primary` backgrounds (Save button, avatar upload
- * badge, training context badge) — `primary` flips to a light cream
- * color in dark mode, which made white-on-white nearly unreadable.
- * Switched those to `colors.onPrimary`, the token meant to flip
- * alongside `primary` so contrast stays correct in both modes.
+ * THEME: this screen previously imported colors via the dynamic
+ * useTheme() hook (the one file in the Front Desk portal that did,
+ * alongside ReceiptDetailModal.jsx) so it could react to the in-app
+ * dark mode toggle. When the whole portal (Admin, Front Desk,
+ * Kitchen/F&B) moved to its own separate, static color palette
+ * (utils/portalTheme.js — see that file's own header for why it's
+ * separate from theme.js) to keep guest-facing screens on their
+ * original theme, this screen was switched to the same static import
+ * pattern every other portal screen already used, for consistency —
+ * which means it no longer reacts to dark mode. The `onPrimary`
+ * (not `white`) fix kept below for Save button/avatar badge/training
+ * badge text-on-primary contrast still matters even under a static
+ * palette, so it's kept as-is.
  *
  * Change Password section: admins only set a default password when
  * creating a Front Desk account (see FrontDeskAccountScreen.jsx) — staff
@@ -68,10 +72,9 @@ import { useTheme } from '../../context/ThemeContext';
 const WIDE_BREAKPOINT = 860;
 
 export default function MyProfileScreen({ staffUid, onBack }) {
-  const { colors, spacing, radius, fonts } = useTheme();
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
-  const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
+  const styles = getStyles(colors, spacing, radius, fonts);
 
   const [profile, setProfile] = useState(null);
   const [details, setDetails] = useState(null);

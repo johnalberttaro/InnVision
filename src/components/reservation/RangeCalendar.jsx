@@ -178,7 +178,7 @@ function MonthGrid({ year, month, today, checkIn, checkOut, onDayPress }) {
   );
 }
 
-const CELL_SIZE = 36;
+const CELL_PCT = `${100 / 7}%`;
 
 const styles = StyleSheet.create({
   wrap: {
@@ -225,10 +225,11 @@ const styles = StyleSheet.create({
   },
   weekdayRow: {
     flexDirection: 'row',
+    width: '100%',
     marginBottom: spacing.xs,
   },
   weekdayLabel: {
-    width: CELL_SIZE,
+    width: CELL_PCT,
     textAlign: 'center',
     fontSize: 11,
     fontFamily: fonts.bodySemiBold,
@@ -237,10 +238,18 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    // % widths (not a fixed pixel size) so the grid scales to fill
+    // however wide the card actually is — while still always wrapping
+    // at exactly 7 per row, since 7 × (100/7)% == 100% exactly, so an
+    // 8th cell always overflows onto the next line regardless of the
+    // card's actual pixel width. Matches weekdayRow's own width: '100%'
+    // + same-percentage columns, so the two rows always scale together
+    // and stay aligned, on any screen size.
+    width: '100%',
   },
   dayCell: {
-    width: CELL_SIZE,
-    height: CELL_SIZE,
+    width: CELL_PCT,
+    aspectRatio: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -253,12 +262,17 @@ const styles = StyleSheet.create({
     backgroundColor: colors.step,
   },
   dayCellRoundLeft: {
-    borderTopLeftRadius: CELL_SIZE / 2,
-    borderBottomLeftRadius: CELL_SIZE / 2,
+    // 999 rather than a computed half-of-cell-size — cell size is now a
+    // % width (variable actual pixels depending on screen width), not a
+    // fixed CELL_SIZE constant, so there's no single number to halve
+    // anymore. An overlarge radius is the standard RN trick for "always
+    // fully round this corner regardless of the element's real size."
+    borderTopLeftRadius: 999,
+    borderBottomLeftRadius: 999,
   },
   dayCellRoundRight: {
-    borderTopRightRadius: CELL_SIZE / 2,
-    borderBottomRightRadius: CELL_SIZE / 2,
+    borderTopRightRadius: 999,
+    borderBottomRightRadius: 999,
   },
   dayText: {
     fontSize: 13,

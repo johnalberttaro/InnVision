@@ -10,7 +10,7 @@ import {
   Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { subscribeToRoomTypes, deleteRoomType, formatCurrency } from '../../utils/Roomsservice';
 import AddRoomTypeScreen from './AddRoomTypeScreen';
 
@@ -290,7 +290,7 @@ export default function RoomTypesRatesScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
   content: { padding: spacing.xl },
 
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.xl, gap: spacing.md, flexWrap: 'wrap' },

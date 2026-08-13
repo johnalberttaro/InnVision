@@ -9,7 +9,7 @@ import {
   Modal,
   useWindowDimensions,
 } from 'react-native';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 
 const WIDE_BREAKPOINT = 1024; // sidebar is fixed/always-visible above this
@@ -38,6 +38,8 @@ const MENU_SECTIONS = [
     icon: '📅',
     label: 'Reservation Management',
     subItems: [
+      { key: 'reservations:walkin', label: 'Walk-In Check-In' },
+      { key: 'reservations:tapechart', label: 'Tape Chart' },
       { key: 'reservations:all', label: 'View Reservations' },
       { key: 'reservations:pending', label: 'Pending Reservations' },
       { key: 'reservations:confirmed', label: 'Confirmed Reservations' },
@@ -64,6 +66,7 @@ const MENU_SECTIONS = [
     subItems: [
       { key: 'guests:profiles', label: 'Guest Profiles' },
       { key: 'guests:records', label: 'Guest Records' },
+      { key: 'guests:ratings', label: 'Guest Ratings' },
       { key: 'guests:inquiries', label: 'Inquiries' },
     ],
   },

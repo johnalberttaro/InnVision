@@ -12,11 +12,13 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { subscribeToRooms, updateRoomStatus, statusMeta, ROOM_STATUS } from '../../utils/Roomsservice';
 import KpiCard from '../../components/dashboard/KpiCard';
+import Pagination from '../../components/shared/Pagination';
 
 const MOBILE_BREAKPOINT = 900;
+const SECTION_PAGE_SIZE = 6;
 
 const CATEGORIES = [
   { key: 'plumbing',   label: 'Plumbing',   icon: 'water-outline' },
@@ -83,6 +85,14 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
   const [assignStaff, setAssignStaff] = useState(null);
   const [assignSaving, setAssignSaving] = useState(false);
 
+  // Same pattern as HousekeepingSchedule.jsx: Open/In Progress paginate
+  // (6 per page), Resolved uses a "Show All" expand toggle starting
+  // collapsed to the first 8 — a busy maintenance day shouldn't turn
+  // into endless scrolling either.
+  const [openPage, setOpenPage] = useState(1);
+  const [inProgressPage, setInProgressPage] = useState(1);
+  const [resolvedExpanded, setResolvedExpanded] = useState(false);
+
   const requestToCamel = (row) => ({
     id: row.id,
     roomNumber: row.room_number,
@@ -136,7 +146,7 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
       const { data, error } = await supabase
         .from('profiles')
         .select('id, first_name, last_name, display_name')
-        .eq('role', 'frontdesk')
+        .eq('role', 'maintenance')
         .eq('active', true)
         .order('first_name');
       if (error) {
@@ -190,7 +200,10 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
     if (mins < 60) return `${mins}m ago`;
     const hrs = Math.round(mins / 60);
     if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.round(hrs / 24)}d ago`;
+    const days = Math.round(hrs / 24);
+    if (days < 7) return `${days}d ago`;
+    const weeks = Math.round(days / 7);
+    return `${weeks}w ago`;
   };
 
   // ── New Request ────────────────────────────────────────────────────────
@@ -297,15 +310,19 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
     const cat = categoryMeta(request.category);
     const room = roomByNumber[request.roomNumber];
     const roomMeta = room ? statusMeta(room.status) : null;
+    // Urgency only matters while still outstanding — a red "Urgent" flag
+    // on an already-resolved request reads as contradictory next to its
+    // own "Resolved" state.
+    const isUrgent = request.priority === 'urgent' && request.status !== 'resolved';
 
     return (
-      <View style={[styles.reqCard, request.priority === 'urgent' && styles.reqCardUrgent]}>
+      <View style={[styles.reqCard, isUrgent && styles.reqCardUrgent]}>
         <View style={styles.reqCardTop}>
           <View style={styles.roomBadge}>
             <Ionicons name="key-outline" size={12} color={colors.white} />
             <Text style={styles.roomBadgeText}>Room {request.roomNumber}</Text>
           </View>
-          {request.priority === 'urgent' && (
+          {isUrgent && (
             <View style={styles.urgentBadge}>
               <Ionicons name="alert-circle" size={11} color="#B3261E" />
               <Text style={styles.urgentBadgeText}>Urgent</Text>
@@ -382,12 +399,80 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
         </View>
       </View>
       {tasksInColumn.length === 0 ? (
-        <Text style={styles.columnEmpty}>No requests here.</Text>
+        <View style={styles.columnEmptyWrap}>
+          <Ionicons name="checkmark-done-outline" size={20} color={colors.disabled} />
+          <Text style={styles.columnEmpty}>No requests here</Text>
+        </View>
       ) : (
         tasksInColumn.map((r) => <RequestCard key={r.id} request={r} />)
       )}
     </View>
   );
+
+  // Desktop-only: full-width section (not a narrow fixed lane) whose
+  // cards wrap into a grid instead of stacking one-per-row. Open/In
+  // Progress paginate at SECTION_PAGE_SIZE; Resolved uses the
+  // limit+expand toggle instead, since "how many were resolved" tends
+  // to grow the most over time. Mirrors HousekeepingSchedule.jsx's
+  // Section component exactly.
+  const Section = ({ title, tasksInColumn, accentColor, page, setPage, mode = 'paginate', limit, expanded, onToggleExpand }) => {
+    const isExpandMode = mode === 'expand';
+
+    const totalPages = Math.max(1, Math.ceil(tasksInColumn.length / SECTION_PAGE_SIZE));
+    const safePage = Math.min(page || 1, totalPages);
+
+    const pageItems = isExpandMode
+      ? (expanded ? tasksInColumn : tasksInColumn.slice(0, limit))
+      : tasksInColumn.slice((safePage - 1) * SECTION_PAGE_SIZE, safePage * SECTION_PAGE_SIZE);
+
+    return (
+      <View style={styles.section}>
+        <View style={styles.columnHeader}>
+          <View style={[styles.columnDot, { backgroundColor: accentColor }]} />
+          <Text style={styles.columnTitle}>{title}</Text>
+          <View style={styles.columnCount}>
+            <Text style={styles.columnCountText}>{tasksInColumn.length}</Text>
+          </View>
+        </View>
+        {tasksInColumn.length === 0 ? (
+          <View style={styles.columnEmptyWrap}>
+            <Ionicons name="checkmark-done-outline" size={20} color={colors.disabled} />
+            <Text style={styles.columnEmpty}>No requests here</Text>
+          </View>
+        ) : (
+          <>
+            <View style={styles.taskGrid}>
+              {pageItems.map((r) => (
+                <View key={r.id} style={styles.taskGridItem}>
+                  <RequestCard request={r} />
+                </View>
+              ))}
+            </View>
+
+            {isExpandMode ? (
+              tasksInColumn.length > limit && (
+                <TouchableOpacity style={styles.showMoreBtn} onPress={onToggleExpand} activeOpacity={0.8}>
+                  <Text style={styles.showMoreBtnText}>
+                    {expanded ? 'Show Less' : `Show All Resolved (${tasksInColumn.length})`}
+                  </Text>
+                  <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={14} color={colors.primary} />
+                </TouchableOpacity>
+              )
+            ) : (
+              tasksInColumn.length > SECTION_PAGE_SIZE && (
+                <Pagination
+                  currentPage={safePage}
+                  totalItems={tasksInColumn.length}
+                  pageSize={SECTION_PAGE_SIZE}
+                  onPageChange={setPage}
+                />
+              )
+            )}
+          </>
+        )}
+      </View>
+    );
+  };
 
   if (loading) {
     return (
@@ -428,15 +513,43 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
           />
         </View>
 
-        <ScrollView
-          horizontal={isMobile}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={[styles.boardContent, !isMobile && styles.boardContentWide]}
-        >
-          <Column title="Open" tasksInColumn={columns.open} accentColor="#C99400" />
-          <Column title="In Progress" tasksInColumn={columns.in_progress} accentColor="#B3792A" />
-          <Column title="Resolved" tasksInColumn={columns.resolved} accentColor="#1E7B34" />
-        </ScrollView>
+        {isMobile ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.boardContent}
+          >
+            <Column title="Open" tasksInColumn={columns.open} accentColor="#C99400" />
+            <Column title="In Progress" tasksInColumn={columns.in_progress} accentColor="#B3792A" />
+            <Column title="Resolved" tasksInColumn={columns.resolved} accentColor="#1E7B34" />
+          </ScrollView>
+        ) : (
+          <View style={styles.sectionsStack}>
+            <Section
+              title="Open"
+              tasksInColumn={columns.open}
+              accentColor="#C99400"
+              page={openPage}
+              setPage={setOpenPage}
+            />
+            <Section
+              title="In Progress"
+              tasksInColumn={columns.in_progress}
+              accentColor="#B3792A"
+              page={inProgressPage}
+              setPage={setInProgressPage}
+            />
+            <Section
+              title="Resolved"
+              tasksInColumn={columns.resolved}
+              accentColor="#1E7B34"
+              mode="expand"
+              limit={8}
+              expanded={resolvedExpanded}
+              onToggleExpand={() => setResolvedExpanded((v) => !v)}
+            />
+          </View>
+        )}
       </ScrollView>
 
       {/* ── New Request modal ──────────────────────────────────────── */}
@@ -573,7 +686,7 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   scrollContent: { paddingBottom: spacing.xxl },
-  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
 
   header: {
     flexDirection: 'row',
@@ -597,7 +710,31 @@ const styles = StyleSheet.create({
   kpiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, padding: spacing.lg, paddingBottom: 0 },
 
   boardContent: { padding: spacing.lg, gap: spacing.md },
-  boardContentWide: { flexDirection: 'row', alignItems: 'flex-start' },
+
+  // Desktop layout: full-width stacked sections whose own cards wrap
+  // into a grid (taskGrid/taskGridItem) instead of narrow fixed-width
+  // side-by-side lanes. Mirrors HousekeepingSchedule.jsx.
+  sectionsStack: { padding: spacing.lg, gap: spacing.xl },
+  section: {},
+  taskGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
+  // flexGrow: 0 — cards stay an even, consistent size instead of
+  // stretching to fill leftover space in a partial last row.
+  taskGridItem: { flexGrow: 0, flexBasis: 300, width: 300 },
+  showMoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  showMoreBtnText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.primary },
 
   column: { width: 300 },
   columnMobile: { width: 300, marginRight: spacing.md },
@@ -606,7 +743,8 @@ const styles = StyleSheet.create({
   columnTitle: { fontSize: 13, fontFamily: fonts.headingSemiBold, color: colors.text, flex: 1 },
   columnCount: { backgroundColor: colors.cardAlt, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
   columnCountText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
-  columnEmpty: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic', padding: spacing.sm },
+  columnEmptyWrap: { alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xl, gap: spacing.sm },
+  columnEmpty: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
 
   reqCard: {
     backgroundColor: colors.white,

@@ -8,6 +8,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { subscribeToRoomTypes, subscribeToRooms, joinRoomsWithTypes, formatCurrency } from '../../utils/Roomsservice';
+import { Ionicons } from '@expo/vector-icons';
 import Brandheader from '../../components/shared/Brandheader';
 import Appfooter from '../../components/shared/Appfooter';
 import StepIndicator from '../../components/shared/StepIndicator';
@@ -18,6 +19,16 @@ import { useTheme } from '../../context/ThemeContext';
 
 // Use 2 columns only on screens wider than this (tablets/web)
 const TWO_COL_BREAKPOINT = 600;
+
+// Short, scannable house rules — deliberately separate from the dense
+// legal Terms & Conditions tab inside RateCard (which still has the
+// full policy text). This is meant to be seen at a glance while
+// browsing rooms, not read as fine print.
+const HOUSE_RULES = [
+  'No smoking or e-cigarettes anywhere on hotel premises.',
+  'No pets allowed in guest rooms or common areas.',
+  'Quiet hours are observed from 10:00 PM to 7:00 AM.',
+];
 
 /**
  * "Room & Rates" screen — shown after a valid search.
@@ -226,6 +237,19 @@ export default function RoomSelectionScreen({ bookingDetails, onEditSearch, onRe
       <ScrollView contentContainerStyle={styles.content}>
         <StayBar checkIn={checkIn} checkOut={checkOut} totals={totals} onEdit={onEditSearch} />
 
+        <View style={styles.houseRulesCard}>
+          <View style={styles.houseRulesHeader}>
+            <Ionicons name="alert-circle-outline" size={16} color={colors.text} />
+            <Text style={styles.houseRulesTitle}>InnVision Rules</Text>
+          </View>
+          {HOUSE_RULES.map((rule, i) => (
+            <View key={i} style={styles.houseRulesRow}>
+              <Text style={styles.houseRulesBullet}>•</Text>
+              <Text style={styles.houseRulesText}>{rule}</Text>
+            </View>
+          ))}
+        </View>
+
         {/* Room slot tabs — one per room in this reservation */}
         <ScrollView
           horizontal
@@ -395,6 +419,43 @@ function getStyles(colors, spacing, radius, fonts) {
       textTransform: 'uppercase',
       letterSpacing: 1,
       marginBottom: spacing.md,
+    },
+    houseRulesCard: {
+      backgroundColor: colors.aboutBackground,
+      borderRadius: radius.md,
+      borderLeftWidth: 3,
+      borderLeftColor: colors.text,
+      padding: spacing.md,
+      marginBottom: spacing.lg,
+    },
+    houseRulesHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      marginBottom: spacing.xs,
+    },
+    houseRulesTitle: {
+      fontSize: 13,
+      fontFamily: fonts.headingBold,
+      color: colors.text,
+    },
+    houseRulesRow: {
+      flexDirection: 'row',
+      paddingLeft: spacing.sm,
+      marginTop: 2,
+    },
+    houseRulesBullet: {
+      fontSize: 12,
+      fontFamily: fonts.body,
+      color: colors.textMuted,
+      marginRight: spacing.xs,
+    },
+    houseRulesText: {
+      flex: 1,
+      fontSize: 12,
+      fontFamily: fonts.body,
+      color: colors.textMuted,
+      lineHeight: 17,
     },
     row: {
       flexDirection: 'row',

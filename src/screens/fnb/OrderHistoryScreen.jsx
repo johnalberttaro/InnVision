@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
 function escapeHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -188,6 +188,7 @@ export default function OrderHistoryScreen({ staffUid, staffName }) {
     roomNumber: row.room_number,
     status: row.status,
     notes: row.notes,
+    allergyInfo: row.allergy_info,
     totalAmount: row.total_amount,
     assignedToName: row.assigned_to_name,
     createdAt: row.created_at,
@@ -382,6 +383,13 @@ export default function OrderHistoryScreen({ staffUid, staffName }) {
                           ))}
                         </View>
 
+                        {!!order.allergyInfo && (
+                          <View style={styles.allergyBanner}>
+                            <Ionicons name="warning" size={14} color="#B3792A" />
+                            <Text style={styles.allergyBannerText}>Allergy/Dietary: {order.allergyInfo}</Text>
+                          </View>
+                        )}
+
                         {!!order.notes && <Text style={styles.orderNotes}>"{order.notes}"</Text>}
 
                         {!!order.assignedToName && (
@@ -525,6 +533,13 @@ const styles = StyleSheet.create({
   guestAvatarText: { fontSize: 11, fontFamily: fonts.headingBold, color: colors.primary },
 
   guestName: { fontSize: 14, fontFamily: fonts.headingSemiBold, color: colors.text, marginTop: spacing.sm - 2 },
+
+  allergyBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#FFF4D6', borderRadius: radius.sm, borderWidth: 1, borderColor: '#F0D896',
+    paddingVertical: 6, paddingHorizontal: spacing.sm,
+  },
+  allergyBannerText: { flex: 1, fontSize: 11.5, fontFamily: fonts.bodySemiBold, color: '#7A5C00' },
 
   itemsList: { marginTop: spacing.sm - 2, gap: 8 },
   itemRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },

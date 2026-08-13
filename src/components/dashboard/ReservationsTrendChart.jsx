@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import Svg, { Rect, Line, Text as SvgText } from 'react-native-svg';
-import { colors, fonts, spacing } from '../../utils/theme';
+import { colors, fonts, spacing } from '../../utils/portalTheme';
 
 const CHART_HEIGHT = 160;
 const BAR_GROUP_GAP = 10;

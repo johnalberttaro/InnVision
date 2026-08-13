@@ -20,7 +20,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { getAllReceipts, searchReceipts } from '../../utils/BillingService';
 import ReceiptDetailModal from './ReceiptDetailModal';
 import Pagination from '../../components/shared/Pagination';

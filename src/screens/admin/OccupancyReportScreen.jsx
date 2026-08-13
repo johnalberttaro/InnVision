@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { subscribeToRooms, subscribeToRoomTypes, joinRoomsWithTypes, ROOM_STATUS, statusMeta } from '../../utils/Roomsservice';
 
 /**
@@ -152,7 +152,7 @@ function ReportCard({ label, value, accent }) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.xl },
-  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
   pageTitle: { fontSize: 22, fontFamily: fonts.headingExtraBold, color: colors.primary },
   pageSubtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: spacing.xs, marginBottom: spacing.xl },
   kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginBottom: spacing.xl },

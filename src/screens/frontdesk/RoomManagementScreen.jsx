@@ -14,7 +14,7 @@ import {
   statusMeta,
 } from '../../utils/Roomsservice';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
 const SECTION_TITLES = {
   types: 'Room Types',
@@ -599,8 +599,20 @@ function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, chipOption
     ? [ROOM_STATUS.MAINTENANCE]
     : chipOptions || Object.keys(STATUS_META);
 
+  const firstImage = room.images && room.images.length > 0 ? room.images[0] : null;
+
   return (
     <View style={styles.rowCard}>
+      {firstImage ? (
+        <Image
+          source={firstImage.source ? firstImage.source : { uri: firstImage.uri }}
+          style={styles.roomThumb}
+        />
+      ) : (
+        <View style={styles.roomThumbPlaceholder}>
+          <Ionicons name="image-outline" size={18} color={colors.textMuted} />
+        </View>
+      )}
       <View style={styles.roomNumberBadgeSmall}>
         <Text style={styles.roomNumberTextSmall}>{room.roomNumber}</Text>
       </View>
@@ -852,6 +864,20 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.sm,
     flexWrap: 'wrap',
+  },
+  roomThumb: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.sm,
+    backgroundColor: colors.cardAlt,
+  },
+  roomThumbPlaceholder: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.sm,
+    backgroundColor: colors.cardAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   roomNumberBadgeSmall: {
     width: 44,

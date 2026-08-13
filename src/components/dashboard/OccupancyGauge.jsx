@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
-import { fonts, colors, spacing } from '../../utils/theme';
+import { fonts, colors, spacing } from '../../utils/portalTheme';
 
 /**
  * OccupancyGauge — full circular progress ring showing occupied / total

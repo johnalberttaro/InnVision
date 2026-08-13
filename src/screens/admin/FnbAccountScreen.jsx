@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase, secondarySupabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
 /**
  * FnbAccountsScreen — admin creates/manages Kitchen/F&B staff accounts.
@@ -850,4 +850,4 @@ const styles = StyleSheet.create({
   modalConfirmButton: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm + 2, borderRadius: 999, backgroundColor: colors.danger },
   modalSaveButton: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm + 2, borderRadius: 999, backgroundColor: colors.primary, minWidth: 130, alignItems: 'center' },
   modalConfirmText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.white },
-});
+}); 

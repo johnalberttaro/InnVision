@@ -3,6 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'r
 import FrontDeskSidebar from './FrontDeskSidebar';
 import FrontDeskDashboardScreen from './FrontDeskDashboardScreen';
 import ReservationsScreen from './ReservationsScreen';
+import TapeChartScreen from './TapeChartScreen';
+import WalkInScreen from './WalkInScreen';
 import RoomManagementScreen from './RoomManagementScreen';
 import RoomCleaningStatusScreen from './RoomCleaningStatusScreen';
 import HousekeepingScheduleScreen from './HousekeepingSchedule';
@@ -12,6 +14,7 @@ import GuestRecordsScreen from './GuestRecordsScreen';
 import GuestDetailsScreen from './GuestDetailsScreen';
 import GuestProfileTableScreen from './GuestProfileTableScreen';
 import InquiriesScreen from './InquiriesScreen';
+import GuestRatingsScreen from '../admin/GuestRatingsScreen';
 import BillingRecordsScreen from './BillingRecordsScreen';
 import BillingRecordDetailScreen from './BillingRecordDetailScreen';
 import RecordPaymentModal from './RecordPaymentModal';
@@ -21,7 +24,7 @@ import MyProfileScreen from './MyProfileScreen';
 import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import DashboardFooter from '../../components/shared/DashboardFooter';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, fonts } from '../../utils/theme';
+import { colors, spacing, fonts } from '../../utils/portalTheme';
 
 const WIDE_BREAKPOINT = 1024;
 
@@ -226,6 +229,12 @@ function renderActiveScreen(
   if (activeKey === 'profile:me') {
     return <MyProfileScreen staffUid={staffUid} />;
   }
+  if (activeKey === 'reservations:walkin') {
+    return <WalkInScreen staffUid={staffUid} staffName={staffName} />;
+  }
+  if (activeKey === 'reservations:tapechart') {
+    return <TapeChartScreen />;
+  }
   if (activeKey.startsWith('reservations')) {
     return <ReservationsScreen onLogout={onLoggedOut} filterKey={activeKey} />;
   }
@@ -257,6 +266,9 @@ function renderActiveScreen(
   }
   if (activeKey === 'guests:inquiries') {
     return <InquiriesScreen />;
+  }
+  if (activeKey === 'guests:ratings') {
+    return <GuestRatingsScreen />;
   }
   if (activeKey === 'guests:profile') {
     return <GuestDetailsScreen guestId={selectedGuestId} onBack={closeGuestProfile} />;

@@ -4,7 +4,7 @@
 
 import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
-import { colors, spacing, fonts } from '../../utils/theme';
+import { colors, spacing, fonts } from '../../utils/portalTheme';
 
 const DOTS = '...';
 const SIBLING_COUNT = 1;

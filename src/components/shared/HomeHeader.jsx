@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -50,6 +50,9 @@ const CONTENT_PADDING_BOTTOM = Platform.select({
  *  - onAboutPress:     () => void
  *  - onContactPress:   () => void
  *  - onFindBooking:    () => void   — navigate to the booking lookup screen
+ *  - onOrderFood:      () => void   — navigate to Order Food (wide-screen nav
+ *                                     only; mobile still reaches it via the
+ *                                     hamburger menu, which already had it)
  *  - isAuthenticated:  boolean
  */
 export default function HomeHeader({
@@ -60,10 +63,20 @@ export default function HomeHeader({
   onAboutPress,
   onContactPress,
   onFindBooking,
+  onOrderFood,
   isAuthenticated,
   onHomePress,
 }) {
   const { width } = useWindowDimensions();
+  // Tracks which single element (by label) currently has the mouse
+  // over it — React Native Web forwards onMouseEnter/onMouseLeave to
+  // the underlying DOM node, which is how "hover" works here (there's
+  // no native RN concept of it; on a phone/tablet these events simply
+  // never fire, so this harmlessly does nothing there).
+  const [hoveredNav, setHoveredNav] = useState(null);
+  const [ctaHovered, setCtaHovered] = useState(false);
+  const [logoHovered, setLogoHovered] = useState(false);
+  const [menuBtnHovered, setMenuBtnHovered] = useState(false);
   const isWideScreen = width >= WIDE_SCREEN_BREAKPOINT;
 
   const handleCtaPress = () => {
@@ -74,12 +87,18 @@ export default function HomeHeader({
     }
   };
 
-  // Nav items — Profile only shown when authenticated
+  // Nav items — Order Food and Profile only shown when authenticated,
+  // since ordering food requires a checked-in reservation (same gate
+  // App.jsx already applies before routing to Order Food elsewhere).
   const navItems = [
     { label: 'About',            onPress: () => onAboutPress && onAboutPress() },
     { label: 'Promos',           onPress: () => {} },
     { label: 'Contact Us',       onPress: () => onContactPress && onContactPress() },
     { label: 'My Reservations',  onPress: () => onFindBooking && onFindBooking() },
+    ...(isAuthenticated
+      ? [{ label: 'Order Food', onPress: () => onOrderFood && onOrderFood() }]
+      : []
+    ),
     ...(isAuthenticated
       ? [{ label: 'Profile', onPress: () => onProfilePress && onProfilePress(), isAccent: true }]
       : []
@@ -99,7 +118,13 @@ export default function HomeHeader({
         <View style={styles.content}>
 
           {/* ── Logo ─────────────────────────────────────────── */}
-          <TouchableOpacity style={styles.logoRow} activeOpacity={0.8} onPress={onHomePress}>
+          <TouchableOpacity
+            style={[styles.logoRow, logoHovered && styles.logoRowHovered]}
+            activeOpacity={0.8}
+            onPress={onHomePress}
+            onMouseEnter={() => setLogoHovered(true)}
+            onMouseLeave={() => setLogoHovered(false)}
+          >
             <Image
               source={require('../../../assets/logo.png')}
               style={styles.logoImage}
@@ -113,21 +138,38 @@ export default function HomeHeader({
             {/* Wide screen nav links */}
             {isWideScreen && (
               <View style={styles.navLinks}>
-                {navItems.map(item => (
-                  <TouchableOpacity key={item.label} style={styles.navLinkItem} onPress={item.onPress} activeOpacity={0.7}>
-                    <Text style={[styles.navLinkText, item.isAccent && styles.navLinkAccent]}>
-                      {item.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                {navItems.map(item => {
+                  const isHovered = hoveredNav === item.label;
+                  return (
+                    <TouchableOpacity
+                      key={item.label}
+                      style={styles.navLinkItem}
+                      onPress={item.onPress}
+                      activeOpacity={0.7}
+                      onMouseEnter={() => setHoveredNav(item.label)}
+                      onMouseLeave={() => setHoveredNav(null)}
+                    >
+                      <Text style={[styles.navLinkText, item.isAccent && styles.navLinkAccent, isHovered && styles.navLinkHovered]}>
+                        {item.label}
+                      </Text>
+                      <View style={[styles.navLinkUnderline, isHovered && styles.navLinkUnderlineVisible]} />
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             )}
 
             {/* CTA button */}
             <TouchableOpacity
-              style={[styles.ctaButton, isAuthenticated ? styles.ctaBookNow : styles.ctaSignIn]}
+              style={[
+                styles.ctaButton,
+                isAuthenticated ? styles.ctaBookNow : styles.ctaSignIn,
+                ctaHovered && styles.ctaHovered,
+              ]}
               onPress={handleCtaPress}
               activeOpacity={0.85}
+              onMouseEnter={() => setCtaHovered(true)}
+              onMouseLeave={() => setCtaHovered(false)}
             >
               <Text style={styles.ctaText}>
                 {isAuthenticated ? 'BOOK NOW' : 'SIGN IN'}
@@ -138,11 +180,13 @@ export default function HomeHeader({
                 inset from the screen edge, per accessibility guidelines. */}
             {!isWideScreen && (
               <TouchableOpacity
-                style={styles.menuButton}
+                style={[styles.menuButton, menuBtnHovered && styles.menuButtonHovered]}
                 onPress={onMenuPress}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityLabel="Open menu"
                 accessibilityRole="button"
+                onMouseEnter={() => setMenuBtnHovered(true)}
+                onMouseLeave={() => setMenuBtnHovered(false)}
               >
                 <View style={styles.menuLinesWrap}>
                   <View style={styles.menuLine} />
@@ -201,6 +245,9 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     marginRight: spacing.sm,
   },
+  logoRowHovered: {
+    opacity: 0.75,
+  },
   logoImage: {
     width: 44,
     height: 44,
@@ -238,12 +285,28 @@ const styles = StyleSheet.create({
     fontFamily: fonts.headingSemiBold,
     color: colors.text,
   },
+  navLinkHovered: {
+    color: colors.primary,
+  },
   navLinkAccent: {
     color: colors.primary,
     fontFamily: fonts.headingBold,
     textDecorationLine: 'underline',
     textDecorationColor: colors.accent,
     textDecorationStyle: 'solid',
+  },
+  // A small underline that fades in on hover — invisible (transparent)
+  // by default rather than absent, so its reserved space doesn't cause
+  // the row to shift height when a link becomes hovered.
+  navLinkUnderline: {
+    width: 14,
+    height: 2,
+    borderRadius: 1,
+    marginTop: 3,
+    backgroundColor: 'transparent',
+  },
+  navLinkUnderlineVisible: {
+    backgroundColor: colors.accent,
   },
 
   // CTA
@@ -259,6 +322,14 @@ const styles = StyleSheet.create({
   ctaSignIn: {
     backgroundColor: colors.primary,
   },
+  ctaHovered: {
+    opacity: 0.88,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 2,
+  },
   ctaText: {
     color: colors.white,
     fontFamily: fonts.headingSemiBold,
@@ -271,10 +342,14 @@ const styles = StyleSheet.create({
   menuButton: {
     width: 44,
     height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: spacing.xs,
     marginRight: -spacing.xs, // keeps the visible icon aligned with content edge despite the larger tap target
+  },
+  menuButtonHovered: {
+    backgroundColor: 'rgba(0,0,0,0.05)',
   },
   menuLinesWrap: {
     width: 24,

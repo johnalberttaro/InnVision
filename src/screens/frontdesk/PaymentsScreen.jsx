@@ -22,7 +22,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { getOutstandingBalances } from '../../utils/BillingService';
 import RecordPaymentModal from './RecordPaymentModal';
 import KpiCard from '../../components/dashboard/KpiCard';

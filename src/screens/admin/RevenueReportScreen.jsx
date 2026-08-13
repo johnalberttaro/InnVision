@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, Image, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, Platform, Share } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
 const LOGO_SOURCE = require('../../../assets/logo.png');
 
@@ -681,7 +681,7 @@ function MetricDetailModal({ visible, title, list, onClose }) {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.xl },
-  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background },
 
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: spacing.lg, flexWrap: 'wrap', gap: spacing.md },
   pageTitle: { fontSize: 22, fontFamily: fonts.headingExtraBold, color: colors.primary },

@@ -9,7 +9,7 @@ import {
   Modal,
   useWindowDimensions,
 } from 'react-native';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 
 const WIDE_BREAKPOINT = 1024;
@@ -18,13 +18,19 @@ const SIDEBAR_WIDTH = 264;
 const LOGO_SOURCE = require('../../../assets/logo.png');
 
 // Deliberately minimal — unlike Front Desk or Admin, Kitchen/F&B's job
-// is just these three: Kitchen Orders (active work — prepare, assign
+// is just these four: Dashboard (today's orders/revenue/turnaround
+// time at a glance), Kitchen Orders (active work — prepare, assign
 // delivery, mark delivered), Order History (a read-only look back at
 // what's been delivered or cancelled), and Menu Availability (toggle a
-// dish on/off when ingredients run out). No Dashboard, no sub-menus.
-// More sections can be added here the same way Front Desk's menu grew
-// over time, if this role's scope grows further.
+// dish on/off when ingredients run out). No sub-menus. More sections
+// can be added here the same way Front Desk's menu grew over time, if
+// this role's scope grows further.
 const MENU_SECTIONS = [
+  {
+    key: 'dashboard',
+    icon: '📊',
+    label: 'Dashboard',
+  },
   {
     key: 'kitchenorders',
     icon: '🍽',

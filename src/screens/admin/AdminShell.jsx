@@ -6,9 +6,11 @@ import RoomTypesRatesScreen from './RoomTypeRatesScreen';
 import FoodMenuScreen from './FoodMenuScreen';
 import FrontDeskAccountsScreen from './FrontDeskAccountScreen';
 import FnbAccountsScreen from './FnbAccountScreen';
+import StaffRoleAccountScreen from './StaffRoleAccountScreen';
 import FrontDeskStaffScreen from './FrontDeskStaffScreen';
 import OccupancyReportScreen from './OccupancyReportScreen';
 import RevenueReportScreen from './RevenueReportScreen';
+import GuestRatingsScreen from './GuestRatingsScreen';
 import FrontDeskDashboardScreen from '../frontdesk/FrontDeskDashboardScreen';
 import ReservationsScreen from '../frontdesk/ReservationsScreen';
 import RoomManagementScreen from '../frontdesk/RoomManagementScreen';
@@ -26,7 +28,7 @@ import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import DashboardFooter from '../../components/shared/DashboardFooter';
 import PaymentsScreen from '../frontdesk/PaymentsScreen';
 import ReceiptsScreen from '../frontdesk/ReceiptsScreen';
-import { colors, spacing, fonts } from '../../utils/theme';
+import { colors, spacing, fonts } from '../../utils/portalTheme';
 
 const WIDE_BREAKPOINT = 1024;
 
@@ -177,16 +179,25 @@ function renderActiveScreen(props) {
   if (activeKey === 'staff:frontdesk') {
     return <FrontDeskStaffScreen />;
   }
+  if (activeKey === 'staff:housekeeping') {
+    return <StaffRoleAccountScreen role="housekeeping" roleLabel="Housekeeping" />;
+  }
+  if (activeKey === 'staff:maintenance') {
+    return <StaffRoleAccountScreen role="maintenance" roleLabel="Maintenance" />;
+  }
   if (activeKey === 'reports:occupancy') {
     return <OccupancyReportScreen />;
   }
   if (activeKey === 'reports:revenue') {
     return <RevenueReportScreen />;
   }
+  if (activeKey === 'reports:ratings') {
+    return <GuestRatingsScreen />;
+  }
 
   // ── Front Desk Operations (admin can do everything a front desk member can) ──
   if (activeKey.startsWith('fd:reservations')) {
-    return <ReservationsScreen onLogout={props.onLoggedOut} filterKey={activeKey.replace('fd:', '')} />;
+    return <ReservationsScreen onLogout={props.onLoggedOut} filterKey={activeKey.replace('fd:', '')} staffName={props.staffName} />;
   }
   if (activeKey.startsWith('fd:rooms:')) {
     const section = activeKey.split(':')[2];

@@ -25,7 +25,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, fonts } from '../../utils/theme';
+import { colors, spacing, fonts } from '../../utils/portalTheme';
 import {
   getAllBillingRecords,
   searchBillingRecords,
@@ -184,7 +184,7 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
         </View>
         <View style={styles.rowSide}>
           <Text style={styles.balanceLabel}>Balance</Text>
-          <Text style={styles.balanceAmount}>₱{item.remainingBalance?.toFixed(2)}</Text>
+          <Text style={styles.balanceAmount}>₱{item.remainingBalance?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>
           {renderStatusBadge(item.billingStatus)}
         </View>
       </TouchableOpacity>
@@ -211,7 +211,7 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
         <KpiCard
           icon="cash-outline"
           label="Outstanding Balance"
-          value={`₱${outstandingTotal.toFixed(2)}`}
+          value={`₱${outstandingTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
           accent={outstandingTotal > 0 ? '#B3261E' : '#1E7A3D'}
           note="Unpaid + partially paid"
         />

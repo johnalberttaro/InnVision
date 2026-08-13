@@ -13,6 +13,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
 import { updateRoomStatus, ROOM_STATUS } from '../../utils/Roomsservice';
+import { submitRoomReview, fetchReviewedIds } from '../../utils/ReviewsService';
+import RatingModal from '../../components/shared/RatingModal';
 import { useTheme } from '../../context/ThemeContext';
 
 /**
@@ -63,6 +65,11 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
   const [historyVisible, setHistoryVisible] = useState(false);
   const [historyExpandedId, setHistoryExpandedId] = useState(null);
   const [menuVisible, setMenuVisible] = useState(false);
+
+  // Which of this guest's checked-out reservations already have a room
+  // rating submitted — hides the "Rate your stay" prompt for those.
+  const [reviewedReservationIds, setReviewedReservationIds] = useState(new Set());
+  const [ratingTarget, setRatingTarget] = useState(null); // reservation being rated
 
   // Checked-out and cancelled reservations are "done" — they move out of
   // the main list and into the History panel behind the ⋮ menu, so the
@@ -183,6 +190,16 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     fetchReservations();
   }, [fetchReservations]);
 
+  // Loaded once we know who's logged in — separate from fetchReservations
+  // since it only needs to change when the user (or a newly-submitted
+  // rating) changes, not on every pull-to-refresh of the reservation list.
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    fetchReviewedIds(currentUser.id, 'room')
+      .then(setReviewedReservationIds)
+      .catch((err) => console.error('Failed to load reviewed reservations:', err));
+  }, [currentUser?.id]);
+
   const handleRefresh = () => {
     setRefreshing(true);
     fetchReservations();
@@ -279,9 +296,34 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     }
   };
 
-  // Cancellable up until check-in — covers both statuses your reservations
-  // actually use pre-check-in ('pending' and 'upcoming').
-  const canCancel = (r) => ['pending', 'upcoming'].includes((r.status || '').toLowerCase());
+  // Cancellable up until check-in status-wise ('pending'/'upcoming'). The
+  // 24hr cancel/refund window only applies to guests who paid online
+  // (e-wallet) — there's real money to refund for those, which is what
+  // the policy is actually protecting. A "Pay at Hotel" booking has no
+  // payment on file yet, so restricting it the same way would just block
+  // a guest from cancelling a booking nothing was ever charged for —
+  // those stay cancellable anytime up to check-in, same as before.
+  const CANCEL_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const isOnlinePaid = (r) => (r.paymentMode || '').toLowerCase() === 'online';
+  const withinCancelWindow = (r) => {
+    if (!r.createdAt) return false;
+    const bookedAt = new Date(r.createdAt).getTime();
+    if (isNaN(bookedAt)) return false;
+    return Date.now() - bookedAt < CANCEL_WINDOW_MS;
+  };
+  const canCancel = (r) => {
+    if (!['pending', 'upcoming'].includes((r.status || '').toLowerCase())) return false;
+    if (!isOnlinePaid(r)) return true; // pay-at-hotel: no 24hr restriction
+    return withinCancelWindow(r);
+  };
+  // Distinguishes "not cancellable because already checked-in/out" from
+  // "not cancellable because the 24hr refund window passed" (online-paid
+  // only) — the latter gets its own explanatory note instead of just
+  // silently hiding the button.
+  const cancelWindowExpired = (r) =>
+    ['pending', 'upcoming'].includes((r.status || '').toLowerCase()) &&
+    isOnlinePaid(r) &&
+    !withinCancelWindow(r);
 
   // ---------------- Cancellation workflow ----------------
 
@@ -403,7 +445,32 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
               <Text style={styles.cancelButtonText}>Cancel Reservation</Text>
             </TouchableOpacity>
           )}
+
+          {r.status === 'checked-out' && (
+            reviewedReservationIds.has(r.id) ? (
+              <View style={styles.ratedBadge}>
+                <Ionicons name="checkmark-circle" size={14} color={colors.text} />
+                <Text style={styles.ratedBadgeText}>Rated</Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.rateButton}
+                onPress={() => setRatingTarget(r)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="star-outline" size={14} color={colors.onPrimary} />
+                <Text style={styles.rateButtonText}>Rate Your Stay</Text>
+              </TouchableOpacity>
+            )
+          )}
         </View>
+
+        {cancelWindowExpired(r) && (
+          <View style={styles.cancelExpiredNote}>
+            <Ionicons name="information-circle-outline" size={13} color={colors.textMuted} />
+            <Text style={styles.cancelExpiredNoteText}>24-hour refund window has passed for this online payment</Text>
+          </View>
+        )}
       </View>
     );
   };
@@ -538,7 +605,11 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
             <Text style={styles.modalTitle}>Cancel this reservation?</Text>
             <Text style={styles.modalBody}>
               {cancelTarget
-                ? `This will cancel ${referenceNumber(cancelTarget.id)} and release the assigned room(s). This can't be undone.`
+                ? `This will cancel ${referenceNumber(cancelTarget.id)} and release the assigned room(s).${
+                    (cancelTarget.paymentMode || '').toLowerCase() === 'online'
+                      ? " You're within the 24-hour cancellation window, so this qualifies for a refund."
+                      : ''
+                  } This can't be undone.`
                 : ''}
             </Text>
             <View style={styles.modalActions}>
@@ -585,6 +656,24 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
           </View>
         </View>
       </Modal>
+
+      <RatingModal
+        visible={!!ratingTarget}
+        onClose={() => setRatingTarget(null)}
+        subjectTitle={ratingTarget ? (ratingTarget.roomType || 'Your Room') : ''}
+        subjectSubtitle={ratingTarget ? `${formatDate(ratingTarget.checkIn)} — ${formatDate(ratingTarget.checkOut)}` : ''}
+        onSubmit={async (rating, comment) => {
+          await submitRoomReview({
+            userId: currentUser.id,
+            guestName: guestName(ratingTarget),
+            reservationId: ratingTarget.id,
+            subjectLabel: `${ratingTarget.roomType || 'Room'} (${roomLabel(ratingTarget)})`,
+            rating,
+            comment,
+          });
+          setReviewedReservationIds((prev) => new Set(prev).add(ratingTarget.id));
+        }}
+      />
     </View>
   );
 }
@@ -810,6 +899,50 @@ function getStyles(colors, spacing, radius, fonts) {
       fontSize: 12,
       fontFamily: fonts.bodySemiBold,
       color: colors.danger,
+    },
+    cancelExpiredNote: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 5,
+      marginTop: spacing.sm,
+      paddingTop: spacing.sm,
+      paddingHorizontal: 2,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    cancelExpiredNoteText: {
+      flex: 1,
+      fontSize: 11,
+      fontFamily: fonts.body,
+      color: colors.textMuted,
+      fontStyle: 'italic',
+      lineHeight: 15,
+    },
+    rateButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: colors.primary,
+    },
+    rateButtonText: {
+      fontSize: 12,
+      fontFamily: fonts.bodySemiBold,
+      color: colors.onPrimary,
+    },
+    ratedBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+    },
+    ratedBadgeText: {
+      fontSize: 12,
+      fontFamily: fonts.bodySemiBold,
+      color: colors.text,
     },
 
     modalOverlay: {
