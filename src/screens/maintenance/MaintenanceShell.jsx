@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaintenanceSidebar from './MaintenanceSidebar';
 import MaintenanceMyTasksScreen from './MaintenanceMyTasksScreen';
+import MaintenanceHistoryScreen from './MaintenanceHistoryScreen';
 import MaintenancePerformanceScreen from './MaintenancePerformanceScreen';
 import MyProfileScreen from '../frontdesk/MyProfileScreen';
 import DashboardFooter from '../../components/shared/DashboardFooter';
@@ -142,6 +143,8 @@ export default function MaintenanceShell({ onLoggedOut, staffName, staffUid }) {
             <MyProfileScreen staffUid={staffUid} />
           ) : activeKey === 'myperformance' ? (
             <MaintenancePerformanceScreen staffUid={staffUid} />
+          ) : activeKey === 'history' ? (
+            <MaintenanceHistoryScreen staffUid={staffUid} />
           ) : (
             <MaintenanceMyTasksScreen staffUid={staffUid} staffName={staffName} />
           )}

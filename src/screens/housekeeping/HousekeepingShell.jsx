@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import HousekeepingSidebar from './HousekeepingSidebar';
 import HousekeepingMyTasksScreen from './HousekeepingMyTasksScreen';
+import HousekeepingHistoryScreen from './HousekeepingHistoryScreen';
 import HousekeepingPerformanceScreen from './HousekeepingPerformanceScreen';
 import MyProfileScreen from '../frontdesk/MyProfileScreen';
 import DashboardFooter from '../../components/shared/DashboardFooter';
@@ -149,6 +150,8 @@ export default function HousekeepingShell({ onLoggedOut, staffName, staffUid }) 
             <MyProfileScreen staffUid={staffUid} />
           ) : activeKey === 'myperformance' ? (
             <HousekeepingPerformanceScreen staffUid={staffUid} />
+          ) : activeKey === 'history' ? (
+            <HousekeepingHistoryScreen staffUid={staffUid} />
           ) : (
             <HousekeepingMyTasksScreen staffUid={staffUid} staffName={staffName} />
           )}

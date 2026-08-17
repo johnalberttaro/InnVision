@@ -27,11 +27,10 @@ export default function HousekeepingMyTasksScreen({ staffUid, staffName }) {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState(null);
-  // "History" date filter — applies to the Completed section only.
-  const [historyFilter, setHistoryFilter] = useState('all'); // 'today' | 'week' | 'month' | 'all'
   // Completion-note modal — opened by "Mark Complete" instead of
   // completing immediately, so staff can optionally leave a note for
-  // Front Desk/Admin (e.g. "AC still making noise").
+  // Front Desk/Admin (e.g. "AC still making noise"). Once completed, the
+  // task moves off this screen entirely — see HousekeepingHistoryScreen.jsx.
   const [completingTask, setCompletingTask] = useState(null);
   const [completionNoteText, setCompletionNoteText] = useState('');
 
@@ -141,33 +140,12 @@ export default function HousekeepingMyTasksScreen({ staffUid, staffName }) {
     }
   };
 
-  const HISTORY_FILTERS = [
-    { key: 'today', label: 'Today' },
-    { key: 'week', label: 'This Week' },
-    { key: 'month', label: 'This Month' },
-    { key: 'all', label: 'All' },
-  ];
-
-  const withinHistoryFilter = (isoString) => {
-    if (historyFilter === 'all') return true;
-    if (!isoString) return false;
-    const completedAt = new Date(isoString).getTime();
-    const now = Date.now();
-    if (historyFilter === 'today') {
-      const startOfToday = new Date();
-      startOfToday.setHours(0, 0, 0, 0);
-      return completedAt >= startOfToday.getTime();
-    }
-    if (historyFilter === 'week') return now - completedAt <= 7 * 24 * 60 * 60 * 1000;
-    if (historyFilter === 'month') return now - completedAt <= 30 * 24 * 60 * 60 * 1000;
-    return true;
-  };
-
+  // Completed tasks no longer appear on this screen at all — see
+  // HousekeepingHistoryScreen.jsx.
   const columns = useMemo(() => ({
     assigned: tasks.filter((t) => t.status === 'assigned'),
     in_progress: tasks.filter((t) => t.status === 'in_progress'),
-    completed: tasks.filter((t) => t.status === 'completed' && withinHistoryFilter(t.completedAt)),
-  }), [tasks, historyFilter]);
+  }), [tasks]);
 
   const TaskCard = ({ task }) => {
     const isUpdating = updatingId === task.id;
@@ -277,23 +255,6 @@ export default function HousekeepingMyTasksScreen({ staffUid, staffName }) {
       <Section title="Assigned" tasksInColumn={columns.assigned} accentColor="#9A7B00" />
       <Section title="In Progress" tasksInColumn={columns.in_progress} accentColor="#B3792A" />
 
-      <View style={styles.historyFilterRow}>
-        {HISTORY_FILTERS.map((f) => {
-          const active = historyFilter === f.key;
-          return (
-            <TouchableOpacity
-              key={f.key}
-              style={[styles.historyFilterChip, active && styles.historyFilterChipActive]}
-              onPress={() => setHistoryFilter(f.key)}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.historyFilterChipText, active && styles.historyFilterChipTextActive]}>{f.label}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-      <Section title="Completed" tasksInColumn={columns.completed} accentColor="#1E7B34" />
-
       <Modal visible={!!completingTask} transparent animationType="fade" onRequestClose={() => setCompletingTask(null)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -390,15 +351,6 @@ const styles = StyleSheet.create({
     padding: spacing.sm, marginTop: spacing.sm,
   },
   completionNoteText: { flex: 1, fontSize: 11, fontFamily: fonts.body, fontStyle: 'italic', color: colors.text, lineHeight: 15 },
-
-  historyFilterRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm, flexWrap: 'wrap' },
-  historyFilterChip: {
-    paddingVertical: 6, paddingHorizontal: spacing.sm,
-    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.white,
-  },
-  historyFilterChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  historyFilterChipText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.text },
-  historyFilterChipTextActive: { color: colors.onPrimary },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
   modalCard: { width: '100%', maxWidth: 380, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.lg },

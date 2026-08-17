@@ -27,10 +27,10 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState(null);
-  // "History" date filter — applies to the Resolved section only.
-  const [historyFilter, setHistoryFilter] = useState('all'); // 'today' | 'week' | 'month' | 'all'
   // Resolution-note modal — opened by "Mark Resolved" instead of
-  // resolving immediately, so staff can optionally leave a note.
+  // resolving immediately, so staff can optionally leave a note. Once
+  // resolved, the request moves off this screen entirely — see
+  // MaintenanceHistoryScreen.jsx.
   const [resolvingRequest, setResolvingRequest] = useState(null);
   const [resolutionNoteText, setResolutionNoteText] = useState('');
 
@@ -135,40 +135,18 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
     }
   };
 
-  const HISTORY_FILTERS = [
-    { key: 'today', label: 'Today' },
-    { key: 'week', label: 'This Week' },
-    { key: 'month', label: 'This Month' },
-    { key: 'all', label: 'All' },
-  ];
-
-  const withinHistoryFilter = (isoString) => {
-    if (historyFilter === 'all') return true;
-    if (!isoString) return false;
-    const resolvedAt = new Date(isoString).getTime();
-    const now = Date.now();
-    if (historyFilter === 'today') {
-      const startOfToday = new Date();
-      startOfToday.setHours(0, 0, 0, 0);
-      return resolvedAt >= startOfToday.getTime();
-    }
-    if (historyFilter === 'week') return now - resolvedAt <= 7 * 24 * 60 * 60 * 1000;
-    if (historyFilter === 'month') return now - resolvedAt <= 30 * 24 * 60 * 60 * 1000;
-    return true;
-  };
-
-  // Only 'in_progress' and 'resolved' are ever relevant here — a request
-  // only gets an assigned_to (which is what makes it show up on this
-  // "my requests" screen at all) at the exact moment Front Desk/Admin
-  // assigns it, and that same assignment action sets status straight to
-  // 'in_progress' (see MaintenanceRequest.jsx's submitAssign() — there's
-  // no separate "started" step for maintenance the way housekeeping has
-  // one). So an 'open' request is by definition never assigned to
-  // anyone yet, and never appears here.
+  // Only 'in_progress' is ever relevant here — a request only gets an
+  // assigned_to (which is what makes it show up on this "my requests"
+  // screen at all) at the exact moment Front Desk/Admin assigns it, and
+  // that same assignment action sets status straight to 'in_progress'
+  // (see MaintenanceRequest.jsx's submitAssign() — there's no separate
+  // "started" step for maintenance the way housekeeping has one). So an
+  // 'open' request is by definition never assigned to anyone yet, and
+  // never appears here. Resolved requests no longer appear here at all
+  // either — see MaintenanceHistoryScreen.jsx.
   const columns = useMemo(() => ({
     in_progress: requests.filter((r) => r.status === 'in_progress'),
-    resolved: requests.filter((r) => r.status === 'resolved' && withinHistoryFilter(r.resolvedAt)),
-  }), [requests, historyFilter]);
+  }), [requests]);
 
   const RequestCard = ({ request }) => {
     const isUpdating = updatingId === request.id;
@@ -278,23 +256,6 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
 
       <Section title="In Progress" tasksInColumn={columns.in_progress} accentColor="#B3792A" />
 
-      <View style={styles.historyFilterRow}>
-        {HISTORY_FILTERS.map((f) => {
-          const active = historyFilter === f.key;
-          return (
-            <TouchableOpacity
-              key={f.key}
-              style={[styles.historyFilterChip, active && styles.historyFilterChipActive]}
-              onPress={() => setHistoryFilter(f.key)}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.historyFilterChipText, active && styles.historyFilterChipTextActive]}>{f.label}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-      <Section title="Resolved" tasksInColumn={columns.resolved} accentColor="#1E7B34" />
-
       <Modal visible={!!resolvingRequest} transparent animationType="fade" onRequestClose={() => setResolvingRequest(null)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -394,15 +355,6 @@ const styles = StyleSheet.create({
     padding: spacing.sm, marginTop: spacing.sm,
   },
   resolutionNoteText: { flex: 1, fontSize: 11, fontFamily: fonts.body, fontStyle: 'italic', color: colors.text, lineHeight: 15 },
-
-  historyFilterRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm, flexWrap: 'wrap' },
-  historyFilterChip: {
-    paddingVertical: 6, paddingHorizontal: spacing.sm,
-    borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.white,
-  },
-  historyFilterChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  historyFilterChipText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.text },
-  historyFilterChipTextActive: { color: colors.onPrimary },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
   modalCard: { width: '100%', maxWidth: 380, backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.lg },

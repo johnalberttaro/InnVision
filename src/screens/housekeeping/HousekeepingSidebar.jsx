@@ -20,8 +20,9 @@ const LOGO_SOURCE = require('../../../assets/logo.png');
 // This role now has two real screens (My Tasks + My Performance), still
 // small enough not to need sub-sections the way Front Desk's menu has.
 const MENU_SECTIONS = [
-  { key: 'mytasks', icon: '🧹', label: 'My Tasks' },
   { key: 'myperformance', icon: '📊', label: 'My Performance' },
+  { key: 'mytasks', icon: '🧹', label: 'My Tasks' },
+  { key: 'history', icon: '🕘', label: 'History' },
 ];
 
 /**

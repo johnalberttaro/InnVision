@@ -18,8 +18,9 @@ const SIDEBAR_WIDTH = 264;
 const LOGO_SOURCE = require('../../../assets/logo.png');
 
 const MENU_SECTIONS = [
-  { key: 'mytasks', icon: '🔧', label: 'My Requests' },
   { key: 'myperformance', icon: '📊', label: 'My Performance' },
+  { key: 'mytasks', icon: '🔧', label: 'My Requests' },
+  { key: 'history', icon: '🕘', label: 'History' },
 ];
 
 /**
