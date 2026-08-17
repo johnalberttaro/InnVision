@@ -42,6 +42,7 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
     priority: row.priority,
     status: row.status,
     createdAt: row.created_at,
+    assignedAt: row.assigned_at,
     startedAt: row.started_at,
     resolvedAt: row.resolved_at,
     resolutionNote: row.resolution_note,
@@ -101,6 +102,26 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
     return `${Math.round(days / 7)}w ago`;
   };
 
+  const startRequest = async (request) => {
+    setUpdatingId(request.id);
+    try {
+      const { error } = await supabase
+        .from('maintenance_requests')
+        .update({ started_at: new Date().toISOString() })
+        .eq('id', request.id);
+      if (error) throw error;
+      // Room status is already 'maintenance' from the moment this
+      // request was first created (see MaintenanceRequest.jsx's
+      // submitNewRequest) — starting work doesn't need to change it
+      // again, unlike Housekeeping where the room only flips to
+      // In Progress once cleaning actually begins.
+    } catch (err) {
+      console.error('Failed to start request:', err);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
   const resolveRequest = async (request, note) => {
     setUpdatingId(request.id);
     try {
@@ -135,17 +156,15 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
     }
   };
 
-  // Only 'in_progress' is ever relevant here — a request only gets an
-  // assigned_to (which is what makes it show up on this "my requests"
-  // screen at all) at the exact moment Front Desk/Admin assigns it, and
-  // that same assignment action sets status straight to 'in_progress'
-  // (see MaintenanceRequest.jsx's submitAssign() — there's no separate
-  // "started" step for maintenance the way housekeeping has one). So an
-  // 'open' request is by definition never assigned to anyone yet, and
-  // never appears here. Resolved requests no longer appear here at all
-  // either — see MaintenanceHistoryScreen.jsx.
+  // Now genuinely two states before Resolved, matching Housekeeping's
+  // Assigned → In Progress flow: 'in_progress' status with no
+  // started_at yet is "Assigned, not started" (assigned_at is set,
+  // started_at isn't); 'in_progress' WITH started_at is "actually
+  // working on it." Resolved requests don't appear here at all — see
+  // MaintenanceHistoryScreen.jsx.
   const columns = useMemo(() => ({
-    in_progress: requests.filter((r) => r.status === 'in_progress'),
+    assigned: requests.filter((r) => r.status === 'in_progress' && !r.startedAt),
+    in_progress: requests.filter((r) => r.status === 'in_progress' && !!r.startedAt),
   }), [requests]);
 
   const RequestCard = ({ request }) => {
@@ -185,13 +204,20 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
         <Text style={styles.reqTimestamp}>
           {request.status === 'resolved'
             ? `Resolved ${elapsedLabel(request.resolvedAt)}`
-            : request.status === 'in_progress'
+            : request.startedAt
               ? `Started ${elapsedLabel(request.startedAt)}`
-              : `Reported ${elapsedLabel(request.createdAt)}`}
+              : request.assignedAt
+                ? `Assigned ${elapsedLabel(request.assignedAt)}`
+                : `Reported ${elapsedLabel(request.createdAt)}`}
         </Text>
 
         {isUpdating ? (
           <ActivityIndicator color={colors.primary} size="small" style={{ marginTop: spacing.sm }} />
+        ) : request.status === 'in_progress' && !request.startedAt ? (
+          <TouchableOpacity style={styles.reqActionBtn} onPress={() => startRequest(request)} activeOpacity={0.85}>
+            <Ionicons name="play-outline" size={14} color={colors.white} />
+            <Text style={styles.reqActionBtnText}>Start Work</Text>
+          </TouchableOpacity>
         ) : request.status === 'in_progress' ? (
           <TouchableOpacity
             style={[styles.reqActionBtn, styles.reqActionBtnResolve]}
@@ -254,6 +280,7 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
         {staffName ? `Maintenance requests assigned to you, ${staffName}.` : 'Maintenance requests assigned to you.'}
       </Text>
 
+      <Section title="Assigned" tasksInColumn={columns.assigned} accentColor="#9A7B00" />
       <Section title="In Progress" tasksInColumn={columns.in_progress} accentColor="#B3792A" />
 
       <Modal visible={!!resolvingRequest} transparent animationType="fade" onRequestClose={() => setResolvingRequest(null)}>
@@ -336,7 +363,7 @@ const styles = StyleSheet.create({
   roomStatusPill: { alignSelf: 'flex-start', borderRadius: radius.sm, paddingVertical: 2, paddingHorizontal: spacing.sm, marginBottom: spacing.xs },
   roomStatusPillText: { fontSize: 10, fontFamily: fonts.bodySemiBold },
 
-  reqDescription: { fontSize: 12, fontFamily: fonts.body, color: colors.text, marginBottom: spacing.xs },
+  reqDescription: { fontSize: 12, fontFamily: fonts.body, fontStyle: 'italic', color: colors.text, marginBottom: spacing.xs },
   reqTimestamp: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginBottom: spacing.sm },
 
   reqActionBtn: {

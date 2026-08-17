@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAudioPlayer } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import HousekeepingSidebar from './HousekeepingSidebar';
 import HousekeepingMyTasksScreen from './HousekeepingMyTasksScreen';
@@ -107,6 +108,33 @@ export default function HousekeepingShell({ onLoggedOut, staffName, staffUid }) 
     if (!lastSeenAt) return assignedTasks.length; // never opened My Tasks yet — everything's new
     return assignedTasks.filter((t) => new Date(t.assigned_at).getTime() > new Date(lastSeenAt).getTime()).length;
   }, [assignedTasks, lastSeenAt]);
+
+  // ── Notification sound ──────────────────────────────────────────────
+  // Plays once whenever newTaskCount goes UP (a new task just arrived
+  // while the app is open) — not on every render, and not just because
+  // the count is nonzero (which would replay the sound on every
+  // navigation/refresh while an unseen task is still sitting there).
+  // prevCountRef starts at the current count on mount specifically so a
+  // staff member opening the app to an already-existing unseen task
+  // doesn't get a sound blast on launch — only genuinely new arrivals
+  // while they're active in the app trigger it.
+  //
+  // Needs: `npx expo install expo-audio` (expo-av is deprecated as of
+  // SDK 52+) and a short sound file at assets/notification.mp3 — neither
+  // is provided here, both must be added to the project for this to work.
+  const notificationPlayer = useAudioPlayer(require('../../../assets/notification.mp3'));
+  const prevTaskCountRef = useRef(newTaskCount);
+  useEffect(() => {
+    if (newTaskCount > prevTaskCountRef.current) {
+      try {
+        notificationPlayer.seekTo(0);
+        notificationPlayer.play();
+      } catch (err) {
+        console.error('Failed to play notification sound:', err);
+      }
+    }
+    prevTaskCountRef.current = newTaskCount;
+  }, [newTaskCount]);
 
   const handleNavigate = (key) => {
     setActiveKey(key);

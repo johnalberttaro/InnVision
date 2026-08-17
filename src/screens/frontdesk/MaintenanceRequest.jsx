@@ -78,6 +78,12 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
   const [newCategory, setNewCategory] = useState('other');
   const [newPriority, setNewPriority] = useState('normal');
   const [newDescription, setNewDescription] = useState('');
+  // Optional — assigning right at creation skips the separate "Assign"
+  // step afterward. Same as picking someone via the existing Assign
+  // modal, assignment IS the start moment for maintenance (see
+  // submitAssign() below), so choosing staff here also sets status
+  // straight to 'in_progress' instead of 'open'.
+  const [newAssignStaff, setNewAssignStaff] = useState(null);
   const [newSaving, setNewSaving] = useState(false);
   const [newError, setNewError] = useState('');
 
@@ -105,6 +111,7 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
     assignedToName: row.assigned_to_name,
     resolutionNotes: row.resolution_notes,
     createdAt: row.created_at,
+    assignedAt: row.assigned_at,
     startedAt: row.started_at,
     resolvedAt: row.resolved_at,
   });
@@ -212,6 +219,7 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
     setNewCategory('other');
     setNewPriority('normal');
     setNewDescription('');
+    setNewAssignStaff(null);
     setNewError('');
     setNewModalOpen(true);
   };
@@ -230,6 +238,18 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
         description: newDescription.trim(),
         reported_by: staffUid || null,
         reported_by_name: staffName || null,
+        // If staff picked someone to assign right here, skip the 'open'
+        // stage entirely — same fields/status submitAssign() above sets
+        // when assigning an already-open request. assigned_at (not
+        // started_at) — see submitAssign()'s comment for why.
+        ...(newAssignStaff
+          ? {
+              assigned_to: newAssignStaff.id,
+              assigned_to_name: newAssignStaff.name,
+              status: 'in_progress',
+              assigned_at: new Date().toISOString(),
+            }
+          : {}),
       });
       if (error) throw error;
 
@@ -267,7 +287,12 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
           assigned_to: assignStaff.id,
           assigned_to_name: assignStaff.name,
           status: 'in_progress',
-          started_at: new Date().toISOString(),
+          // assigned_at (not started_at) — assignment and "actually
+          // started working" are now two separate moments, matching
+          // Housekeeping's Assigned → In Progress flow. The assigned
+          // staff member taps "Start Work" in their own portal to set
+          // started_at themselves (MaintenanceMyTasksScreen.jsx).
+          assigned_at: new Date().toISOString(),
         })
         .eq('id', assignModalRequest.id);
       if (error) throw error;
@@ -358,7 +383,9 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
           {request.status === 'resolved'
             ? `Resolved ${elapsedLabel(request.resolvedAt)}`
             : request.status === 'in_progress'
-              ? `Started ${elapsedLabel(request.startedAt)}`
+              ? (request.startedAt
+                  ? `Started ${elapsedLabel(request.startedAt)}`
+                  : `Assigned ${elapsedLabel(request.assignedAt)}`)
               : `Reported ${elapsedLabel(request.createdAt)}`}
           {request.reportedByName ? ` · by ${request.reportedByName}` : ''}
         </Text>
@@ -614,6 +641,30 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
               multiline
             />
 
+            <Text style={styles.fieldLabel}>Assign to (optional)</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pickerRow}>
+              {staffList.length === 0 ? (
+                <Text style={styles.noEligibleText}>No active maintenance staff found.</Text>
+              ) : (
+                staffList.map((s) => (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={[styles.pickerChip, newAssignStaff?.id === s.id && styles.pickerChipActive]}
+                    onPress={() => setNewAssignStaff(newAssignStaff?.id === s.id ? null : s)}
+                  >
+                    <Text style={[styles.pickerChipText, newAssignStaff?.id === s.id && styles.pickerChipTextActive]}>
+                      {s.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+            {!newAssignStaff && (
+              <Text style={styles.assignHint}>
+                Leaving this unassigned keeps the request "Open" until someone assigns it later.
+              </Text>
+            )}
+
             {!!newError && <Text style={styles.formError}>{newError}</Text>}
 
             <View style={styles.modalActions}>
@@ -813,6 +864,7 @@ const styles = StyleSheet.create({
   pickerChipText: { fontSize: 12, fontFamily: fonts.bodyMedium, color: colors.text },
   pickerChipTextActive: { color: colors.white, fontFamily: fonts.bodySemiBold },
   noEligibleText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic', paddingVertical: spacing.sm },
+  assignHint: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: spacing.xs },
 
   priorityRow: { flexDirection: 'row', gap: spacing.sm },
   priorityChip: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, paddingVertical: spacing.sm, alignItems: 'center' },

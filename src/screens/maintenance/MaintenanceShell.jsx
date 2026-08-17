@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useAudioPlayer } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaintenanceSidebar from './MaintenanceSidebar';
 import MaintenanceMyTasksScreen from './MaintenanceMyTasksScreen';
@@ -18,13 +19,11 @@ const LAST_SEEN_KEY_PREFIX = 'maintenance-requests-last-seen:';
  * MaintenanceShell — the Maintenance staff portal. Same shape as
  * HousekeepingShell.jsx.
  *
- * NEW-ASSIGNMENT BADGE: unlike Housekeeping (which has a distinct
- * 'assigned' state before work starts), a maintenance request is
- * 'in_progress' from the moment it's assigned (see
- * MaintenanceMyTasksScreen.jsx's own note on this) — so "new" here means
- * an 'in_progress' request whose started_at (the same moment it was
- * assigned) is after the last-seen timestamp, not a separate 'assigned'
- * status the way Housekeeping's badge counts.
+ * NEW-ASSIGNMENT BADGE: now genuinely mirrors Housekeeping's — "new"
+ * means a request whose assigned_at is after the last-seen timestamp,
+ * regardless of whether the staff member has tapped "Start Work" yet
+ * (assignment and starting work are now two separate moments, same as
+ * Housekeeping — see MaintenanceMyTasksScreen.jsx's own note on this).
  */
 export default function MaintenanceShell({ onLoggedOut, staffName, staffUid }) {
   const [activeKey, setActiveKey] = useState('mytasks');
@@ -77,7 +76,7 @@ export default function MaintenanceShell({ onLoggedOut, staffName, staffUid }) {
     const loadInProgress = async () => {
       const { data, error } = await supabase
         .from('maintenance_requests')
-        .select('id, started_at')
+        .select('id, assigned_at')
         .eq('assigned_to', staffUid)
         .eq('status', 'in_progress');
       if (!error) setInProgressRequests(data || []);
@@ -98,8 +97,27 @@ export default function MaintenanceShell({ onLoggedOut, staffName, staffUid }) {
 
   const newRequestCount = React.useMemo(() => {
     if (!lastSeenAt) return inProgressRequests.length;
-    return inProgressRequests.filter((r) => new Date(r.started_at).getTime() > new Date(lastSeenAt).getTime()).length;
+    return inProgressRequests.filter((r) => new Date(r.assigned_at).getTime() > new Date(lastSeenAt).getTime()).length;
   }, [inProgressRequests, lastSeenAt]);
+
+  // ── Notification sound ──────────────────────────────────────────────
+  // Same reasoning as HousekeepingShell.jsx: plays once whenever
+  // newRequestCount goes UP, not on every render or just because it's
+  // nonzero. Needs `npx expo install expo-audio` and a sound file at
+  // assets/notification.mp3 — neither is provided here.
+  const notificationPlayer = useAudioPlayer(require('../../../assets/notification.mp3'));
+  const prevRequestCountRef = useRef(newRequestCount);
+  useEffect(() => {
+    if (newRequestCount > prevRequestCountRef.current) {
+      try {
+        notificationPlayer.seekTo(0);
+        notificationPlayer.play();
+      } catch (err) {
+        console.error('Failed to play notification sound:', err);
+      }
+    }
+    prevRequestCountRef.current = newRequestCount;
+  }, [newRequestCount]);
 
   const handleNavigate = (key) => {
     setActiveKey(key);
