@@ -64,6 +64,7 @@ export default function HomeHeader({
   onContactPress,
   onFindBooking,
   onOrderFood,
+  onReportIssue,
   isAuthenticated,
   onHomePress,
 }) {
@@ -97,6 +98,10 @@ export default function HomeHeader({
     { label: 'My Reservations',  onPress: () => onFindBooking && onFindBooking() },
     ...(isAuthenticated
       ? [{ label: 'Order Food', onPress: () => onOrderFood && onOrderFood() }]
+      : []
+    ),
+    ...(isAuthenticated
+      ? [{ label: 'Report an Issue', onPress: () => onReportIssue && onReportIssue() }]
       : []
     ),
     ...(isAuthenticated

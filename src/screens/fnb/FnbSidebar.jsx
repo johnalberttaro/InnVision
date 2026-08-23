@@ -10,6 +10,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
+import { Ionicons } from '@expo/vector-icons';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 
 const WIDE_BREAKPOINT = 1024;
@@ -28,22 +29,22 @@ const LOGO_SOURCE = require('../../../assets/logo.png');
 const MENU_SECTIONS = [
   {
     key: 'dashboard',
-    icon: '📊',
+    icon: 'grid-outline',
     label: 'Dashboard',
   },
   {
     key: 'kitchenorders',
-    icon: '🍽',
+    icon: 'restaurant-outline',
     label: 'Kitchen Orders',
   },
   {
     key: 'orderhistory',
-    icon: '🕘',
+    icon: 'time-outline',
     label: 'Order History',
   },
   {
     key: 'menuavailability',
-    icon: '🥘',
+    icon: 'fast-food-outline',
     label: 'Menu Availability',
   },
 ];
@@ -130,7 +131,12 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffPhoto
               onMouseLeave={() => setHoveredKey(null)}
               activeOpacity={0.75}
             >
-              <Text style={styles.menuIcon}>{section.icon}</Text>
+              <Ionicons
+                name={section.icon}
+                size={18}
+                color={isActive ? colors.white : 'rgba(255,255,255,0.85)'}
+                style={styles.menuIcon}
+              />
               <Text style={[styles.menuLabel, isActive && styles.menuLabelActive]}>{section.label}</Text>
             </TouchableOpacity>
           );
@@ -143,7 +149,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffPhoto
           onMouseLeave={() => setHoveredKey(null)}
           activeOpacity={0.75}
         >
-          <Text style={styles.menuIcon}>🚪</Text>
+          <Ionicons name="log-out-outline" size={18} color="rgba(255,255,255,0.85)" style={styles.menuIcon} />
           <Text style={styles.menuLabel}>Logout</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -168,7 +174,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffPhoto
           </View>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setConfirmingLogout(true)} style={styles.quickLogout} accessibilityLabel="Log out">
-          <Text style={styles.quickLogoutIcon}>⏻</Text>
+          <Ionicons name="power-outline" size={16} color={colors.white} />
         </TouchableOpacity>
       </View>
 
@@ -218,7 +224,7 @@ const styles = StyleSheet.create({
   menuItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm + 2, paddingHorizontal: spacing.lg },
   menuItemActive: { backgroundColor: 'rgba(255,255,255,0.1)', borderLeftWidth: 3, borderLeftColor: colors.accent },
   menuItemHovered: { backgroundColor: 'rgba(255,255,255,0.06)' },
-  menuIcon: { fontSize: 16, width: 24 },
+  menuIcon: { width: 24 },
   menuLabel: { flex: 1, fontSize: 15, fontFamily: fonts.bodySemiBold, color: 'rgba(255,255,255,0.85)' },
   menuLabelActive: { color: colors.white },
 

@@ -28,6 +28,7 @@ export default function HamburgerMenu({
   onContactPress,
   onFindBooking,
   onOrderFood,
+  onReportIssue,
   onLogout,
   isAuthenticated,
 }) {
@@ -67,6 +68,14 @@ export default function HamburgerMenu({
             onPress: () => {
               onClose();
               onOrderFood && onOrderFood();
+            },
+          },
+          {
+            label: 'Report an Issue',
+            icon: 'build-outline',
+            onPress: () => {
+              onClose();
+              onReportIssue && onReportIssue();
             },
           },
           {

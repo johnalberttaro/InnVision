@@ -46,16 +46,22 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
     startedAt: row.started_at,
     resolvedAt: row.resolved_at,
     resolutionNote: row.resolution_note,
+    assignedTo: row.assigned_to,
+    assignedToName: row.assigned_to_name,
+    assignedTo2: row.assigned_to_2,
+    assignedToName2: row.assigned_to_name_2,
   });
 
   useEffect(() => {
     if (!staffUid) return;
 
     const loadRequests = async () => {
+      // Either assignee slot — a request shows up here whether this
+      // staff member is the first or second person assigned to it.
       const { data, error } = await supabase
         .from('maintenance_requests')
         .select('*')
-        .eq('assigned_to', staffUid)
+        .or(`assigned_to.eq.${staffUid},assigned_to_2.eq.${staffUid}`)
         .order('created_at', { ascending: false });
       if (error) {
         console.error('Failed to load my maintenance requests:', error);
@@ -67,11 +73,20 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
     };
     loadRequests();
 
+    // Two filtered listeners on one channel — Supabase realtime's
+    // channel filter only supports a single simple eq condition each,
+    // not an OR, so this covers "I'm assignee 1" and "I'm assignee 2"
+    // as two separate subscriptions that both just re-run loadRequests.
     const channel = supabase
       .channel(`my-maintenance-requests-${staffUid}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'maintenance_requests', filter: `assigned_to=eq.${staffUid}` },
+        loadRequests
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'maintenance_requests', filter: `assigned_to_2=eq.${staffUid}` },
         loadRequests
       )
       .subscribe();
@@ -172,6 +187,12 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
     const cat = categoryMeta(request.category);
     const meta = roomStatusMeta(request.roomNumber);
     const isUrgent = request.priority === 'urgent' && request.status !== 'resolved';
+    // Whichever name ISN'T this staff member's own — so each of the two
+    // assignees sees "Working with: <the other person>" rather than
+    // always seeing the same fixed "assignee 1" name regardless of
+    // which slot they're actually in.
+    const partnerName =
+      request.assignedTo === staffUid ? request.assignedToName2 : request.assignedToName;
 
     return (
       <View style={[styles.reqCard, isUrgent && styles.reqCardUrgent]}>
@@ -192,6 +213,13 @@ export default function MaintenanceMyTasksScreen({ staffUid, staffName }) {
           <Ionicons name={cat.icon} size={13} color={colors.textMuted} />
           <Text style={styles.categoryText}>{cat.label}</Text>
         </View>
+
+        {!!partnerName && (
+          <View style={styles.partnerRow}>
+            <Ionicons name="people-outline" size={13} color={colors.textMuted} />
+            <Text style={styles.partnerText}>Working with {partnerName}</Text>
+          </View>
+        )}
 
         {meta && (
           <View style={[styles.roomStatusPill, { backgroundColor: meta.bg }]}>
@@ -359,6 +387,9 @@ const styles = StyleSheet.create({
 
   categoryRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: spacing.xs },
   categoryText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+
+  partnerRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: spacing.xs },
+  partnerText: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted },
 
   roomStatusPill: { alignSelf: 'flex-start', borderRadius: radius.sm, paddingVertical: 2, paddingHorizontal: spacing.sm, marginBottom: spacing.xs },
   roomStatusPillText: { fontSize: 10, fontFamily: fonts.bodySemiBold },

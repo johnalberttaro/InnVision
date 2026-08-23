@@ -84,11 +84,14 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
   // submitAssign() below), so choosing staff here also sets status
   // straight to 'in_progress' instead of 'open'.
   const [newAssignStaff, setNewAssignStaff] = useState(null);
+  // Optional second assignee — for jobs that genuinely need two people.
+  const [newAssignStaff2, setNewAssignStaff2] = useState(null);
   const [newSaving, setNewSaving] = useState(false);
   const [newError, setNewError] = useState('');
 
   const [assignModalRequest, setAssignModalRequest] = useState(null);
   const [assignStaff, setAssignStaff] = useState(null);
+  const [assignStaff2, setAssignStaff2] = useState(null);
   const [assignSaving, setAssignSaving] = useState(false);
 
   // Same pattern as HousekeepingSchedule.jsx: Open/In Progress paginate
@@ -109,6 +112,8 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
     reportedByName: row.reported_by_name,
     assignedTo: row.assigned_to,
     assignedToName: row.assigned_to_name,
+    assignedTo2: row.assigned_to_2,
+    assignedToName2: row.assigned_to_name_2,
     resolutionNotes: row.resolution_notes,
     createdAt: row.created_at,
     assignedAt: row.assigned_at,
@@ -220,6 +225,7 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
     setNewPriority('normal');
     setNewDescription('');
     setNewAssignStaff(null);
+    setNewAssignStaff2(null);
     setNewError('');
     setNewModalOpen(true);
   };
@@ -246,6 +252,13 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
           ? {
               assigned_to: newAssignStaff.id,
               assigned_to_name: newAssignStaff.name,
+              // Second assignee only makes sense alongside a first one —
+              // if newAssignStaff2 is set without newAssignStaff, the UI
+              // itself prevents that (the second picker only shows once
+              // a first assignee is chosen).
+              ...(newAssignStaff2
+                ? { assigned_to_2: newAssignStaff2.id, assigned_to_name_2: newAssignStaff2.name }
+                : {}),
               status: 'in_progress',
               assigned_at: new Date().toISOString(),
             }
@@ -274,6 +287,7 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
   // ── Assign (quick action: assigns AND moves to in_progress) ────────────
   const openAssignModal = (request) => {
     setAssignStaff(null);
+    setAssignStaff2(null);
     setAssignModalRequest(request);
   };
 
@@ -286,6 +300,12 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
         .update({
           assigned_to: assignStaff.id,
           assigned_to_name: assignStaff.name,
+          // Second assignee optional — cleared to null explicitly (not
+          // omitted) so re-assigning a request that previously had a
+          // second person, without picking one this time, actually
+          // clears the old one instead of leaving it stuck.
+          assigned_to_2: assignStaff2?.id || null,
+          assigned_to_name_2: assignStaff2?.name || null,
           status: 'in_progress',
           // assigned_at (not started_at) — assignment and "actually
           // started working" are now two separate moments, matching
@@ -374,6 +394,14 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
               <Text style={styles.assigneeAvatarText}>{request.assignedToName.charAt(0).toUpperCase()}</Text>
             </View>
             <Text style={styles.assigneeName} numberOfLines={1}>{request.assignedToName}</Text>
+            {!!request.assignedToName2 && (
+              <>
+                <View style={[styles.assigneeAvatar, styles.assigneeAvatarSecond]}>
+                  <Text style={styles.assigneeAvatarText}>{request.assignedToName2.charAt(0).toUpperCase()}</Text>
+                </View>
+                <Text style={styles.assigneeName} numberOfLines={1}>{request.assignedToName2}</Text>
+              </>
+            )}
           </View>
         ) : (
           <Text style={styles.unassignedText}>Unassigned</Text>
@@ -665,6 +693,26 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
               </Text>
             )}
 
+            {!!newAssignStaff && (
+              <>
+                <Text style={styles.fieldLabel}>Add a second person (optional)</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pickerRow}>
+                  {staffList.filter((s) => s.id !== newAssignStaff.id).map((s) => (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={[styles.pickerChip, newAssignStaff2?.id === s.id && styles.pickerChipActive]}
+                      onPress={() => setNewAssignStaff2(newAssignStaff2?.id === s.id ? null : s)}
+                    >
+                      <Text style={[styles.pickerChipText, newAssignStaff2?.id === s.id && styles.pickerChipTextActive]}>
+                        {s.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <Text style={styles.assignHint}>For jobs that need a second pair of hands.</Text>
+              </>
+            )}
+
             {!!newError && <Text style={styles.formError}>{newError}</Text>}
 
             <View style={styles.modalActions}>
@@ -711,6 +759,26 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
                 ))
               )}
             </ScrollView>
+
+            {!!assignStaff && (
+              <>
+                <Text style={styles.fieldLabel}>Add a second person (optional)</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pickerRow}>
+                  {staffList.filter((s) => s.id !== assignStaff.id).map((s) => (
+                    <TouchableOpacity
+                      key={s.id}
+                      style={[styles.pickerChip, assignStaff2?.id === s.id && styles.pickerChipActive]}
+                      onPress={() => setAssignStaff2(assignStaff2?.id === s.id ? null : s)}
+                    >
+                      <Text style={[styles.pickerChipText, assignStaff2?.id === s.id && styles.pickerChipTextActive]}>
+                        {s.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <Text style={styles.assignHint}>For jobs that need a second pair of hands.</Text>
+              </>
+            )}
 
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setAssignModalRequest(null)} disabled={assignSaving}>
@@ -832,6 +900,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentTint, alignItems: 'center', justifyContent: 'center',
   },
   assigneeAvatarText: { fontSize: 10, fontFamily: fonts.headingBold, color: colors.accent },
+  // Distinct tint so two assignees are visually distinguishable at a
+  // glance, not just by reading both names. gap on assigneeRow already
+  // handles spacing between the two avatar+name pairs.
+  assigneeAvatarSecond: { backgroundColor: colors.primaryTint },
   assigneeName: { fontSize: 12, fontFamily: fonts.bodyMedium, color: colors.text, flexShrink: 1 },
   unassignedText: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic', marginBottom: spacing.xs },
 

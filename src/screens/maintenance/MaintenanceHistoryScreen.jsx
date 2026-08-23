@@ -41,6 +41,9 @@ export default function MaintenanceHistoryScreen({ staffUid }) {
     description: row.description,
     resolvedAt: row.resolved_at,
     resolutionNote: row.resolution_note,
+    assignedTo: row.assigned_to,
+    assignedToName: row.assigned_to_name,
+    assignedToName2: row.assigned_to_name_2,
   });
 
   useEffect(() => {
@@ -50,7 +53,7 @@ export default function MaintenanceHistoryScreen({ staffUid }) {
       const { data, error } = await supabase
         .from('maintenance_requests')
         .select('*')
-        .eq('assigned_to', staffUid)
+        .or(`assigned_to.eq.${staffUid},assigned_to_2.eq.${staffUid}`)
         .eq('status', 'resolved')
         .order('resolved_at', { ascending: false });
       if (error) {
@@ -68,6 +71,11 @@ export default function MaintenanceHistoryScreen({ staffUid }) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'maintenance_requests', filter: `assigned_to=eq.${staffUid}` },
+        loadRequests
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'maintenance_requests', filter: `assigned_to_2=eq.${staffUid}` },
         loadRequests
       )
       .subscribe();
@@ -145,6 +153,7 @@ export default function MaintenanceHistoryScreen({ staffUid }) {
       ) : (
         filteredRequests.map((request) => {
           const cat = categoryMeta(request.category);
+          const partnerName = request.assignedTo === staffUid ? request.assignedToName2 : request.assignedToName;
           return (
             <View key={request.id} style={styles.reqCard}>
               <View style={styles.reqCardTop}>
@@ -162,6 +171,13 @@ export default function MaintenanceHistoryScreen({ staffUid }) {
                 <Ionicons name={cat.icon} size={13} color={colors.textMuted} />
                 <Text style={styles.categoryText}>{cat.label}</Text>
               </View>
+
+              {!!partnerName && (
+                <View style={styles.partnerRow}>
+                  <Ionicons name="people-outline" size={13} color={colors.textMuted} />
+                  <Text style={styles.partnerText}>Worked with {partnerName}</Text>
+                </View>
+              )}
 
               {!!request.description && <Text style={styles.reqDescription} numberOfLines={3}>{request.description}</Text>}
 
@@ -222,6 +238,9 @@ const styles = StyleSheet.create({
 
   categoryRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: spacing.xs },
   categoryText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+
+  partnerRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: spacing.xs },
+  partnerText: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted },
 
   reqDescription: { fontSize: 12, fontFamily: fonts.body, color: colors.text, marginBottom: spacing.xs },
   reqTimestamp: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted },

@@ -10,6 +10,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
+import { Ionicons } from '@expo/vector-icons';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
 
 const WIDE_BREAKPOINT = 1024; // sidebar is fixed/always-visible above this
@@ -27,12 +28,12 @@ const LOGO_SOURCE = require('../../../assets/logo.png');
 const MENU_SECTIONS = [
   {
     key: 'dashboard',
-    icon: '📊',
+    icon: 'grid-outline',
     label: 'Dashboard',
   },
   {
     key: 'rooms',
-    icon: '🛏',
+    icon: 'bed-outline',
     label: 'Room Management',
     subItems: [
       { key: 'rooms:types', label: 'Room Types & Rates' },
@@ -40,7 +41,7 @@ const MENU_SECTIONS = [
   },
   {
     key: 'food',
-    icon: '🍽',
+    icon: 'restaurant-outline',
     label: 'Food & Dining',
     subItems: [
       { key: 'food:menu', label: 'Food Menu' },
@@ -48,7 +49,7 @@ const MENU_SECTIONS = [
   },
   {
     key: 'staff',
-    icon: '👥',
+    icon: 'people-outline',
     label: 'Staff',
     subItems: [
       { key: 'staff:accounts', label: 'Front Desk Accounts' },
@@ -60,7 +61,7 @@ const MENU_SECTIONS = [
   },
   {
     key: 'fd',
-    icon: '🛎️',
+    icon: 'briefcase-outline',
     label: 'Front Desk Operations',
     // Admin can do everything a front desk staff member can — and more.
     // These mirror the Front Desk portal's menu (prefixed `fd:` to avoid
@@ -94,7 +95,7 @@ const MENU_SECTIONS = [
   },
   {
     key: 'reports',
-    icon: '📈',
+    icon: 'bar-chart-outline',
     label: 'Reports & Analytics',
     subItems: [
       { key: 'reports:occupancy', label: 'Occupancy Report' },
@@ -198,12 +199,21 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
                 onPress={() => toggleSection(section)}
                 activeOpacity={0.75}
               >
-                <Text style={styles.menuIcon}>{section.icon}</Text>
+                <Ionicons
+                  name={section.icon}
+                  size={18}
+                  color={isParentActive ? colors.white : 'rgba(255,255,255,0.85)'}
+                  style={styles.menuIcon}
+                />
                 <Text style={[styles.menuLabel, isParentActive && styles.menuLabelActive]}>
                   {section.label}
                 </Text>
                 {section.subItems && (
-                  <Text style={styles.chevron}>{isExpanded ? '▾' : '▸'}</Text>
+                  <Ionicons
+                    name={isExpanded ? 'chevron-down' : 'chevron-forward'}
+                    size={13}
+                    color="rgba(255,255,255,0.5)"
+                  />
                 )}
               </TouchableOpacity>
 
@@ -248,7 +258,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
           onPress={() => setConfirmingLogout(true)}
           activeOpacity={0.75}
         >
-          <Text style={styles.menuIcon}>🚪</Text>
+          <Ionicons name="log-out-outline" size={18} color="rgba(255,255,255,0.85)" style={styles.menuIcon} />
           <Text style={styles.menuLabel}>Logout</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -263,7 +273,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
           <Text style={styles.profileRole} numberOfLines={1}>Administrator</Text>
         </View>
         <TouchableOpacity onPress={() => setConfirmingLogout(true)} style={styles.quickLogout} accessibilityLabel="Log out">
-          <Text style={styles.quickLogoutIcon}>⏻</Text>
+          <Ionicons name="power-outline" size={16} color={colors.white} />
         </TouchableOpacity>
       </View>
 
@@ -368,7 +378,6 @@ const styles = StyleSheet.create({
     borderLeftColor: colors.accent,
   },
   menuIcon: {
-    fontSize: 16,
     width: 24,
   },
   menuLabel: {

@@ -29,6 +29,7 @@ import HousekeepingShell    from './src/screens/housekeeping/HousekeepingShell';
 import MaintenanceShell     from './src/screens/maintenance/MaintenanceShell';
 import LoadingScreen        from './src/screens/LoadingScreen';
 import OrderFoodScreen      from './src/foodservice/OrderFoodScreen';
+import ReportIssueScreen    from './src/screens/reportIssue/ReportIssueScreen';
 import { fonts }            from './src/utils/theme';
 import { ThemeProvider }    from './src/context/ThemeContext';
 
@@ -273,6 +274,10 @@ export default function App() {
   // Reservations, for the same reason.
   const goToOrderFood = () => setScreen(user ? 'orderFood' : 'login');
 
+  // Report an Issue is guest-account-only too, same reasoning/pattern as
+  // Order Food — the screen itself queries reservations by user.id.
+  const goToReportIssue = () => setScreen(user ? 'reportIssue' : 'login');
+
   // ── Loading gate ────────────────────────────────────────────────────
   if (!fontsLoaded || authLoading || !minLoadTimeElapsed) {
     return (
@@ -303,6 +308,7 @@ export default function App() {
               onContactPress={() => setScreen('contact')}
               onFindBooking={goToMyReservations}
               onOrderFood={goToOrderFood}
+              onReportIssue={goToReportIssue}
               isAuthenticated={!!user}
               user={user}
               onLogout={handleLogout}
@@ -411,6 +417,14 @@ export default function App() {
           {/* ── Order Food (Food Service, Phase 1) ───────────────────── */}
           {screen === 'orderFood' && (
             <OrderFoodScreen
+              user={user}
+              onBackPress={() => setScreen('home')}
+            />
+          )}
+
+          {/* ── Report an Issue (guest self-service maintenance) ─────── */}
+          {screen === 'reportIssue' && (
+            <ReportIssueScreen
               user={user}
               onBackPress={() => setScreen('home')}
             />

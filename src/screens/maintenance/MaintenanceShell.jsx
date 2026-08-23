@@ -77,7 +77,7 @@ export default function MaintenanceShell({ onLoggedOut, staffName, staffUid }) {
       const { data, error } = await supabase
         .from('maintenance_requests')
         .select('id, assigned_at')
-        .eq('assigned_to', staffUid)
+        .or(`assigned_to.eq.${staffUid},assigned_to_2.eq.${staffUid}`)
         .eq('status', 'in_progress');
       if (!error) setInProgressRequests(data || []);
     };
@@ -88,6 +88,11 @@ export default function MaintenanceShell({ onLoggedOut, staffName, staffUid }) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'maintenance_requests', filter: `assigned_to=eq.${staffUid}` },
+        loadInProgress
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'maintenance_requests', filter: `assigned_to_2=eq.${staffUid}` },
         loadInProgress
       )
       .subscribe();

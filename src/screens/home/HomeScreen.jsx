@@ -65,6 +65,8 @@ const homeBackground = Platform.OS === 'web'
  *  - onOrderFood:     () => void  — forwarded to both the wide-screen
  *                                   navbar (authenticated only) and the
  *                                   hamburger menu's Order Food item
+ *  - onReportIssue:   () => void  — same forwarding pattern as onOrderFood,
+ *                                   for the Report an Issue item
  *  - isAuthenticated: boolean
  */
 export default function HomeScreen({
@@ -76,6 +78,7 @@ export default function HomeScreen({
   onContactPress,
   onFindBooking,
   onOrderFood,
+  onReportIssue,
   isAuthenticated,
 }) {
   const [menuVisible, setMenuVisible] = useState(false);
@@ -95,6 +98,7 @@ export default function HomeScreen({
         onContactPress={onContactPress}
         onFindBooking={onFindBooking}
         onOrderFood={onOrderFood}
+        onReportIssue={onReportIssue}
         isAuthenticated={isAuthenticated}
       />
 
@@ -183,6 +187,7 @@ export default function HomeScreen({
         onContactPress={onContactPress}
         onFindBooking={onFindBooking}
         onOrderFood={onOrderFood}
+        onReportIssue={onReportIssue}
         onLogout={onLogout}
         isAuthenticated={isAuthenticated}
       />
