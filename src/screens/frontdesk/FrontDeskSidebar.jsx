@@ -34,64 +34,53 @@ const MENU_SECTIONS = [
     icon: 'home-outline',
     label: 'Dashboard',
   },
+  // Flat now (no subItems) — Walk-In Check-In, Tape Chart, and the 6
+  // reservation-list filters (View/Pending/Confirmed/Check-ins/Check-outs/
+  // Refunds Pending) all moved into a scrollable tab bar at the top of
+  // ReservationsScreen.jsx itself, so there's nothing left to expand here.
+  // Key is 'reservations:all' (not just 'reservations') so tapping this
+  // lands directly on the All-bookings tab — a real, valid filterKey —
+  // rather than on a bare namespace with no matching tab.
   {
-    key: 'reservations',
+    key: 'reservations:all',
     icon: 'calendar-outline',
     label: 'Reservation Management',
-    subItems: [
-      { key: 'reservations:walkin', label: 'Walk-In Check-In' },
-      { key: 'reservations:tapechart', label: 'Tape Chart' },
-      { key: 'reservations:all', label: 'View Reservations' },
-      { key: 'reservations:pending', label: 'Pending Reservations' },
-      { key: 'reservations:confirmed', label: 'Confirmed Reservations' },
-      { key: 'reservations:checkins', label: 'Check-ins' },
-      { key: 'reservations:checkouts', label: 'Check-outs' },
-      { key: 'reservations:refunds', label: 'Refunds Pending' },
-    ],
   },
+  // Flat now (no subItems) — the 5 room-management sub-screens (List/
+  // Types/Availability/Status/Maintenance) all moved into a scrollable
+  // tab bar at the top of RoomManagementScreen.jsx itself, same treatment
+  // Reservation Management got above. Key is 'rooms:list' (not just
+  // 'rooms') so tapping this lands directly on the Room List tab — a
+  // real, valid section — rather than on a bare namespace with no
+  // matching tab.
   {
-    key: 'rooms',
+    key: 'rooms:list',
     icon: 'bed-outline',
     label: 'Room Management',
-    subItems: [
-      { key: 'rooms:list', label: 'Room List' },
-      { key: 'rooms:types', label: 'Room Types' },
-      { key: 'rooms:availability', label: 'Room Availability' },
-      { key: 'rooms:status', label: 'Room Status' },
-      { key: 'rooms:maintenance', label: 'Room Maintenance' },
-    ],
   },
+  // Flat now (no subItems) — the 4 guest sub-screens (Profiles/Records/
+  // Ratings/Inquiries) all moved into a scrollable tab bar at the top of
+  // GuestManagementScreen.jsx itself, same treatment Reservation and Room
+  // Management got. Key is 'guests:profiles' (not just 'guests') so
+  // tapping this lands directly on the Guest Profiles tab.
   {
-    key: 'guests',
+    key: 'guests:profiles',
     icon: 'people-outline',
     label: 'Guest Management',
-    subItems: [
-      { key: 'guests:profiles', label: 'Guest Profiles' },
-      { key: 'guests:records', label: 'Guest Records' },
-      { key: 'guests:ratings', label: 'Guest Ratings' },
-      { key: 'guests:inquiries', label: 'Inquiries' },
-    ],
   },
+  // Same collapse for Billing (Records/Payments/Receipts) →
+  // BillingManagementScreen.jsx.
   {
-    key: 'billing',
+    key: 'billing:records',
     icon: 'card-outline',
     label: 'Billing Management',
-    subItems: [
-      { key: 'billing:records', label: 'Billing Records' },
-      { key: 'billing:payments', label: 'Payments' },
-      { key: 'billing:receipts', label: 'Receipts' },
-  
-    ],
   },
+  // Same collapse for Housekeeping (Schedule/Room Cleaning Status/
+  // Maintenance Requests) → HousekeepingManagementScreen.jsx.
   {
-    key: 'housekeeping',
+    key: 'housekeeping:schedule',
     icon: 'sparkles-outline',
     label: 'Housekeeping',
-    subItems: [
-      { key: 'housekeeping:schedule', label: 'Housekeeping Schedule' },
-      { key: 'housekeeping:status', label: 'Room Cleaning Status' },
-      { key: 'housekeeping:maintenance', label: 'Maintenance Requests' },
-    ],
   },
   {
     key: 'foodorders',
@@ -201,7 +190,20 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole,
       {/* Menu */}
       <ScrollView style={styles.menuScroll} showsVerticalScrollIndicator={false}>
         {MENU_SECTIONS.map((section) => {
-          const isParentActive = activeKey === section.key || section.subItems?.some((s) => s.key === activeKey);
+          // Namespace-prefix match (e.g. 'reservations:' catches
+          // 'reservations:checkins') alongside the exact/subItems checks —
+          // needed for flat items like Reservation Management, which can be
+          // reached at a filterKey other than its own (a dashboard KPI
+          // shortcut can land on 'reservations:checkins' directly) without
+          // ever going through this sidebar. For every section that still
+          // has subItems, section.key itself has no colon in it, so this
+          // reduces to the exact same match it already had — no behavior
+          // change for Room/Guest/Billing/Housekeeping management etc.
+          const keyNamespace = section.key.split(':')[0];
+          const isParentActive =
+            activeKey === section.key ||
+            activeKey.startsWith(`${keyNamespace}:`) ||
+            section.subItems?.some((s) => s.key === activeKey);
           const isExpanded = expandedKey === section.key;
 
           return (

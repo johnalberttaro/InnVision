@@ -3,23 +3,14 @@ import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'r
 import FrontDeskSidebar from './FrontDeskSidebar';
 import FrontDeskDashboardScreen from './FrontDeskDashboardScreen';
 import ReservationsScreen from './ReservationsScreen';
-import TapeChartScreen from './TapeChartScreen';
-import WalkInScreen from './WalkInScreen';
 import RoomManagementScreen from './RoomManagementScreen';
-import RoomCleaningStatusScreen from './RoomCleaningStatusScreen';
-import HousekeepingScheduleScreen from './HousekeepingSchedule';
-import MaintenanceRequestScreen from './MaintenanceRequest';
+import HousekeepingManagementScreen from './HousekeepingManagementScreen';
 import FoodOrdersScreen from './FoodOrdersScreen';
-import GuestRecordsScreen from './GuestRecordsScreen';
+import GuestManagementScreen from './GuestManagementScreen';
 import GuestDetailsScreen from './GuestDetailsScreen';
-import GuestProfileTableScreen from './GuestProfileTableScreen';
-import InquiriesScreen from './InquiriesScreen';
-import GuestRatingsScreen from '../admin/GuestRatingsScreen';
-import BillingRecordsScreen from './BillingRecordsScreen';
+import BillingManagementScreen from './BillingManagementScreen';
 import BillingRecordDetailScreen from './BillingRecordDetailScreen';
 import RecordPaymentModal from './RecordPaymentModal';
-import PaymentsScreen from './PaymentsScreen';
-import ReceiptsScreen from './ReceiptsScreen';
 import MyProfileScreen from './MyProfileScreen';
 import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import DashboardFooter from '../../components/shared/DashboardFooter';
@@ -229,62 +220,57 @@ function renderActiveScreen(
   if (activeKey === 'profile:me') {
     return <MyProfileScreen staffUid={staffUid} />;
   }
-  if (activeKey === 'reservations:walkin') {
-    return <WalkInScreen staffUid={staffUid} staffName={staffName} />;
-  }
-  if (activeKey === 'reservations:tapechart') {
-    return <TapeChartScreen />;
-  }
+  // Walk-In Check-In and Tape Chart used to be routed here directly as
+  // their own top-level screens. They're now tabs INSIDE
+  // ReservationsScreen.jsx itself (see its TABS list), reached via the
+  // generic startsWith('reservations') route below like everything else
+  // in Reservation Management — ReservationsScreen recognizes
+  // 'reservations:walkin'/'reservations:tapechart' as valid filterKeys
+  // and embeds the right screen for them.
   if (activeKey.startsWith('reservations')) {
-    return <ReservationsScreen onLogout={onLoggedOut} filterKey={activeKey} />;
+    return <ReservationsScreen onLogout={onLoggedOut} filterKey={activeKey} staffUid={staffUid} staffName={staffName} />;
   }
   if (activeKey.startsWith('rooms:')) {
     const section = activeKey.split(':')[1];
     return <RoomManagementScreen onLogout={onLoggedOut} section={section} />;
   }
-  // Housekeeping — 'housekeeping:status' is the same underlying feature
-  // as RoomCleaningStatusScreen. 'housekeeping:schedule' now routes to
-  // the real staff-assignment task board. Maintenance Requests still
-  // falls through to the placeholder until that screen is built.
-  if (activeKey === 'housekeeping:schedule') {
-    return <HousekeepingScheduleScreen staffUid={staffUid} staffName={staffName} />;
-  }
-  if (activeKey === 'housekeeping:status') {
-    return <RoomCleaningStatusScreen onLogout={onLoggedOut} />;
-  }
-  if (activeKey === 'housekeeping:maintenance') {
-    return <MaintenanceRequestScreen staffUid={staffUid} staffName={staffName} />;
+  // Housekeeping Schedule/Room Cleaning Status/Maintenance Requests moved
+  // into a scrollable tab bar at the top of HousekeepingManagementScreen.jsx
+  // itself, same treatment as Reservation/Room/Guest/Billing Management.
+  if (activeKey.startsWith('housekeeping:')) {
+    return (
+      <HousekeepingManagementScreen
+        section={activeKey.split(':')[1]}
+        staffUid={staffUid}
+        staffName={staffName}
+      />
+    );
   }
   if (activeKey === 'foodorders') {
     return <FoodOrdersScreen staffUid={staffUid} staffName={staffName} />;
   }
-  if (activeKey === 'guests:records') {
-    return <GuestRecordsScreen onSelectGuest={openGuestProfile} />;
-  }
-  if (activeKey === 'guests:profiles') {
-    return <GuestProfileTableScreen onSelectGuest={openGuestProfile} />;
-  }
-  if (activeKey === 'guests:inquiries') {
-    return <InquiriesScreen />;
-  }
-  if (activeKey === 'guests:ratings') {
-    return <GuestRatingsScreen />;
-  }
+  // Guest Profiles/Guest Records/Guest Ratings/Inquiries moved into a
+  // scrollable tab bar at the top of GuestManagementScreen.jsx itself.
+  // 'guests:profile' (singular) is a drill-down detail view opened by
+  // tapping a row in Records or Profiles, not a tab — it has to be
+  // checked before the generic startsWith('guests:') catch-all below,
+  // since it also starts with 'guests:'.
   if (activeKey === 'guests:profile') {
     return <GuestDetailsScreen guestId={selectedGuestId} onBack={closeGuestProfile} />;
   }
-  // Billing Management — only 'billing:records' and its detail view are
-  // wired up so far. Outstanding Balances and Transaction History still
-  // fall through to the placeholder below until those screens are built.
-  if (activeKey === 'billing:records') {
-    return <BillingRecordsScreen onSelectRecord={openFolioDetail} />;
+  if (activeKey.startsWith('guests:')) {
+    return (
+      <GuestManagementScreen
+        section={activeKey.split(':')[1]}
+        tabKeys={['profiles', 'records', 'ratings', 'inquiries']}
+        onSelectGuest={openGuestProfile}
+      />
+    );
   }
-  if (activeKey === 'billing:payments') {
-    return <PaymentsScreen staffUid={staffUid} staffName={staffName} />;
-  }
-  if (activeKey === 'billing:receipts') {
-    return <ReceiptsScreen />;
-  }
+  // Billing Records/Payments/Receipts moved into a scrollable tab bar at
+  // the top of BillingManagementScreen.jsx itself. 'billing:detail' is a
+  // drill-down detail view opened by tapping a row in Billing Records,
+  // checked first for the same reason as 'guests:profile' above.
   if (activeKey === 'billing:detail') {
     return (
       <BillingRecordDetailScreen
@@ -292,6 +278,17 @@ function renderActiveScreen(
         folioId={selectedFolioId}
         onBack={closeFolioDetail}
         onRecordPayment={openPaymentModal}
+      />
+    );
+  }
+  if (activeKey.startsWith('billing:')) {
+    return (
+      <BillingManagementScreen
+        section={activeKey.split(':')[1]}
+        tabKeys={['records', 'payments', 'receipts']}
+        onSelectRecord={openFolioDetail}
+        staffUid={staffUid}
+        staffName={staffName}
       />
     );
   }

@@ -69,28 +69,34 @@ const MENU_SECTIONS = [
     // the same screens the Front Desk uses, so the admin effectively
     // operates the front desk from inside the Admin Portal.
     subItems: [
-      { key: 'fd:reservations:all', label: 'View Reservations' },
-      { key: 'fd:reservations:pending', label: 'Pending Reservations' },
-      { key: 'fd:reservations:confirmed', label: 'Confirmed Reservations' },
-      { key: 'fd:reservations:checkins', label: 'Check-ins' },
-      { key: 'fd:reservations:checkouts', label: 'Check-outs' },
-      { key: 'fd:reservations:refunds', label: 'Refunds Pending' },
-      { key: 'fd:rooms:list', label: 'Room List' },
-      { key: 'fd:rooms:types', label: 'Room Types' },
-      { key: 'fd:rooms:availability', label: 'Room Availability' },
-      { key: 'fd:rooms:status', label: 'Room Status' },
-      { key: 'fd:rooms:maintenance', label: 'Room Maintenance' },
-      { key: 'fd:guests:profiles', label: 'Guest Profiles' },
-      { key: 'fd:guests:records', label: 'Guest Records' },
-      { key: 'fd:guests:requests', label: 'Special Requests' },
-      { key: 'fd:billing:records', label: 'Billing Records' },
-      { key: 'fd:billing:payments', label: 'Payments' },
-      { key: 'fd:billing:receipts', label: 'Receipts' },
-      { key: 'fd:billing:outstanding', label: 'Outstanding Balances' },
-      { key: 'fd:billing:transactions', label: 'Transaction History' },
-      { key: 'fd:housekeeping:schedule', label: 'Housekeeping Schedule' },
-      { key: 'fd:housekeeping:status', label: 'Room Cleaning Status' },
-      { key: 'fd:housekeeping:maintenance', label: 'Maintenance Requests' },
+      // Was 6 separate entries (View/Pending/Confirmed/Check-ins/
+      // Check-outs/Refunds Pending) — collapsed to one, matching
+      // FrontDeskSidebar.jsx's own Reservation Management change. All 6
+      // (plus Walk-In Check-In and Tape Chart, which Admin gets access to
+      // for free through the same shared screen) are now tabs inside
+      // ReservationsScreen.jsx itself. Key kept as 'fd:reservations:all'
+      // so this still lands on a real, valid filterKey (the All tab).
+      { key: 'fd:reservations:all', label: 'Reservations' },
+      // Was 5 separate entries (List/Types/Availability/Status/
+      // Maintenance) — collapsed to one, matching FrontDeskSidebar.jsx's
+      // own Room Management change. All 5 are now tabs inside
+      // RoomManagementScreen.jsx itself. Key kept as 'fd:rooms:list' so
+      // this still lands on a real, valid section (the List tab).
+      { key: 'fd:rooms:list', label: 'Room Management' },
+      // Was 3 separate entries (Profiles/Records/Special Requests) —
+      // collapsed to one, matching every other Front Desk Operations item.
+      // All 3 (plus Inquiries, reachable only via the navbar shortcut,
+      // same as before this refactor) are now tabs inside
+      // GuestManagementScreen.jsx itself.
+      { key: 'fd:guests:profiles', label: 'Guest Management' },
+      // Was 5 separate entries (Records/Payments/Receipts/Outstanding
+      // Balances/Transaction History) — collapsed to one. All 5 are now
+      // tabs inside BillingManagementScreen.jsx itself.
+      { key: 'fd:billing:records', label: 'Billing Management' },
+      // Was 3 separate entries (Schedule/Status/Maintenance) — collapsed
+      // to one. All 3 are now tabs inside HousekeepingManagementScreen.jsx
+      // itself.
+      { key: 'fd:housekeeping:schedule', label: 'Housekeeping' },
     ],
   },
   {
@@ -189,7 +195,18 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
       {/* Menu */}
       <ScrollView style={styles.menuScroll} showsVerticalScrollIndicator={false}>
         {MENU_SECTIONS.map((section) => {
-          const isParentActive = activeKey === section.key || section.subItems?.some((s) => s.key === activeKey);
+          // Namespace-prefix match alongside the exact/subItems checks —
+          // 'fd' no longer lists all 6 reservations:* sub-keys individually
+          // (collapsed to 1, see below), so without this, a dashboard KPI
+          // shortcut landing on 'fd:reservations:checkins' would fail to
+          // highlight "Front Desk Operations" even though that's genuinely
+          // where the user is. For every other section this is a strict
+          // superset of the old check (still true), so no behavior change.
+          const keyNamespace = section.key.split(':')[0];
+          const isParentActive =
+            activeKey === section.key ||
+            activeKey.startsWith(`${keyNamespace}:`) ||
+            section.subItems?.some((s) => s.key === activeKey);
           const isExpanded = expandedKey === section.key;
 
           return (
@@ -220,7 +237,20 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
               {section.subItems && isExpanded && (
                 <View style={styles.subMenu}>
                   {section.subItems.map((sub) => {
-                    const isActive = activeKey === sub.key;
+                    // Every row left in this list is now a collapsed group
+                    // (each used to be several separate sub-items — see the
+                    // comments above), so rather than hand-listing one OR
+                    // clause per collapsed key, this reads any sub-item as
+                    // active for any activeKey under its namespace: strip
+                    // sub.key's last segment ('fd:guests:profiles' ->
+                    // 'fd:guests') and prefix-match against that. Covers a
+                    // dashboard shortcut or navbar shortcut landing on e.g.
+                    // 'fd:reservations:checkins' or 'fd:guests:inquiries'
+                    // directly, same as the exact-match would for the
+                    // collapsed key itself.
+                    const subNamespace = sub.key.split(':').slice(0, -1).join(':');
+                    const isActive =
+                      activeKey === sub.key || activeKey.startsWith(`${subNamespace}:`);
                     return (
                       <TouchableOpacity
                         key={sub.key}

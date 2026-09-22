@@ -303,7 +303,12 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
   // payment on file yet, so restricting it the same way would just block
   // a guest from cancelling a booking nothing was ever charged for —
   // those stay cancellable anytime up to check-in, same as before.
-  const CANCEL_WINDOW_MS = 24 * 60 * 60 * 1000;
+  // ⚠️ TEMP FOR TESTING — set to 1 minute so the refund flow can be
+  // exercised quickly (book, wait ~60s, cancel → watch it drop OUT of the
+  // refund-eligible window). MUST be reverted to 24 * 60 * 60 * 1000
+  // before your defense/demo/deploy — as-is, this makes the real 24-hour
+  // grace period claimed by the system only actually last 1 minute.
+  const CANCEL_WINDOW_MS = 1 * 60 * 1000; // 1 minute — REVERT to 24 * 60 * 60 * 1000
   const isOnlinePaid = (r) => (r.paymentMode || '').toLowerCase() === 'online';
   const withinCancelWindow = (r) => {
     if (!r.createdAt) return false;
@@ -357,15 +362,30 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     if (!cancelTarget) return;
     setCancelling(true);
     try {
+      // Same eligibility check already shown to the guest in the confirm
+      // dialog below ("...this qualifies for a refund") — flag it here so
+      // it's actually queryable afterward. Front Desk/Admin's "Refunds
+      // Pending" view (ReservationsScreen.jsx, filterKey
+      // 'reservations:refunds') reads refund_status directly off this row.
+      const refundEligible = isOnlinePaid(cancelTarget) && withinCancelWindow(cancelTarget);
       const { error } = await supabase
         .from('reservations')
-        .update({ status: 'cancelled' }) // updated_at trigger covers the "when" automatically
+        .update({
+          status: 'cancelled', // updated_at trigger covers the "when" automatically
+          ...(refundEligible
+            ? { refund_status: 'pending', refund_requested_at: new Date().toISOString() }
+            : {}),
+        })
         .eq('id', cancelTarget.id);
       if (error) throw error;
       await releaseRoomsInventory(cancelTarget.selectedRooms);
 
       setCancelTarget(null);
-      setSuccessMessage('Your reservation has been cancelled.');
+      setSuccessMessage(
+        refundEligible
+          ? 'Your reservation has been cancelled. Your refund is being processed by our front desk team.'
+          : 'Your reservation has been cancelled.'
+      );
       await fetchReservations();
     } catch (err) {
       console.error('Cancellation failed:', err);

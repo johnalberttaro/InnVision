@@ -456,6 +456,35 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
     );
   }
 
+  // Extracted so the exact same 3 cards can be placed differently per
+  // layout below, instead of duplicating their (data-dependent) props in
+  // two places.
+  const kpiCards = (
+    <>
+      <KpiCard
+        icon="list-outline"
+        label="Active Tasks"
+        value={String(activeCount)}
+        accent={activeCount > 0 ? '#C99400' : '#1E7B34'}
+        note={`${columns.assigned.length} assigned, ${columns.in_progress.length} in progress`}
+      />
+      <KpiCard
+        icon="checkmark-done-outline"
+        label="Completed Today"
+        value={String(completedTodayCount)}
+        accent="#1E7B34"
+        note="Tasks finished today"
+      />
+      <KpiCard
+        icon="time-outline"
+        label="Avg. Cleaning Time"
+        value={avgCleaningLabel}
+        accent={colors.primary}
+        note="Start to completion"
+      />
+    </>
+  );
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -469,42 +498,31 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.kpiRow}>
-        <KpiCard
-          icon="list-outline"
-          label="Active Tasks"
-          value={String(activeCount)}
-          accent={activeCount > 0 ? '#C99400' : '#1E7B34'}
-          note={`${columns.assigned.length} assigned, ${columns.in_progress.length} in progress`}
-        />
-        <KpiCard
-          icon="checkmark-done-outline"
-          label="Completed Today"
-          value={String(completedTodayCount)}
-          accent="#1E7B34"
-          note="Tasks finished today"
-        />
-        <KpiCard
-          icon="time-outline"
-          label="Avg. Cleaning Time"
-          value={avgCleaningLabel}
-          accent={colors.primary}
-          note="Start to completion"
-        />
-      </View>
-
       {isMobile ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.boardContent}
-        >
-          <Column title="Assigned" count={columns.assigned.length} tasksInColumn={columns.assigned} accentColor="#9A7B00" />
-          <Column title="In Progress" count={columns.in_progress.length} tasksInColumn={columns.in_progress} accentColor="#B3792A" />
-          <Column title="Completed" count={columns.completed.length} tasksInColumn={columns.completed} accentColor="#1E7B34" />
-        </ScrollView>
+        <>
+          {/* Mobile: columns scroll sideways, so the KPI row stays outside
+              that horizontal ScrollView, fixed above it like the header. */}
+          <View style={styles.kpiRow}>{kpiCards}</View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.boardContent}
+          >
+            <Column title="Assigned" count={columns.assigned.length} tasksInColumn={columns.assigned} accentColor="#9A7B00" />
+            <Column title="In Progress" count={columns.in_progress.length} tasksInColumn={columns.in_progress} accentColor="#B3792A" />
+            <Column title="Completed" count={columns.completed.length} tasksInColumn={columns.completed} accentColor="#1E7B34" />
+          </ScrollView>
+        </>
       ) : (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.sectionsStack} showsVerticalScrollIndicator={false}>
+          {/* Desktop: was a sibling before this ScrollView, which pinned it
+              in place while only the sections below scrolled underneath it
+              — reported as the KPI row "sticking"/staying put on scroll.
+              Moved inside as the first scrollable item so it scrolls away
+              with everything else, same as any other content. No padding
+              of its own (kpiRowInline, not kpiRow) since sectionsStack's
+              own padding+gap already provide the spacing here. */}
+          <View style={styles.kpiRowInline}>{kpiCards}</View>
           <Section
             title="Assigned"
             count={columns.assigned.length}
@@ -655,6 +673,9 @@ const styles = StyleSheet.create({
   assignBtnText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.white },
 
   kpiRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, padding: spacing.lg, paddingBottom: 0 },
+  // Same row, no padding of its own — used when the KPI row is placed
+  // inside sectionsStack (desktop), which already pads/gaps its children.
+  kpiRowInline: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
 
   boardContent: { padding: spacing.lg, gap: spacing.md },
 

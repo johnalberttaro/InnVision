@@ -3,7 +3,9 @@ import {
   View,
   Text,
   FlatList,
+  ScrollView,
   TouchableOpacity,
+  Pressable,
   StyleSheet,
   ActivityIndicator,
   Modal,
@@ -14,6 +16,24 @@ import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { formatCurrency } from '../../utils/roomRates';
 import { createBillingRecord } from '../../utils/BillingService';
 import { updateRoomStatus, ROOM_STATUS } from '../../utils/Roomsservice';
+import WalkInScreen from './WalkInScreen';
+import TapeChartScreen from './TapeChartScreen';
+
+// All 8 Reservation Management sidebar items, now tabs at the top of this
+// one screen instead of separate sidebar sub-items/routes. The first 6 are
+// real filters over the same `bookings` list (see filteredBookings below);
+// the last 2 (Walk-In, Tape Chart) swap the whole body for a different
+// embedded screen instead — see the activeTab ternary in the render below.
+const TABS = [
+  { key: 'reservations:all',       label: 'All',         icon: 'list-outline' },
+  { key: 'reservations:pending',   label: 'Pending',      icon: 'time-outline' },
+  { key: 'reservations:confirmed', label: 'Confirmed',    icon: 'checkmark-circle-outline' },
+  { key: 'reservations:checkins',  label: 'Check-ins',    icon: 'log-in-outline' },
+  { key: 'reservations:checkouts', label: 'Check-outs',   icon: 'log-out-outline' },
+  { key: 'reservations:refunds',   label: 'Refunds',      icon: 'cash-outline' },
+  { key: 'reservations:walkin',    label: 'Walk-In',      icon: 'person-add-outline' },
+  { key: 'reservations:tapechart', label: 'Tape Chart',   icon: 'grid-outline' },
+];
 
 // confirmDialog/notifyDialog used to be module-level functions calling
 // window.confirm()/window.alert() on web and Alert.alert() on native —
@@ -26,7 +46,29 @@ import { updateRoomStatus, ROOM_STATUS } from '../../utils/Roomsservice';
 // file. This also means web and native now show the exact same custom
 // dialog instead of two different unstyled system ones.
 
-export default function ReservationsScreen({ onLogout, filterKey = 'reservations:all' }) {
+// onLogout is intentionally not accepted as a prop here anymore — the
+// in-screen header (title/count/Log Out button) was removed since it
+// duplicated the sidebar's own logout controls (a menu item and a power
+// icon, both already in FrontDeskSidebar.jsx/AdminSidebar.jsx). Both
+// Shells still pass onLogout when rendering this screen, which is
+// harmless — an unused prop is simply ignored.
+export default function ReservationsScreen({ filterKey = 'reservations:all', staffUid, staffName }) {
+  // filterKey still exists as a PROP (not just for the initial value below)
+  // because dashboard KPI shortcuts (FrontDeskDashboardScreen's goTo(),
+  // AdmindashboardScreen's onNavigate()) still deep-link straight to a
+  // specific tab, e.g. 'reservations:checkins' — that's a real, live path
+  // that has to keep landing on the right tab. Everything reachable only
+  // through the sidebar now flows through the tab bar below instead, which
+  // is why the Shells' routing didn't need the same per-item wiring anymore.
+  const [activeTab, setActiveTab] = useState(filterKey);
+  useEffect(() => {
+    setActiveTab(filterKey);
+    // Only matters if a future caller re-renders an already-mounted
+    // ReservationsScreen with a new filterKey — today every path into this
+    // screen is a fresh mount (Shell only ever renders one active screen at
+    // a time), so this is a safety net rather than something in active use.
+  }, [filterKey]);
+
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actingId, setActingId] = useState(null);
@@ -70,7 +112,30 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
     createdAt: row.created_at,
     checkedInAt: row.checked_in_at,
     checkedOutAt: row.checked_out_at,
+    paymentMode: row.payment_mode,
+    eWalletProvider: row.ewallet_provider,
+    // Refunds Pending (see sql/refunds_pending.sql) — set on the guest's
+    // side by MyReservationsScreen.jsx's confirmCancel() when a
+    // cancellation is online-paid and within the 24hr window.
+    refundStatus: row.refund_status,
+    refundRequestedAt: row.refund_requested_at,
+    refundProcessedAt: row.refund_processed_at,
+    refundProcessedByName: row.refund_processed_by_name,
   });
+
+  // Human-readable labels for known e-wallet providers — same mapping
+  // MyReservationsScreen.jsx uses guest-side, needed here so staff know
+  // which provider to actually send the refund through.
+  const EWALLET_LABELS = {
+    gcash: 'GCash',
+    maya: 'Maya',
+    maribank: 'Maribank',
+    gotyme: 'GoTyme',
+  };
+  const paymentProviderLabel = (item) => {
+    const provider = (item.eWalletProvider || '').toLowerCase();
+    return EWALLET_LABELS[provider] || item.eWalletProvider || 'E-wallet';
+  };
 
   const loadBookings = async () => {
     const { data, error } = await supabase
@@ -101,17 +166,6 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
     return () => supabase.removeChannel(channel);
   }, []);
 
-  const handleLogout = () => {
-    setDialogState({
-      title: 'Log Out?',
-      message: 'Are you sure you want to log out?',
-      confirmLabel: 'Yes',
-      cancelLabel: 'No',
-      onConfirm: () => onLogout(),
-      destructive: true,
-    });
-  };
-
   const formatDateRange = (checkIn, checkOut) => {
     try {
       return `${new Date(checkIn).toLocaleDateString()} – ${new Date(checkOut).toLocaleDateString()}`;
@@ -139,6 +193,9 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
       case 'checked-in':   return { bg: '#DFF5E1', text: '#1E7B34', accent: '#1E7B34', icon: 'log-in-outline' };
       case 'checked-out':  return { bg: colors.cardAlt, text: colors.textMuted, accent: colors.textMuted, icon: 'log-out-outline' };
       case 'declined':     return { bg: '#FCE1E1', text: '#B3261E', accent: '#B3261E', icon: 'close-circle-outline' };
+      // Same red pairing MyReservationsScreen.jsx's guest-facing statusMeta()
+      // already uses for 'cancelled' — kept consistent app-wide.
+      case 'cancelled':    return { bg: '#FCE1E1', text: '#B3261E', accent: '#B3261E', icon: 'close-circle-outline' };
       default:             return { bg: colors.cardAlt, text: colors.textMuted, accent: colors.border, icon: 'help-circle-outline' };
     }
   };
@@ -148,6 +205,7 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
       case 'checked-in':  return 'CHECKED IN';
       case 'checked-out': return 'CHECKED OUT';
       case 'declined':    return 'DECLINED';
+      case 'cancelled':   return 'CANCELLED';
       default: return (status || 'unknown').toUpperCase();
     }
   };
@@ -353,10 +411,62 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
     );
   };
 
+  // Marks a flagged refund as actually sent. Kept as its own function
+  // rather than routed through runStatusUpdate() above: reservation
+  // `status` itself doesn't change here (it's staying 'cancelled'), and
+  // runStatusUpdate's notification type is derived from newStatus, which
+  // would mislabel this as a "reservation_cancelled" notification instead
+  // of a refund one. Same shape otherwise (setActingId, confirm-then-act,
+  // toast, notification, reload, error handling).
+  const handleMarkRefunded = (item) => {
+    confirmDialog(
+      'Mark this refund as processed?',
+      `${getGuestName(item)} — ${formatCurrency(item.totalAmount)} via ${paymentProviderLabel(item)}. Only confirm after you've actually sent the refund — this just records that it's done.`,
+      'Mark as Refunded',
+      () => runRefundUpdate(item)
+    );
+  };
+
+  const runRefundUpdate = async (item) => {
+    setActingId(item.id);
+    try {
+      const { error } = await supabase
+        .from('reservations')
+        .update({
+          refund_status: 'processed',
+          refund_processed_at: new Date().toISOString(),
+          refund_processed_by: staffUid || null,
+          refund_processed_by_name: staffName || 'Staff',
+        })
+        .eq('id', item.id);
+      if (error) throw error;
+
+      if (item.uid) {
+        const { error: notifError } = await supabase.from('notifications').insert({
+          user_id: item.uid,
+          type: 'refund_processed',
+          title: 'Refund Processed',
+          message: `Your refund of ${formatCurrency(item.totalAmount)} for the cancelled reservation has been processed.`,
+          reservation_id: item.id,
+          read: false,
+        });
+        if (notifError) console.error('Failed to create notification:', notifError);
+      }
+
+      showToast(`Refund marked as processed for ${getGuestName(item)}`);
+      await loadBookings();
+    } catch (err) {
+      console.error('Failed to mark refund as processed:', err);
+      notifyDialog('Error', 'Could not update this refund. Please try again.');
+    } finally {
+      setActingId(null);
+    }
+  };
+
   const todayStr = new Date().toDateString();
 
   const filteredBookings = bookings.filter((b) => {
-    switch (filterKey) {
+    switch (activeTab) {
       case 'reservations:pending':   return b.status === 'pending';
       case 'reservations:confirmed': return b.status === 'upcoming';
       case 'reservations:checkins':
@@ -365,43 +475,52 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
       case 'reservations:checkouts':
         try { return b.status === 'checked-in' && new Date(b.checkOut).toDateString() === todayStr; }
         catch { return false; }
+      // Deliberately scoped to PENDING refunds only, matching the sidebar
+      // label exactly — once staff mark one processed it drops off this
+      // list (refund_status becomes 'processed'), same one-purpose-per-tab
+      // pattern as every other filter here. A "Refund History" view would
+      // be a reasonable follow-up but isn't what this nav item asks for.
+      case 'reservations:refunds':   return b.refundStatus === 'pending';
       default: return true;
     }
   });
 
-  const sectionTitles = {
-    'reservations:all': 'Bookings',
-    'reservations:pending': 'Pending Reservations',
-    'reservations:confirmed': 'Confirmed Reservations',
-    'reservations:checkins': "Today's Check-ins",
-    'reservations:checkouts': "Today's Check-outs",
-  };
   const emptyMessages = {
     'reservations:all': 'No bookings yet.',
     'reservations:pending': 'No pending reservations.',
     'reservations:confirmed': 'No confirmed reservations.',
     'reservations:checkins': 'No guests due to arrive today.',
     'reservations:checkouts': 'No guests due to leave today.',
+    'reservations:refunds': 'No refunds pending right now.',
   };
 
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>{sectionTitles[filterKey] || 'Bookings'}</Text>
-          <Text style={styles.subtitle}>
-            {filteredBookings.length} reservation{filteredBookings.length !== 1 ? 's' : ''}
-          </Text>
-        </View>
-        <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-          <Text style={styles.logoutText}>Log Out</Text>
-        </TouchableOpacity>
+      <View style={styles.tabBarWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabBarContent}
+        >
+          {TABS.map((tab) => (
+            <ReservationTabButton
+              key={tab.key}
+              tab={tab}
+              active={activeTab === tab.key}
+              onPress={() => setActiveTab(tab.key)}
+            />
+          ))}
+        </ScrollView>
       </View>
 
-      {loading ? (
+      {activeTab === 'reservations:walkin' ? (
+        <WalkInScreen staffUid={staffUid} staffName={staffName} />
+      ) : activeTab === 'reservations:tapechart' ? (
+        <TapeChartScreen />
+      ) : loading ? (
         <View style={styles.centerWrap}><ActivityIndicator color={colors.primary} size="large" /></View>
       ) : filteredBookings.length === 0 ? (
-        <View style={styles.centerWrap}><Text style={styles.emptyText}>{emptyMessages[filterKey] || 'No bookings yet.'}</Text></View>
+        <View style={styles.centerWrap}><Text style={styles.emptyText}>{emptyMessages[activeTab] || 'No bookings yet.'}</Text></View>
       ) : (
         <FlatList
           data={filteredBookings}
@@ -411,8 +530,9 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
             const statusStyle = getStatusStyle(item.status);
             const isPending = item.status === 'pending';
             const isActing = actingId === item.id;
-            const showCheckIn  = filterKey === 'reservations:checkins'  && item.status === 'upcoming';
-            const showCheckOut = filterKey === 'reservations:checkouts' && item.status === 'checked-in';
+            const showCheckIn  = activeTab === 'reservations:checkins'  && item.status === 'upcoming';
+            const showCheckOut = activeTab === 'reservations:checkouts' && item.status === 'checked-in';
+            const showMarkRefunded = activeTab === 'reservations:refunds' && item.refundStatus === 'pending';
 
             return (
               <View style={[styles.card, { borderLeftColor: statusStyle.accent }]}>
@@ -521,6 +641,21 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
                   </Text>
                 </View>
 
+                {activeTab === 'reservations:refunds' && (
+                  <>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Refund via</Text>
+                      <Text style={styles.detailValue}>{paymentProviderLabel(item)}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Requested</Text>
+                      <Text style={styles.detailValue}>
+                        {item.refundRequestedAt ? new Date(item.refundRequestedAt).toLocaleString() : '—'}
+                      </Text>
+                    </View>
+                  </>
+                )}
+
                 {showCheckIn && (
                   <TouchableOpacity
                     style={[styles.actionButton, styles.checkInButton, isActing && styles.actionButtonDisabled]}
@@ -553,6 +688,25 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
                         <View style={styles.actionButtonContent}>
                           <Ionicons name="log-out-outline" size={16} color={colors.white} />
                           <Text style={styles.actionButtonText}>Check Out Guest</Text>
+                        </View>
+                      )
+                    }
+                  </TouchableOpacity>
+                )}
+
+                {showMarkRefunded && (
+                  <TouchableOpacity
+                    style={[styles.actionButton, styles.refundButton, isActing && styles.actionButtonDisabled]}
+                    onPress={() => handleMarkRefunded(item)}
+                    activeOpacity={0.85}
+                    disabled={isActing}
+                  >
+                    {isActing
+                      ? <ActivityIndicator color={colors.white} size="small" />
+                      : (
+                        <View style={styles.actionButtonContent}>
+                          <Ionicons name="cash-outline" size={16} color={colors.white} />
+                          <Text style={styles.actionButtonText}>Mark as Refunded</Text>
                         </View>
                       )
                     }
@@ -627,27 +781,84 @@ export default function ReservationsScreen({ onLogout, filterKey = 'reservations
   );
 }
 
+// Pressable (not TouchableOpacity) specifically so the hover state below
+// works — react-native-web fires onHoverIn/onHoverOut on Pressable for a
+// mouse pointer; there's no touch equivalent, so this is simply inert
+// (never fires) on a phone/tablet, no platform check needed.
+function ReservationTabButton({ tab, active, onPress }) {
+  const [hovered, setHovered] = useState(false);
+  const showHover = hovered && !active;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      style={[styles.tabBtn, active && styles.tabBtnActive, showHover && styles.tabBtnHovered]}
+    >
+      <Ionicons
+        name={tab.icon}
+        size={14}
+        color={active ? colors.onPrimary : showHover ? colors.primary : colors.textMuted}
+      />
+      <Text
+        numberOfLines={1}
+        style={[styles.tabBtnText, active && styles.tabBtnTextActive, showHover && styles.tabBtnTextHovered]}
+      >
+        {tab.label}
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
+
+  tabBarWrap: {
     backgroundColor: colors.white,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  title: { fontSize: 20, fontFamily: fonts.headingExtraBold, color: colors.primary },
-  subtitle: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
-  logoutButton: {
+  tabBarContent: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  tabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
-    borderRadius: radius.sm,
-    backgroundColor: colors.primaryTint,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
   },
-  logoutText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.primary },
+  tabBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  // Hover only ever fires on web (react-native-web) — mouse-only, so it
+  // naturally never triggers on a touch device. Skipped entirely when the
+  // tab is already active, since the active style already gives feedback.
+  tabBtnHovered: {
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.primary,
+  },
+  tabBtnText: {
+    fontSize: 12,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.textMuted,
+  },
+  tabBtnTextActive: {
+    color: colors.onPrimary,
+  },
+  tabBtnTextHovered: {
+    color: colors.primary,
+  },
+
   centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { fontSize: 14, fontFamily: fonts.body, color: colors.textMuted },
   listContent: { padding: spacing.lg },
@@ -749,6 +960,10 @@ const styles = StyleSheet.create({
   },
   checkInButton: { backgroundColor: '#1E7B34' },
   checkOutButton: { backgroundColor: colors.textMuted },
+  // Same green as checkInButton/confirmBtn — "mark as refunded" is the
+  // same kind of resolving, forward-moving action, so it gets the same
+  // semantic color despite being a fresh reservation status (cancelled).
+  refundButton: { backgroundColor: '#1E7B34' },
   actionButtonDisabled: { opacity: 0.7 },
   actionButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   actionButtonText: { color: colors.white, fontSize: 13, fontFamily: fonts.headingSemiBold, letterSpacing: 0.3 },

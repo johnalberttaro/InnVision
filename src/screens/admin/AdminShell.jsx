@@ -14,20 +14,14 @@ import GuestRatingsScreen from './GuestRatingsScreen';
 import FrontDeskDashboardScreen from '../frontdesk/FrontDeskDashboardScreen';
 import ReservationsScreen from '../frontdesk/ReservationsScreen';
 import RoomManagementScreen from '../frontdesk/RoomManagementScreen';
-import RoomCleaningStatusScreen from '../frontdesk/RoomCleaningStatusScreen';
-import HousekeepingScheduleScreen from '../frontdesk/HousekeepingSchedule';
-import MaintenanceRequestScreen from '../frontdesk/MaintenanceRequest';
-import GuestRecordsScreen from '../frontdesk/GuestRecordsScreen';
+import HousekeepingManagementScreen from '../frontdesk/HousekeepingManagementScreen';
 import GuestDetailsScreen from '../frontdesk/GuestDetailsScreen';
-import GuestProfileTableScreen from '../frontdesk/GuestProfileTableScreen';
-import InquiriesScreen from '../frontdesk/InquiriesScreen';
-import BillingRecordsScreen from '../frontdesk/BillingRecordsScreen';
+import GuestManagementScreen from '../frontdesk/GuestManagementScreen';
+import BillingManagementScreen from '../frontdesk/BillingManagementScreen';
 import BillingRecordDetailScreen from '../frontdesk/BillingRecordDetailScreen';
 import RecordPaymentModal from '../frontdesk/RecordPaymentModal';
 import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import DashboardFooter from '../../components/shared/DashboardFooter';
-import PaymentsScreen from '../frontdesk/PaymentsScreen';
-import ReceiptsScreen from '../frontdesk/ReceiptsScreen';
 import { colors, spacing, fonts } from '../../utils/portalTheme';
 
 const WIDE_BREAKPOINT = 1024;
@@ -197,41 +191,52 @@ function renderActiveScreen(props) {
 
   // ── Front Desk Operations (admin can do everything a front desk member can) ──
   if (activeKey.startsWith('fd:reservations')) {
-    return <ReservationsScreen onLogout={props.onLoggedOut} filterKey={activeKey.replace('fd:', '')} staffName={props.staffName} />;
+    return (
+      <ReservationsScreen
+        onLogout={props.onLoggedOut}
+        filterKey={activeKey.replace('fd:', '')}
+        staffName={props.staffName}
+        staffUid={props.staffUid}
+      />
+    );
   }
   if (activeKey.startsWith('fd:rooms:')) {
     const section = activeKey.split(':')[2];
     return <RoomManagementScreen onLogout={props.onLoggedOut} section={section} />;
   }
-  if (activeKey === 'fd:housekeeping:schedule') {
-    return <HousekeepingScheduleScreen staffUid={props.staffUid} staffName={props.staffName} />;
+  // Housekeeping Schedule/Room Cleaning Status/Maintenance Requests moved
+  // into a scrollable tab bar at the top of HousekeepingManagementScreen.jsx
+  // itself, same treatment as everything else in Front Desk Operations.
+  if (activeKey.startsWith('fd:housekeeping:')) {
+    return (
+      <HousekeepingManagementScreen
+        section={activeKey.split(':')[2]}
+        staffUid={props.staffUid}
+        staffName={props.staffName}
+      />
+    );
   }
-  if (activeKey === 'fd:housekeeping:status') {
-    return <RoomCleaningStatusScreen onLogout={props.onLoggedOut} />;
-  }
-  if (activeKey === 'fd:housekeeping:maintenance') {
-    return <MaintenanceRequestScreen staffUid={props.staffUid} staffName={props.staffName} />;
-  }
-  if (activeKey === 'fd:guests:records') {
-    return <GuestRecordsScreen onSelectGuest={props.openGuestProfile} />;
-  }
-  if (activeKey === 'fd:guests:profiles') {
-    return <GuestProfileTableScreen onSelectGuest={props.openGuestProfile} />;
-  }
-  if (activeKey === 'fd:guests:inquiries') {
-    return <InquiriesScreen />;
-  }
+  // 'fd:guests:profile' (singular) is a drill-down detail view opened by
+  // tapping a row in Guest Records/Profiles, not a tab — checked before
+  // the generic startsWith('fd:guests:') catch-all below, since it also
+  // starts with 'fd:guests:'.
   if (activeKey === 'fd:guests:profile') {
     return <GuestDetailsScreen guestId={props.selectedGuestId} onBack={props.closeGuestProfile} />;
   }
-  if (activeKey === 'fd:billing:records') {
-    return <BillingRecordsScreen onSelectRecord={props.openFolioDetail} />;
-  }
-  if (activeKey === 'fd:billing:payments') {
-    return <PaymentsScreen staffUid={props.staffUid} staffName={props.staffName} />;
-  }
-  if (activeKey === 'fd:billing:receipts') {
-    return <ReceiptsScreen />;
+  if (activeKey.startsWith('fd:guests:')) {
+    // Admin's own sidebar only ever listed Profiles/Records/Special
+    // Requests here (never Ratings — that gap predates this refactor).
+    // Inquiries isn't in the tab list either, but the top navbar's
+    // inquiries shortcut still lands on 'fd:guests:inquiries' directly,
+    // and GuestManagementScreen renders that content regardless of which
+    // tabs are visible, so it keeps working exactly as before.
+    return (
+      <GuestManagementScreen
+        section={activeKey.split(':')[2]}
+        tabKeys={['profiles', 'records', 'requests']}
+        onSelectGuest={props.openGuestProfile}
+      />
+    );
   }
   if (activeKey === 'fd:billing:detail') {
     return (
@@ -240,6 +245,17 @@ function renderActiveScreen(props) {
         folioId={props.selectedFolioId}
         onBack={props.closeFolioDetail}
         onRecordPayment={props.openPaymentModal}
+      />
+    );
+  }
+  if (activeKey.startsWith('fd:billing:')) {
+    return (
+      <BillingManagementScreen
+        section={activeKey.split(':')[2]}
+        tabKeys={['records', 'payments', 'receipts', 'outstanding', 'transactions']}
+        onSelectRecord={props.openFolioDetail}
+        staffUid={props.staffUid}
+        staffName={props.staffName}
       />
     );
   }

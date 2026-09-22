@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Image, ActivityIndicator, Alert, Platform, Modal, TextInput } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Pressable, StyleSheet, Image, ActivityIndicator, Alert, Platform, Modal, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
   subscribeToRoomTypes,
@@ -23,6 +23,21 @@ const SECTION_TITLES = {
   status: 'Room Status',
   maintenance: 'Room Maintenance',
 };
+
+// Sidebar sub-items (List/Types/Availability/Status/Maintenance) collapsed
+// into this scrollable tab bar at the top of the screen, matching the
+// treatment ReservationsScreen.jsx got. Keys match this screen's own
+// `section` values directly (no namespace prefix to strip) since both
+// shells already extract the bare leaf segment before passing it down —
+// see FrontDeskShell.jsx (`rooms:xxx` → 'xxx') and AdminShell.jsx
+// (`fd:rooms:xxx` → 'xxx').
+const TABS = [
+  { key: 'list',         label: 'Room List',         icon: 'list-outline' },
+  { key: 'types',        label: 'Room Types',         icon: 'bed-outline' },
+  { key: 'availability', label: 'Room Availability',  icon: 'checkmark-circle-outline' },
+  { key: 'status',       label: 'Room Status',        icon: 'pulse-outline' },
+  { key: 'maintenance',  label: 'Room Maintenance',   icon: 'construct-outline' },
+];
 
 const notifyUser = (title, message) => {
   if (Platform.OS === 'web') {
@@ -53,6 +68,16 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
   const [updatingRoomNumber, setUpdatingRoomNumber] = useState(null);
   const [seeding, setSeeding] = useState(false);
   const [confirmingLogout, setConfirmingLogout] = useState(false);
+
+  // Tab bar owns which section is showing from here on; `section` is only
+  // the *initial*/deep-linked value now (dashboard KPI shortcuts like
+  // FrontDeskDashboardScreen's "rooms:availability" card still work — they
+  // change the `section` prop, and this effect resyncs the active tab to
+  // match, same as ReservationsScreen.jsx's activeTab/filterKey pattern).
+  const [activeTab, setActiveTab] = useState(section);
+  useEffect(() => {
+    setActiveTab(section);
+  }, [section]);
 
   useEffect(() => {
     const unsubTypes = subscribeToRoomTypes(
@@ -118,7 +143,7 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
     <View style={styles.screen}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.title}>{SECTION_TITLES[section] || 'Room Management'}</Text>
+          <Text style={styles.title}>{SECTION_TITLES[activeTab] || 'Room Management'}</Text>
           <Text style={styles.subtitle}>
             {roomTypes.length} room type{roomTypes.length !== 1 ? 's' : ''} · {rooms.length} room{rooms.length !== 1 ? 's' : ''}
           </Text>
@@ -138,6 +163,23 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
             <Text style={styles.logoutText}>Log Out</Text>
           </TouchableOpacity>
         </View>
+      </View>
+
+      <View style={styles.tabBarWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabBarContent}
+        >
+          {TABS.map((tab) => (
+            <RoomTabButton
+              key={tab.key}
+              tab={tab}
+              active={activeTab === tab.key}
+              onPress={() => setActiveTab(tab.key)}
+            />
+          ))}
+        </ScrollView>
       </View>
 
       {loading ? (
@@ -165,17 +207,17 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
         </View>
       ) : (
         <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
-          {section === 'types' && <RoomTypesSection roomTypes={roomTypes} />}
-          {section === 'list' && <RoomListSection rooms={roomsWithDetails} roomTypes={roomTypes} />}
-          {section === 'availability' && <AvailabilitySection rooms={roomsWithDetails} />}
-          {section === 'status' && (
+          {activeTab === 'types' && <RoomTypesSection roomTypes={roomTypes} />}
+          {activeTab === 'list' && <RoomListSection rooms={roomsWithDetails} roomTypes={roomTypes} />}
+          {activeTab === 'availability' && <AvailabilitySection rooms={roomsWithDetails} />}
+          {activeTab === 'status' && (
             <StatusSection
               rooms={roomsWithDetails}
               updatingRoomNumber={updatingRoomNumber}
               onStatusChange={handleStatusChange}
             />
           )}
-          {section === 'maintenance' && (
+          {activeTab === 'maintenance' && (
             <MaintenanceSection
               rooms={roomsWithDetails}
               updatingRoomNumber={updatingRoomNumber}
@@ -600,6 +642,11 @@ function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, chipOption
     : chipOptions || Object.keys(STATUS_META);
 
   const firstImage = room.images && room.images.length > 0 ? room.images[0] : null;
+  // Floor + bed type + occupancy on one line — real data already on the
+  // joined room object (Roomsservice.js's joinRoomsWithTypes), just not
+  // shown here before. Fills the row instead of leaving it blank next to
+  // the status pill.
+  const metaLine = [room.floor, room.bed, room.occupancy].filter(Boolean).join(' · ');
 
   return (
     <View style={styles.rowCard}>
@@ -610,7 +657,7 @@ function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, chipOption
         />
       ) : (
         <View style={styles.roomThumbPlaceholder}>
-          <Ionicons name="image-outline" size={18} color={colors.textMuted} />
+          <Ionicons name="image-outline" size={28} color={colors.textMuted} />
         </View>
       )}
       <View style={styles.roomNumberBadgeSmall}>
@@ -618,7 +665,10 @@ function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, chipOption
       </View>
       <View style={styles.rowInfo}>
         <Text style={styles.rowTitle}>{room.roomTypeName}</Text>
-        <Text style={styles.rowMeta}>{room.floor}</Text>
+        <Text style={styles.rowMeta}>{metaLine}</Text>
+        {room.description ? (
+          <Text style={styles.rowDescription} numberOfLines={2}>{room.description}</Text>
+        ) : null}
       </View>
 
       {showStatus && !editable && (
@@ -658,8 +708,84 @@ function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, chipOption
   );
 }
 
+// Pressable (not TouchableOpacity) specifically so the hover state below
+// works — react-native-web fires onHoverIn/onHoverOut on Pressable for a
+// mouse pointer; there's no touch equivalent, so this is simply inert
+// (never fires) on a phone/tablet, no platform check needed.
+function RoomTabButton({ tab, active, onPress }) {
+  const [hovered, setHovered] = useState(false);
+  const showHover = hovered && !active;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      style={[styles.tabBtn, active && styles.tabBtnActive, showHover && styles.tabBtnHovered]}
+    >
+      <Ionicons
+        name={tab.icon}
+        size={14}
+        color={active ? colors.onPrimary : showHover ? colors.primary : colors.textMuted}
+      />
+      <Text
+        numberOfLines={1}
+        style={[styles.tabBtnText, active && styles.tabBtnTextActive, showHover && styles.tabBtnTextHovered]}
+      >
+        {tab.label}
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+
+  tabBarWrap: {
+    backgroundColor: colors.white,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  tabBarContent: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  tabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  tabBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  // Hover only ever fires on web (react-native-web) — mouse-only, so it
+  // naturally never triggers on a touch device. Skipped entirely when the
+  // tab is already active, since the active style already gives feedback.
+  tabBtnHovered: {
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.primary,
+  },
+  tabBtnText: {
+    fontSize: 12,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.textMuted,
+  },
+  tabBtnTextActive: {
+    color: colors.onPrimary,
+  },
+  tabBtnTextHovered: {
+    color: colors.primary,
+  },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -795,13 +921,13 @@ const styles = StyleSheet.create({
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
+    gap: 7,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
     borderRadius: 999,
   },
-  statusDot: { width: 7, height: 7, borderRadius: 4 },
-  statusPillText: { fontSize: 11, fontFamily: fonts.bodySemiBold },
+  statusDot: { width: 9, height: 9, borderRadius: 5 },
+  statusPillText: { fontSize: 13, fontFamily: fonts.bodySemiBold },
 
   maintenanceNote: {
     fontSize: 12,
@@ -856,41 +982,47 @@ const styles = StyleSheet.create({
   rowCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    gap: spacing.lg,
     backgroundColor: colors.white,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
     flexWrap: 'wrap',
   },
   roomThumb: {
-    width: 52,
-    height: 52,
-    borderRadius: radius.sm,
+    width: 96,
+    height: 96,
+    borderRadius: radius.md,
     backgroundColor: colors.cardAlt,
   },
   roomThumbPlaceholder: {
-    width: 52,
-    height: 52,
-    borderRadius: radius.sm,
+    width: 96,
+    height: 96,
+    borderRadius: radius.md,
     backgroundColor: colors.cardAlt,
     alignItems: 'center',
     justifyContent: 'center',
   },
   roomNumberBadgeSmall: {
-    width: 44,
-    height: 44,
+    width: 52,
+    height: 52,
     borderRadius: radius.sm,
     backgroundColor: colors.cardAlt,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  roomNumberTextSmall: { fontSize: 13, fontFamily: fonts.headingExtraBold, color: colors.primary },
-  rowInfo: { flex: 1, minWidth: 120 },
-  rowTitle: { fontSize: 13, fontFamily: fonts.headingBold, color: colors.text },
-  rowMeta: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1 },
+  roomNumberTextSmall: { fontSize: 15, fontFamily: fonts.headingExtraBold, color: colors.primary },
+  rowInfo: { flex: 1, minWidth: 200 },
+  rowTitle: { fontSize: 16, fontFamily: fonts.headingBold, color: colors.text, marginBottom: 2 },
+  rowMeta: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginBottom: 4 },
+  rowDescription: {
+    fontSize: 12,
+    fontFamily: fonts.body,
+    color: colors.textMuted,
+    lineHeight: 17,
+  },
 
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   statusChip: {
