@@ -1,13 +1,11 @@
-{
+﻿{
   "expo": {
     "name": "Hospitality Property Management System",
     "slug": "hpms-reservation",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "splash": {
-      "backgroundColor": "#ffffff"
-    },
+    "icon": "./assets/icon.png",
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -16,14 +14,32 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F5EFE6"
       }
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png",
+      "name": "InnVision Hotel Management System",
+      "shortName": "InnVision",
+      "lang": "en",
+      "themeColor": "#332B22",
+      "backgroundColor": "#F5EFE6",
+      "display": "standalone"
     },
     "plugins": [
-      "expo-audio"
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      "expo-audio",
+      "@react-native-community/datetimepicker",
+      "expo-font",
+      "expo-status-bar",
+      "expo-asset"
     ]
   }
 }

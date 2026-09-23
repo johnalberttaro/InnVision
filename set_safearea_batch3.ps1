@@ -1,4 +1,5 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+﻿Set-Content -Path '.\src\screens\profile\Profilescreen.jsx' -Encoding UTF8 -Value @'
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -1047,3 +1048,5 @@ function getStyles(colors, spacing, radius, fonts) {
     btnSmText:   { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.text },
   });
 }
+'@
+Write-Host 'set_safearea_batch3: 1 file(s) written OK'

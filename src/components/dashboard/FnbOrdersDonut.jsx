@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { fonts, colors, spacing } from '../../utils/portalTheme';
@@ -46,6 +46,14 @@ export default function FnbOrdersDonut({ delivered = 0, cancelled = 0, size = 16
       <View style={{ width: size, height: size }}>
         <Svg width={size} height={size}>
           <Circle cx={cx} cy={cy} r={r} stroke={TRACK_COLOR} strokeWidth={strokeWidth} fill="none" />
+          {/* DIAGNOSTIC: both segments below were `rotation={-90}
+              origin={...}` — react-native-svg's web renderer turns that
+              shorthand into an invalid `transform-origin` DOM property
+              (confirmed via browser console on OccupancyGauge.jsx, the
+              same pattern this file copies — see that file's comment).
+              Switched to the plain SVG `transform` attribute, which does
+              the same rotate-around-center without going through
+              react-native-svg's web translation of the shorthand. */}
           {total === 0 ? null : (
             <>
               {delivered > 0 && (
@@ -54,7 +62,7 @@ export default function FnbOrdersDonut({ delivered = 0, cancelled = 0, size = 16
                   stroke={DELIVERED_COLOR} strokeWidth={strokeWidth} fill="none"
                   strokeDasharray={`${deliveredLength} ${circumference}`}
                   strokeDashoffset={0}
-                  rotation={-90} origin={`${cx}, ${cy}`}
+                  transform={`rotate(-90 ${cx} ${cy})`}
                 />
               )}
               {cancelled > 0 && (
@@ -66,7 +74,7 @@ export default function FnbOrdersDonut({ delivered = 0, cancelled = 0, size = 16
                   // already used, so this one picks up right where that
                   // one ended instead of drawing from 12 o'clock again.
                   strokeDashoffset={-deliveredLength}
-                  rotation={-90} origin={`${cx}, ${cy}`}
+                  transform={`rotate(-90 ${cx} ${cy})`}
                 />
               )}
             </>
@@ -95,7 +103,12 @@ export default function FnbOrdersDonut({ delivered = 0, cancelled = 0, size = 16
 
 const styles = StyleSheet.create({
   wrap: { alignItems: 'center' },
-  centerLabel: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  centerLabel: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   totalLabel: { fontSize: 26, fontFamily: fonts.headingExtraBold, color: colors.primary },
   totalSubLabel: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: '#8A7C64', marginTop: 1 },
 

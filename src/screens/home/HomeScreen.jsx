@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+﻿import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -44,8 +44,10 @@ const homeBackground = Platform.OS === 'web'
  * pre-blurred at build time via PIL, not a runtime CSS/BlurView filter,
  * so it renders identically on web, iOS, and Android with zero extra
  * cost). Implemented as an absolutely-positioned <Image> filling the
- * outer container exactly (StyleSheet.absoluteFillObject +
- * resizeMode="cover"), rather than <ImageBackground> — ImageBackground's
+ * outer container exactly (explicit position:'absolute' + top/left/
+ * right/bottom:0 — NOT StyleSheet.absoluteFillObject, which RN 0.85+
+ * removed entirely, see the comment on styles.backgroundLayer below —
+ * plus resizeMode="cover"), rather than <ImageBackground> — ImageBackground's
  * flex-based sizing is inconsistent between React Native Web and native
  * (tall narrow mobile viewports vs. wide desktop ones), where an
  * explicit absolute-fill sizes identically on both. A semi-transparent
@@ -87,22 +89,41 @@ export default function HomeScreen({
 
   return (
     <View style={styles.screen}>
-      <Image source={homeBackground} style={styles.backgroundImage} resizeMode="cover" />
-      <View style={styles.scrim} />
-      <HomeHeader
-        onBookNow={onBookNow}
-        onSignIn={onSignIn}
-        onMenuPress={() => setMenuVisible(true)}
-        onProfilePress={onProfilePress}
-        onAboutPress={onAboutPress}
-        onContactPress={onContactPress}
-        onFindBooking={onFindBooking}
-        onOrderFood={onOrderFood}
-        onReportIssue={onReportIssue}
-        isAuthenticated={isAuthenticated}
-      />
+      {/* ROOT CAUSE, FOUND: React Native 0.85 (Expo SDK 57 ships 0.86)
+          removed StyleSheet.absoluteFillObject from the library. Every
+          layer below that spread it — backgroundLayer, backgroundImage,
+          scrim, contentLayer — was silently getting `position: 'absolute'`
+          etc. from NOTHING (spreading undefined is legal JS and
+          contributes zero properties), so they were all plain,
+          unpositioned, unsized normal-flow views on your phone this
+          whole time. That's why HomeHeader/the ScrollView never had
+          anything to be sized by, and why zIndex changes did nothing —
+          confirmed by web rendering the identical source perfectly,
+          since react-native-web has its own separate StyleSheet that
+          still has absoluteFillObject. See the long comment on
+          styles.backgroundLayer below for the full explanation. Fixed
+          by writing out the literal fill properties everywhere instead
+          of relying on that removed API. */}
+      <View style={styles.backgroundLayer} pointerEvents="none">
+        <Image source={homeBackground} style={styles.backgroundImage} resizeMode="cover" />
+        <View style={styles.scrim} />
+      </View>
 
-      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+      <View style={styles.contentLayer}>
+        <HomeHeader
+          onBookNow={onBookNow}
+          onSignIn={onSignIn}
+          onMenuPress={() => setMenuVisible(true)}
+          onProfilePress={onProfilePress}
+          onAboutPress={onAboutPress}
+          onContactPress={onContactPress}
+          onFindBooking={onFindBooking}
+          onOrderFood={onOrderFood}
+          onReportIssue={onReportIssue}
+          isAuthenticated={isAuthenticated}
+        />
+
+        <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
         <ImageCarousel onBookNow={onBookNow} />
 
         {/* ── About section ──────────────────────────────────────── */}
@@ -177,7 +198,8 @@ export default function HomeScreen({
         )}
 
         <Appfooter />
-      </ScrollView>
+        </ScrollView>
+      </View>
 
       <HamburgerMenu
         visible={menuVisible}
@@ -202,16 +224,56 @@ function getStyles(colors, spacing, fonts) {
     screen: {
       flex: 1,
       position: 'relative',
-      // Needed on web so the flex:1 height actually resolves to a real
-      // pixel value the absolute-fill Image below can size against —
-      // without it, some browsers leave the container's height
-      // ambiguous and the image collapses to 0px.
-      minHeight: '100%',
+      // Web-only. Without a resolved height here, some browsers leave this
+      // container's height ambiguous and the absolute-fill background
+      // Image below collapses to 0px. (This was originally suspected as
+      // the cause of the header/content disappearing on native too, when
+      // it was applied unconditionally — it wasn't; the real cause was the
+      // sibling structure below. Kept web-only here since it's still
+      // genuinely needed there.)
+      ...(Platform.OS === 'web' ? { minHeight: '100%' } : null),
+    },
+    // Single wrapper holding the background photo + scrim together, kept
+    // OUT of the normal flex flow (pointerEvents:'none' on the JSX element
+    // so it never intercepts touches meant for content above it).
+    //
+    // ROOT CAUSE, FOUND (not a guess): React Native 0.85 removed
+    // `StyleSheet.absoluteFillObject` from the library entirely — Expo
+    // SDK 57 ships RN 0.86, so it's gone here. `StyleSheet.absoluteFillObject`
+    // is now simply `undefined`, and spreading undefined into an object
+    // literal (`...StyleSheet.absoluteFillObject`) is valid JS that
+    // silently contributes NOTHING. Every layer below that used that
+    // spread was therefore never actually `position: 'absolute'` on your
+    // phone — they were plain, unpositioned, unsized normal-flow views
+    // the whole time, which is why HomeHeader/the ScrollView had nothing
+    // to be sized by and never appeared, and why explicit zIndex changes
+    // did nothing (zIndex has no effect on views that were never
+    // positioned to begin with). This never showed up on web because
+    // `expo start`'s browser target uses react-native-web — a separate
+    // package with its own independent StyleSheet implementation that
+    // still has absoluteFillObject — so identical source code produced
+    // two different results on the two platforms.
+    // FIX: every spot that used `...StyleSheet.absoluteFillObject` below
+    // now uses the literal properties it used to expand to instead —
+    // `position: 'absolute', top: 0, left: 0, right: 0, bottom: 0` — a
+    // plain style object with no dependency on any StyleSheet API, so
+    // there's nothing here for a future RN version to remove again.
+    backgroundLayer: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 0,
     },
     // Sized identically on web and native via absolute-fill, rather
     // than ImageBackground's flex-based sizing (see file header note).
     backgroundImage: {
-      ...StyleSheet.absoluteFillObject,
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
       width: '100%',
       height: '100%',
     },
@@ -220,8 +282,25 @@ function getStyles(colors, spacing, fonts) {
     // through as a soft texture rather than fighting with the white
     // cards/sections on top of it.
     scrim: {
-      ...StyleSheet.absoluteFillObject,
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
       backgroundColor: `${colors.background}A6`,
+    },
+    // Single wrapper holding HomeHeader + the ScrollView together. Also
+    // an absolute fill (see backgroundLayer's comment above for why) —
+    // its own children (HomeHeader, then the ScrollView) still lay out
+    // normally *inside* it regardless of how contentLayer itself is
+    // positioned relative to `screen`.
+    contentLayer: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 1,
     },
     scroll: {
       flex: 1,

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -152,6 +152,14 @@ function getInitials(firstName, lastName) {
   const a = (firstName || '').trim()[0] || '';
   const b = (lastName || '').trim()[0] || '';
   return (a + b).toUpperCase() || '?';
+}
+
+// NEW: mirrors the RES-XXXXXXXX reference pattern ReservationsScreen.jsx
+// already gives every reservation — giving every guest the same kind of
+// short, stable, human-readable record number is what makes this read as
+// an actual record rather than just a contact card.
+function getGuestReference(id) {
+  return `GST-${(id || '').slice(0, 8).toUpperCase()}`;
 }
 
 export default function GuestRecordsScreen({ onSelectGuest }) {
@@ -430,6 +438,7 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
           </View>
 
           <View style={styles.identityMain}>
+            <Text style={styles.referenceNumber}>{getGuestReference(item.id)}</Text>
             <View style={styles.nameLine}>
               <Text style={styles.guestName}>{item.firstName} {item.lastName}</Text>
               {isVip && (
@@ -481,8 +490,16 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
           {reservation ? (
             <View style={styles.reservationRow}>
               <InfoChip label="Room Type" value={reservation.roomType || '—'} />
+              {/* RESOLVED: 'Confirmed' (upcoming) used to be functionally
+                  invisible here — its badge background (colors.primaryTint,
+                  #F0F0F2) is the exact same hex as this box's own background
+                  (colors.cardAlt, #F0F0F2), so the pill had zero contrast
+                  against its own container and just read as bare gray text.
+                  A border in the status's own text color fixes it for every
+                  status here, not just this one collision — each badge now
+                  reads as a clearly outlined tag no matter what it sits on. */}
               {statusMeta && (
-                <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg }]}>
+                <View style={[styles.statusBadge, { backgroundColor: statusMeta.bg, borderColor: statusMeta.text }]}>
                   <Text style={[styles.statusBadgeText, { color: statusMeta.text }]}>
                     {statusMeta.label}
                   </Text>
@@ -494,6 +511,33 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
           ) : (
             <Text style={styles.noReservationText}>No reservation on file</Text>
           )}
+        </View>
+
+        {/* ── Guest Statistics ───────────────────────────────────
+            NEW: item._stats (totalStays/lifetimeSpend/lastStayDate) was
+            already being computed above in the joinedGuests useMemo, and
+            the Stat component + statsRow/statDivider/statItem styles
+            below were already written — none of it was ever actually
+            rendered on the card. Wiring it in is what turns this from a
+            contact card into an actual guest record: at a glance, front
+            desk can see how many times this person has stayed, what
+            they've spent lifetime, and when they were last here — the
+            same at-a-glance value a loyalty/CRM profile gives in a real
+            PMS (and the fuller version of this same math already shown
+            on the Guest Details drill-down). Reads 0 stays / ₱0.00 /
+            "—" for a guest with no completed (checked-out) stay yet —
+            that's accurate for a brand-new guest, not a bug; the numbers
+            fill in naturally as stays complete. */}
+        <View style={styles.statsRow}>
+          <Stat icon="bed-outline" label="Total Stays" value={String(item._stats.totalStays)} />
+          <View style={styles.statDivider} />
+          <Stat icon="cash-outline" label="Lifetime Spend" value={formatCurrency(item._stats.lifetimeSpend)} />
+          <View style={styles.statDivider} />
+          <Stat
+            icon="time-outline"
+            label="Last Stay"
+            value={item._stats.lastStayDate ? formatDate(new Date(item._stats.lastStayDate)) : '—'}
+          />
         </View>
       </TouchableOpacity>
     );
@@ -798,7 +842,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     borderLeftWidth: 4,
-    padding: spacing.sm,
+    padding: spacing.md,
     shadowColor: '#332B22',
     shadowOpacity: 0.05,
     shadowRadius: 8,
@@ -811,10 +855,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
+  // Bumped 38→46 and initials 13→15 alongside it — the avatar is the
+  // first thing the eye lands on in each row, and the old size read as
+  // slightly cramped for what's now a fuller record card.
   avatarWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: colors.primaryTint,
     borderWidth: 2,
     alignItems: 'center',
@@ -823,11 +870,19 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   avatarImage: { width: '100%', height: '100%' },
-  avatarInitials: { fontSize: 13, fontFamily: fonts.headingBold, color: colors.primary },
+  avatarInitials: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.primary },
 
   identityMain: { flex: 1, minWidth: 0 },
+  // Same small-caps-style reference-number treatment ReservationsScreen.jsx
+  // uses above its own guest name.
+  referenceNumber: {
+    fontSize: 11,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.textMuted,
+    marginBottom: 2,
+  },
   nameLine: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: spacing.xs },
-  guestName: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.text },
+  guestName: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.text },
 
   vipBadge: {
     flexDirection: 'row',
@@ -876,7 +931,9 @@ const styles = StyleSheet.create({
   infoChipLabel: { fontSize: 9, fontFamily: fonts.body, color: colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.3 },
   infoChipValue: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text, marginTop: 1 },
 
-  statusBadge: { paddingVertical: 3, paddingHorizontal: spacing.sm, borderRadius: radius.sm },
+  // borderWidth added — see the RESOLVED comment at this badge's call
+  // site above for why (background-color alone wasn't reliable contrast).
+  statusBadge: { paddingVertical: 3, paddingHorizontal: spacing.sm, borderRadius: radius.sm, borderWidth: 1 },
   statusBadgeText: { fontSize: 10, fontFamily: fonts.bodySemiBold, letterSpacing: 0.3 },
 
   statsRow: {
@@ -888,10 +945,10 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   statDivider: { width: 1, height: 28, backgroundColor: colors.border, marginHorizontal: spacing.md },
-  statItem: { flex: 1 },
+  statItem: { flex: 1, alignItems: 'center' },
   statIcon: { marginBottom: 2 },
-  statValue: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.text },
-  statLabel: { fontSize: 9, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1 },
+  statValue: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.text, textAlign: 'center' },
+  statLabel: { fontSize: 9, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1, textAlign: 'center' },
 
   /* Modal */
   modalOverlay: { flex: 1, backgroundColor: colors.overlayDim, justifyContent: 'center', padding: spacing.lg },

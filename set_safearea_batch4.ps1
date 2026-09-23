@@ -1,4 +1,5 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿Set-Content -Path '.\src\foodservice\OrderFoodScreen.jsx' -Encoding UTF8 -Value @'
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -1056,3 +1057,5 @@ function getStyles(colors, spacing, radius, fonts) {
     primaryBtnText: { fontFamily: fonts.headingSemiBold, fontSize: 14, color: colors.onPrimary },
   });
 }
+'@
+Write-Host 'set_safearea_batch4: 1 file(s) written OK'

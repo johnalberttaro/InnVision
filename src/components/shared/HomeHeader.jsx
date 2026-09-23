@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,13 @@ import { BlurView } from 'expo-blur';
 import { colors, spacing, fonts } from '../../utils/theme';
 
 const WIDE_SCREEN_BREAKPOINT = 768;
+
+// RESOLVED: a diagnostic flag used to live here to test whether expo-blur's
+// BlurView was a "missing native view" under the New Architecture, after
+// the header disappeared post-SDK 54→57 upgrade. Isolation-tested (alone,
+// and combined with the rest of the header) and proven completely
+// unrelated — the real cause was StyleSheet.absoluteFillObject being
+// removed in RN 0.85+ (see HomeScreen.jsx). BlurView renders normally.
 
 const CONTENT_PADDING_TOP = Platform.select({
   ios: spacing.sm,
@@ -112,15 +119,33 @@ export default function HomeHeader({
 
   return (
     <View style={styles.shadowWrap}>
+      {/* BlurView is a background LAYER behind the content, not a wrapper
+          around it — deliberately, after its logo/nav/CTA/hamburger all
+          disappeared together on an Android device. Nesting that content
+          inside BlurView's own children meant a native rendering hiccup
+          could take the whole header down with it; as an absolute-fill
+          sibling instead, that can no longer happen — worst case is just
+          a missing blur backdrop, never a missing header.
+
+          No blurMethod/blurTarget: real Android blur needs BOTH
+          blurMethod="dimezisBlurView" AND a blurTarget ref pointing at a
+          <BlurTargetView> wrapped around whatever sits BEHIND this header
+          (this screen's own background image + ScrollView, in
+          HomeScreen.jsx) — a change in the screens that use this header,
+          not something fixable here alone. Per Expo's own docs, without
+          blurTarget, dimezisBlurView silently falls back to a plain
+          semi-transparent tint anyway — exactly what omitting blurMethod
+          gets you directly, minus the console warning and the unused
+          prop. Worth adding the BlurTargetView wiring later if real
+          blur-behind-content on Android is ever wanted. */}
       <BlurView
         intensity={40}
         tint="light"
         style={styles.blur}
-        experimentalBlurMethod="dimezisBlurView"
-      >
-        <View style={styles.tint} />
+      />
+      <View style={styles.tint} />
 
-        <View style={styles.content}>
+      <View style={styles.content}>
 
           {/* ── Logo ─────────────────────────────────────────── */}
           <TouchableOpacity
@@ -202,7 +227,6 @@ export default function HomeHeader({
             )}
           </View>
         </View>
-      </BlurView>
     </View>
   );
 }
@@ -215,7 +239,14 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 3,
   },
+  // Now an absolute-fill layer sitting BEHIND styles.content (a sibling,
+  // not a parent) — see the comment above the <BlurView> element itself
+  // for why. top/left/right/bottom (matching the existing `tint` style
+  // right below) rather than StyleSheet.absoluteFillObject, just to stay
+  // consistent with how this file already expresses "fill the parent".
   blur: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
     overflow: 'hidden',
   },
   tint: {

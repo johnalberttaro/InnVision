@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import FrontDeskSidebar from './FrontDeskSidebar';
 import FrontDeskDashboardScreen from './FrontDeskDashboardScreen';
@@ -181,7 +181,8 @@ export default function FrontDeskShell({ onLoggedOut, staffName, staffRole, staf
             openPaymentModal,
             folioRefreshTick,
             staffUid,
-            staffName
+            staffName,
+            handleNavigate
           )}
         </View>
 
@@ -212,10 +213,26 @@ function renderActiveScreen(
   openPaymentModal,
   folioRefreshTick,
   staffUid,
-  staffName
+  staffName,
+  handleNavigate
 ) {
+  // RESOLVED: this was the only screen in this whole switch that didn't
+  // get a navigation handler passed to it — every sibling below
+  // (ReservationsScreen, GuestManagementScreen, BillingManagementScreen…)
+  // receives one, but FrontDeskDashboardScreen was rendered bare. Its KPI
+  // cards were never actually disabled (KpiCard always wraps in a
+  // Pressable when given an onPress, and this screen always passes one),
+  // so they still looked and felt clickable — press animation and all —
+  // they just called goTo(key), which does `if (onNavigate)
+  // onNavigate(key)` and silently no-ops when onNavigate is undefined.
+  // That's indistinguishable from "the button can't be clicked" from the
+  // outside. handleNavigate is defined inside FrontDeskShell (the
+  // component above), not in this standalone function, so — same as
+  // openGuestProfile/openFolioDetail/etc. just below — it has to be
+  // threaded through as its own parameter rather than referenced
+  // directly; that's the extra param added here and at the call site.
   if (activeKey === 'dashboard') {
-    return <FrontDeskDashboardScreen />;
+    return <FrontDeskDashboardScreen onNavigate={handleNavigate} />;
   }
   if (activeKey === 'profile:me') {
     return <MyProfileScreen staffUid={staffUid} />;

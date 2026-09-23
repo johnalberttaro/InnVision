@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
+  KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
 } from 'react-native';
+// RESOLVED: SafeAreaView moved to 'react-native-safe-area-context' — see
+// the same fix's full explanation in LoginScreen.jsx.
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';

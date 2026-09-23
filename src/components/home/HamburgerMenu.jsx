@@ -1,5 +1,11 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Modal, StyleSheet, SafeAreaView, Image } from 'react-native';
+﻿import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, Modal, StyleSheet, Image } from 'react-native';
+// RESOLVED: SafeAreaView moved to 'react-native-safe-area-context' — see
+// the same fix's full explanation in LoginScreen.jsx. Still correctly
+// receives insets here despite rendering inside a Modal — React Context
+// (which SafeAreaProvider uses) propagates through Modal's children even
+// though Modal renders to a separate native surface.
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, fonts } from '../../utils/theme';
 import ConfirmDialog from '../shared/ConfirmDialog';

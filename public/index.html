@@ -1,0 +1,68 @@
+﻿<!DOCTYPE html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+    <title>%WEB_TITLE%</title>
+
+    <!-- PWA: installable app manifest (name, icons, standalone display —
+         see public/manifest.json). -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#332B22" />
+
+    <!-- iOS Safari doesn't read the manifest above for install behavior,
+         so it needs its own tags to install and run full-screen
+         ("standalone") from the home screen instead of reopening inside
+         Safari's browser chrome every time. -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="InnVision" />
+    <!-- Non-Apple equivalent, honored by some Android/Chromium contexts. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* These styles make the body full-height */
+      html,
+      body {
+        height: 100%;
+      }
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Use static rendering with Expo Router to support running without JavaScript. -->
+    <noscript>
+      You need to enable JavaScript to run this app.
+    </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+
+    <!-- PWA: registers the Workbox-generated service worker (dist/sw.js,
+         produced by `npm run build:web` — see workbox-config.js). There's
+         no sw.js during local `expo start --web` dev, so the .catch()
+         below just logs and does nothing harmful — that's expected, not
+         an error to chase. -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js').catch(function (err) {
+            console.log('Service worker not registered (expected during local dev):', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+﻿import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,17 @@ import {
   StyleSheet,
   Modal,
   ScrollView,
-  SafeAreaView,
   FlatList,
   Image,
   Animated,
   useWindowDimensions,
 } from 'react-native';
+// RESOLVED: SafeAreaView moved to 'react-native-safe-area-context' — see
+// the same fix's full explanation in LoginScreen.jsx. Still correctly
+// receives insets here despite rendering inside a Modal — React Context
+// (which SafeAreaProvider uses) propagates through Modal's children even
+// though Modal renders to a separate native surface.
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 import { formatCurrency } from '../../utils/roomRates';
 

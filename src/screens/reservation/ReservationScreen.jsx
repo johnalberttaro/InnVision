@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+﻿import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,20 @@ import {
   ScrollView,
   StyleSheet,
   Modal,
-  SafeAreaView,
   Alert,
   Image,
   Platform,
   Animated,
   useWindowDimensions,
 } from 'react-native';
+// RESOLVED: SafeAreaView moved to 'react-native-safe-area-context' — the
+// LogBox warning that flagged this exact file is what surfaced this whole
+// migration (see the same fix's full explanation in LoginScreen.jsx).
+// Still correctly receives insets here despite rendering inside a Modal
+// (App.jsx renders ReservationScreen inside one) — React Context (which
+// SafeAreaProvider uses) propagates through Modal's children even though
+// Modal renders to a separate native surface.
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import RangeCalendar from '../../components/reservation/RangeCalendar';
 import GuestRoomSelector from '../../components/reservation/GuestRoomSelector';

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+﻿import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Image,
@@ -220,8 +220,19 @@ const styles = StyleSheet.create({
   slide: {
     position: 'relative',
   },
+  // Explicit position:'absolute' + inset properties, NOT
+  // StyleSheet.absoluteFillObject — React Native 0.85+ (Expo SDK 57
+  // ships 0.86) removed that API entirely, so `...StyleSheet.absoluteFillObject`
+  // silently spreads nothing and these views end up unpositioned. This
+  // was root-caused while debugging HomeScreen.jsx's disappearing
+  // header/content (same underlying bug, same fix) — see the comment on
+  // HomeScreen's styles.backgroundLayer for the full story.
   image: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     width: '100%',
     height: '100%',
   },
@@ -231,7 +242,11 @@ const styles = StyleSheet.create({
      opacity stacked over just the bottom half, standing in for a real
      linear gradient without a new dependency. */
   scrimBase: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(20, 16, 10, 0.12)',
   },
   scrimBand: {

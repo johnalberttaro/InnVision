@@ -1,8 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
+  KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
 } from 'react-native';
+// DIAGNOSTIC, RESOLVED: SafeAreaView used to come from 'react-native' —
+// that core version is deprecated (confirmed via a LogBox warning naming
+// this exact file) and only insets correctly on iOS anyway. Moved to
+// 'react-native-safe-area-context', same as everywhere else in the app.
+// Works here because App.jsx already wraps the whole tree in
+// SafeAreaProvider at the root — React Context reaches every screen.
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';

@@ -40,10 +40,15 @@ function hexToRgbTriplet(hex) {
  * HomeHeader first). High opacity keeps the theme color dominant; it does
  * trade away some of the visible "blur" softening effect as a result.
  *
- * Glassmorphism look via expo-blur's BlurView (real blur on iOS; on this
- * project's installed expo-blur 13.x, Android needs the ref-less
- * `experimentalBlurMethod="dimezisBlurView"` prop — no BlurTargetView, since
- * that newer API only exists in expo-blur 15+ / Expo SDK 55+).
+ * Glassmorphism look via expo-blur's BlurView: real blur on iOS. On
+ * Android, real blur needs BOTH a `blurMethod="dimezisBlurView"` prop
+ * AND a `blurTarget` ref pointing at a `<BlurTargetView>` wrapped around
+ * whatever sits BEHIND this header in the screen that renders it — i.e.
+ * a change made in that screen, not in this component. Neither prop is
+ * set here, so Android intentionally gets Expo's documented fallback: a
+ * plain semi-transparent tint, no blur, no console warning either. If a
+ * screen using this header ever wants real blur-behind-content on
+ * Android, that's the BlurTargetView wiring to add — on the screen side.
  *
  * Already "sticky": render this ABOVE your screen's <ScrollView>, not inside
  * its contentContainerStyle — that alone pins it while content scrolls
@@ -62,25 +67,32 @@ export default function BrandHeader({ onHomePress }) {
 
   return (
     <View style={styles.shadowWrap}>
+      {/* BlurView is a background layer BEHIND the content, not a wrapper
+          around it — the same fix applied to HomeHeader.jsx after its
+          logo/nav disappeared on some Android devices. Nesting the logo
+          inside BlurView's own children meant a native rendering hiccup
+          could silently take the whole header down with it; as an
+          absolute-fill sibling instead, that can no longer happen —
+          worst case is just a missing blur backdrop, never the logo.
+          No blurMethod/blurTarget — see the file-header comment. */}
       <BlurView
         intensity={40}
         tint={isDark ? 'dark' : 'light'}
         style={styles.blur}
-        experimentalBlurMethod="dimezisBlurView"
-      >
-        {/* Semi-transparent tint on top of the blur so text/logo stay
-            crisp while the blur still softens whatever is behind it —
-            color follows colors.background, flipping between cream and
-            dark charcoal with the theme. */}
-        <View style={[styles.tint, { backgroundColor: overlayColor }]} />
+      />
 
-        <TouchableOpacity style={styles.content} activeOpacity={0.8} onPress={onHomePress}>
-          <View style={styles.logoBadge}>
-            <Image source={LOGO_SOURCE} style={styles.logoImage} resizeMode="contain" />
-          </View>
-          <Text style={styles.name}>InnVision</Text>
-        </TouchableOpacity>
-      </BlurView>
+      {/* Semi-transparent tint on top of the blur so text/logo stay
+          crisp while the blur still softens whatever is behind it —
+          color follows colors.background, flipping between cream and
+          dark charcoal with the theme. */}
+      <View style={[styles.tint, { backgroundColor: overlayColor }]} />
+
+      <TouchableOpacity style={styles.content} activeOpacity={0.8} onPress={onHomePress}>
+        <View style={styles.logoBadge}>
+          <Image source={LOGO_SOURCE} style={styles.logoImage} resizeMode="contain" />
+        </View>
+        <Text style={styles.name}>InnVision</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -97,7 +109,14 @@ function getStyles(colors, spacing, fonts) {
       shadowRadius: 8,
       elevation: 3,
     },
+    // Now an absolute-fill layer sitting behind `content` (a sibling, not
+    // a parent) — see the comment above the <BlurView> element.
     blur: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
       overflow: 'hidden',
     },
     // Overlay tint — flips between cream and dark charcoal frosted glass;

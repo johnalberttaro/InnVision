@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -171,6 +171,23 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
       return `${new Date(checkIn).toLocaleDateString()} – ${new Date(checkOut).toLocaleDateString()}`;
     } catch {
       return `${checkIn} – ${checkOut}`;
+    }
+  };
+
+  // DIAGNOSTIC, RESOLVED: checked_in_at/checked_out_at were already being
+  // written to the DB on every check-in/check-out (see handleCheckIn/
+  // handleCheckOut below — extraFields: { checked_in_at: ... } already
+  // existed) and already exposed here as item.checkedInAt/checkedOutAt via
+  // reservationToCamel above. The gap was display-only: nothing in this
+  // screen ever rendered them. toLocaleString() (not toLocaleDateString())
+  // is deliberate — it includes both date AND time, same call the Refunds
+  // tab's "Requested" row below already uses for refundRequestedAt.
+  const formatDateTime = (value) => {
+    if (!value) return null;
+    try {
+      return new Date(value).toLocaleString();
+    } catch {
+      return String(value);
     }
   };
 
@@ -463,18 +480,42 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     }
   };
 
-  const todayStr = new Date().toDateString();
+  // RESOLVED: both tabs below used to require an exact same-day match
+  // (checkIn/checkOut === today's date), so the moment the calendar
+  // rolled over, anyone not yet dealt with just vanished from the list —
+  // reproduced live: a guest booked to arrive 9/23 was still 'upcoming'
+  // at 12:57 AM on 9/24, no longer showed under Check-ins (checkIn date
+  // no longer matched "today"), and had no way to be checked in from
+  // anywhere else in the UI either, since the Check In button only ever
+  // renders on this tab (see showCheckIn below). The same gap applies to
+  // Check-outs, and matters more now that there's no automatic fallback
+  // on the guest side either (see MyReservationsScreen.jsx) — this list
+  // is the only mechanism left for catching a forgotten checkout, so it
+  // has to keep showing anyone overdue, not just today's exact-date
+  // cases. Compares calendar days rather than exact instants (so
+  // time-of-day in the stored value doesn't matter) and now matches "due
+  // today OR earlier" instead of "due today only" — a future-dated
+  // booking still correctly stays hidden until its actual day.
+  const isDueTodayOrEarlier = (dateValue) => {
+    try {
+      const d = new Date(dateValue);
+      const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const now = new Date();
+      const todayDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return day.getTime() <= todayDay.getTime();
+    } catch {
+      return false;
+    }
+  };
 
   const filteredBookings = bookings.filter((b) => {
     switch (activeTab) {
       case 'reservations:pending':   return b.status === 'pending';
       case 'reservations:confirmed': return b.status === 'upcoming';
       case 'reservations:checkins':
-        try { return b.status === 'upcoming' && new Date(b.checkIn).toDateString() === todayStr; }
-        catch { return false; }
+        return b.status === 'upcoming' && isDueTodayOrEarlier(b.checkIn);
       case 'reservations:checkouts':
-        try { return b.status === 'checked-in' && new Date(b.checkOut).toDateString() === todayStr; }
-        catch { return false; }
+        return b.status === 'checked-in' && isDueTodayOrEarlier(b.checkOut);
       // Deliberately scoped to PENDING refunds only, matching the sidebar
       // label exactly — once staff mark one processed it drops off this
       // list (refund_status becomes 'processed'), same one-purpose-per-tab
@@ -489,8 +530,8 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     'reservations:all': 'No bookings yet.',
     'reservations:pending': 'No pending reservations.',
     'reservations:confirmed': 'No confirmed reservations.',
-    'reservations:checkins': 'No guests due to arrive today.',
-    'reservations:checkouts': 'No guests due to leave today.',
+    'reservations:checkins': 'No arrivals due or overdue right now.',
+    'reservations:checkouts': 'No checkouts due or overdue right now.',
     'reservations:refunds': 'No refunds pending right now.',
   };
 
@@ -640,6 +681,28 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
                     {item.guestCount ?? 0} Guest{item.guestCount !== 1 ? 's' : ''}
                   </Text>
                 </View>
+
+                {/* NEW: actual check-in/check-out timestamps (as opposed to
+                    "Dates" above, which is the BOOKED stay range, not when
+                    the guest physically arrived/left). checked_in_at/
+                    checked_out_at were already being recorded on every
+                    check-in/check-out action — this just surfaces them.
+                    Each row only appears once that event has actually
+                    happened, so a still-upcoming reservation shows neither,
+                    a checked-in one shows just "Checked In", and a
+                    checked-out one shows both. */}
+                {!!item.checkedInAt && (
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Checked In</Text>
+                    <Text style={styles.detailValue}>{formatDateTime(item.checkedInAt)}</Text>
+                  </View>
+                )}
+                {!!item.checkedOutAt && (
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Checked Out</Text>
+                    <Text style={styles.detailValue}>{formatDateTime(item.checkedOutAt)}</Text>
+                  </View>
+                )}
 
                 {activeTab === 'reservations:refunds' && (
                   <>

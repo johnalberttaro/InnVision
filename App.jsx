@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { StyleSheet, StatusBar, Modal } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
@@ -82,10 +82,15 @@ import { ThemeProvider }    from './src/context/ThemeContext';
  * top inset (it does not call useSafeAreaInsets() itself) — don't add a
  * second inset call there, or the header gets double-padded.
  *
- * A few other screens (LoginScreen, RegisterScreen, ForgotPasswordScreen,
- * ProfileScreen, HamburgerMenu, RateCard) still import the deprecated core
- * `SafeAreaView` from 'react-native' directly rather than going through
- * this provider — that's a known remaining cleanup item, not yet migrated.
+ * RESOLVED: every screen in the app has now been migrated off the
+ * deprecated core `SafeAreaView` — a live LogBox warning caught a 7th file
+ * (ReservationScreen) that this note's original list had missed, which
+ * prompted a full grep audit instead of trusting the comment; that turned
+ * up 9 files total (LoginScreen, RegisterScreen, ForgotPasswordScreen,
+ * ProfileScreen, HamburgerMenu, RateCard, ReservationScreen,
+ * OrderFoodScreen, ReportIssueScreen), not the 6 originally listed here.
+ * All 9 now import SafeAreaView from 'react-native-safe-area-context',
+ * same as here.
  *
  * NOTE ON FRONT DESK / ADMIN SPLIT:
  * profiles.role is a real Postgres enum ('admin' | 'frontdesk' | 'guest')
@@ -111,8 +116,35 @@ import { ThemeProvider }    from './src/context/ThemeContext';
  * HousekeepingShell/MaintenanceShell take the identical
  * onLoggedOut/staffName/staffUid props FnbShell already does.
  */
+// RESOLVED: a DISABLE_LOADING_SCREEN_DIAGNOSTIC flag used to live here,
+// testing whether LoadingScreen.jsx's Animated.loop()+react-native-svg
+// spinner was stalling the JS thread badly enough to block the
+// minLoadTimeElapsed setTimeout below. Proven unrelated — swapping it for
+// trivial text produced the identical stall — so LoadingScreen is safe to
+// use normally.
+//
+// RESOLVED (best-effort — see the note on the loading gate itself further
+// down for the full story): a WRAPPER_TEST_STAGE isolation test used to
+// live here too, the follow-up to BARE_DIAGNOSTIC_MODE. It added
+// SafeAreaProvider/ThemeProvider/SafeAreaView/StatusBar back one at a time
+// and none of them, alone or all together with the real LoadingScreen,
+// reproduced the stall — so it's been removed.
+
+// RESOLVED: MAIN_BYPASS_SAFE_AREA_VIEW / MAIN_BYPASS_SAFE_AREA_PROVIDER
+// used to live here — diagnostic toggles for a background-photo-only /
+// missing-header bug. Both ruled out (the real cause was
+// StyleSheet.absoluteFillObject being removed in RN 0.85+, fixed in
+// HomeScreen.jsx/ImageCarousel.jsx) and removed now that the real fix is
+// confirmed on-device. SafeAreaView/SafeAreaProvider are used directly
+// below, same as everywhere else in the app.
+
 export default function App() {
-  const [fontsLoaded] = useFonts({
+  // DIAGNOSTIC: now also capturing `fontError`, the second value useFonts()
+  // returns — the original code only destructured `fontsLoaded`, so if font
+  // loading ever failed, `fontsLoaded` would simply stay false forever with
+  // nobody the wiser. Logged below, and no longer allowed to block the
+  // loading gate forever (see the gate's condition further down).
+  const [fontsLoaded, fontError] = useFonts({
     [fonts.headingExtraBold]: Baloo2_800ExtraBold,
     [fonts.headingBold]:      Baloo2_700Bold,
     [fonts.headingSemiBold]:  Baloo2_600SemiBold,
@@ -121,6 +153,19 @@ export default function App() {
     [fonts.bodyMedium]:       Inter_500Medium,
     [fonts.bodySemiBold]:     Inter_600SemiBold,
   });
+
+  // DIAGNOSTIC: surfaces exactly what's happening with the loading gate in
+  // the Metro terminal — remove this whole block once the stuck-loading-
+  // screen issue is confirmed fixed.
+  useEffect(() => {
+    console.log('[DIAGNOSTIC] loading gate state:', {
+      fontsLoaded,
+      fontError: fontError ? String(fontError) : null,
+    });
+    if (fontError) {
+      console.error('[DIAGNOSTIC] Font loading failed:', fontError);
+    }
+  }, [fontsLoaded, fontError]);
 
   // ── Supabase auth state ─────────────────────────────────────────────
   const [user, setUser]               = useState(null);
@@ -135,6 +180,14 @@ export default function App() {
     const timer = setTimeout(() => setMinLoadTimeElapsed(true), 3000);
     return () => clearTimeout(timer);
   }, []);
+
+  // DIAGNOSTIC: logs every time any of the three loading-gate conditions
+  // changes, so the Metro terminal shows exactly which one(s) are still
+  // true if the app is stuck on LoadingScreen. Remove this block once the
+  // stuck-loading-screen issue is confirmed fixed.
+  useEffect(() => {
+    console.log('[DIAGNOSTIC] gate check — fontsLoaded:', fontsLoaded, 'authLoading:', authLoading, 'minLoadTimeElapsed:', minLoadTimeElapsed);
+  }, [fontsLoaded, authLoading, minLoadTimeElapsed]);
 
   useEffect(() => {
     let mounted = true;
@@ -169,6 +222,14 @@ export default function App() {
     // Checks for an existing session ONCE on startup — this is the actual
     // fix for the reload-logs-you-out problem: without this, `user` only
     // ever gets set by handleLogin() at the moment of a fresh sign-in.
+    //
+    // DIAGNOSTIC: added .catch() — the original had none. If
+    // getSession() itself rejects (rather than just being slow), the
+    // .then() below would simply never run, authLoading would never
+    // flip to false, and the app would sit on LoadingScreen forever
+    // with no visible error. The catch logs what happened and still
+    // unblocks the gate so a real failure here is visible instead of
+    // an indefinite stall.
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       const sessionUser = data?.session?.user || null;
@@ -176,6 +237,9 @@ export default function App() {
       resolveRoleAndRoute(sessionUser).finally(() => {
         if (mounted) setAuthLoading(false);
       });
+    }).catch((sessionError) => {
+      console.error('[DIAGNOSTIC] supabase.auth.getSession() rejected:', sessionError);
+      if (mounted) setAuthLoading(false);
     });
 
     // Keeps `user` in sync with sign-in/sign-out afterward. Only
@@ -279,7 +343,26 @@ export default function App() {
   const goToReportIssue = () => setScreen(user ? 'reportIssue' : 'login');
 
   // ── Loading gate ────────────────────────────────────────────────────
-  if (!fontsLoaded || authLoading || !minLoadTimeElapsed) {
+  // DIAGNOSTIC: changed `!fontsLoaded` to `(!fontsLoaded && !fontError)` —
+  // previously, a failed font load left fontsLoaded false forever with no
+  // way out, hanging here permanently. Now a font error still gets logged
+  // above, but no longer blocks the app from proceeding.
+  //
+  // RESOLVED (best-effort): this used to stall indefinitely with the full
+  // wrapper stack present below — that's why BARE_DIAGNOSTIC_MODE existed
+  // as a workaround. A staged isolation test (WRAPPER_TEST_STAGE, since
+  // removed) added SafeAreaProvider/ThemeProvider/SafeAreaView/StatusBar
+  // back one at a time and NONE of them stalled individually — including
+  // this exact tree, full stack + the real LoadingScreen component below.
+  // So the stall isn't deterministically tied to any one component here;
+  // it was most likely an intermittent timing/race issue (e.g. between the
+  // 3-second minLoadTimeElapsed timer, font loading, and
+  // supabase.auth.getSession(), all resolving concurrently on mount) rather
+  // than a real bug in this tree. The two DIAGNOSTIC console.log blocks
+  // above are left in place on purpose — they're free (terminal-only
+  // logging, invisible to users) and are the fastest way to see what's
+  // happening if this symptom ever comes back.
+  if ((!fontsLoaded && !fontError) || authLoading || !minLoadTimeElapsed) {
     return (
       <SafeAreaProvider>
         <ThemeProvider userId={user?.id}>

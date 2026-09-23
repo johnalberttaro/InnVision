@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+﻿import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -45,6 +45,16 @@ import { useTheme } from '../../context/ThemeContext';
  *    not the per-room adults/children split the old `totals` object on
  *    the Firestore doc had — that granularity wasn't carried over during
  *    the ReviewPayScreen migration. Shows "Guests: N" instead.
+ *
+ * RESOLVED: reservationToCamel() below never mapped checked_in_at/
+ * checked_out_at, even though those columns were already being written
+ * by Front Desk on every check-in/check-out (see ReservationsScreen.jsx's
+ * handleCheckIn/handleCheckOut) — this screen just never pulled them off
+ * the row. Added below, plus a new "Checked in at"/"Checked out at" pair
+ * in the expanded details, so guests can see exactly when they arrived/
+ * left, not just the booked stay dates (the existing "Check-in"/
+ * "Check-out" summary fields, which are unchanged and still show the
+ * reserved date range, not the actual event time).
  *
  * Props:
  *  - onBack: () => void
@@ -96,44 +106,20 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
   }, []);
   // -----------------------------------------------------------------
 
-  /**
-   * Front desk sometimes forgets to mark the checkout. Rather than let a
-   * stale 'checked-in' reservation sit on the guest's active list forever,
-   * treat "checked-in AND checkout date already passed" as an implicit
-   * checkout: correct it in Firestore and fold it into history right away.
-   */
-  const isPastCheckout = (checkOutValue) => {
-    if (!checkOutValue) return false;
-    const d = checkOutValue?.toDate ? checkOutValue.toDate() : new Date(checkOutValue);
-    return !isNaN(d) && d.getTime() < Date.now();
-  };
-
-  const autoResolveOverdueCheckouts = async (docs) => {
-    const overdue = docs.filter(
-      (r) => (r.status || '').toLowerCase() === 'checked-in' && isPastCheckout(r.checkOut)
-    );
-    if (overdue.length === 0) return docs;
-
-    await Promise.all(
-      overdue.map(async (r) => {
-        try {
-          const { error } = await supabase
-            .from('reservations')
-            .update({
-              status: 'checked-out',
-              checked_out_at: new Date().toISOString(),
-              auto_checked_out: true, // flags this as system-corrected, not front-desk-confirmed
-            })
-            .eq('id', r.id);
-          if (error) throw error;
-          r.status = 'checked-out'; // reflect immediately without a second fetch
-        } catch (err) {
-          console.error(`Auto-checkout failed for ${r.id}:`, err);
-        }
-      })
-    );
-    return docs;
-  };
+  // REMOVED: this screen used to auto-flip a stale 'checked-in' reservation
+  // to 'checked-out' on its own, the moment the guest opened My
+  // Reservations and their checkout date was judged far enough in the
+  // past (isPastCheckout / autoResolveOverdueCheckouts, now deleted). That
+  // logic is what produced a live, reproducible bug: a guest who checked
+  // in at 11:28 PM was silently marked checked-out 48 minutes later, at
+  // 12:16 AM, the instant the calendar flipped to their checkout date.
+  // Tightening the cutoff (calendar-day compare, then a 24-hour grace
+  // window past the standard noon checkout hour) fixed that specific
+  // case, but per a deliberate decision, checkout is no longer inferred
+  // automatically at all, at any interval. Front desk marking a guest
+  // checked out (ReservationsScreen.jsx's handleCheckOut) is now the only
+  // way a reservation's status/checked_out_at ever changes to
+  // 'checked-out' — nothing implicit, nothing guessed from elapsed time.
 
   // Maps a Postgres reservations row (snake_case) to the same camelCase
   // shape the Firestore version used, so every helper/JSX below stays
@@ -156,6 +142,11 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     status: row.status,
     guestCount: row.guest_count,
     createdAt: row.created_at,
+    // RESOLVED: these two were never mapped here, even though Front Desk
+    // has been writing them on every check-in/check-out all along — see
+    // the note at the top of this file.
+    checkedInAt: row.checked_in_at,
+    checkedOutAt: row.checked_out_at,
   });
 
   const fetchReservations = useCallback(async () => {
@@ -174,8 +165,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
         .order('created_at', { ascending: false });
       if (fetchError) throw fetchError;
 
-      let docs = (data || []).map(reservationToCamel);
-      docs = await autoResolveOverdueCheckouts(docs);
+      const docs = (data || []).map(reservationToCamel);
       setReservations(docs);
     } catch (err) {
       console.error('Failed to load reservations:', err);
@@ -213,6 +203,23 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
       // Handles both ISO strings and Firestore Timestamps
       const d = value?.toDate ? value.toDate() : new Date(value);
       return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch {
+      return '—';
+    }
+  };
+
+  // NEW: date AND time, unlike formatDate above (date-only). Needed
+  // specifically for checked_in_at/checked_out_at, which record the exact
+  // moment Front Desk tapped Check In/Check Out — a plain date would lose
+  // the actual time-of-day info those fields exist to capture.
+  const formatDateTime = (value) => {
+    if (!value) return '—';
+    try {
+      const d = value?.toDate ? value.toDate() : new Date(value);
+      return d.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      });
     } catch {
       return '—';
     }
@@ -389,7 +396,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
       await fetchReservations();
     } catch (err) {
       console.error('Cancellation failed:', err);
-      setError('We couldn\u2019t cancel that reservation. Please try again.');
+      setError('We couldn’t cancel that reservation. Please try again.');
       setCancelTarget(null);
     } finally {
       setCancelling(false);
@@ -436,6 +443,17 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
               <SummaryItem label="Payment method" value={paymentMethod(r)} styles={styles} />
               <SummaryItem label="Email" value={emailAddress(r)} styles={styles} />
               <SummaryItem label="Contact number" value={contactNumber(r)} styles={styles} />
+              {/* NEW: actual arrival/departure timestamps — distinct from
+                  the "Check-in"/"Check-out" fields in the summary row
+                  above, which show the BOOKED stay dates, not when the
+                  guest actually walked in or out. Each only appears once
+                  that event has really happened. */}
+              {!!r.checkedInAt && (
+                <SummaryItem label="Checked in at" value={formatDateTime(r.checkedInAt)} styles={styles} />
+              )}
+              {!!r.checkedOutAt && (
+                <SummaryItem label="Checked out at" value={formatDateTime(r.checkedOutAt)} styles={styles} />
+              )}
             </View>
           </View>
         )}

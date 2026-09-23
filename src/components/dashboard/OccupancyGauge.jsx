@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { fonts, colors, spacing } from '../../utils/portalTheme';
@@ -77,7 +77,15 @@ export default function OccupancyGauge({
             fill="none"
           />
           {/* Progress — starts at 12 o'clock (rotated -90deg) and sweeps
-              clockwise, the standard reading direction for a progress ring */}
+              clockwise, the standard reading direction for a progress ring.
+              DIAGNOSTIC: was `rotation={-90} origin={...}` — react-native-svg's
+              web renderer turns that shorthand into an invalid `transform-origin`
+              DOM property (confirmed via browser console: "Invalid DOM property
+              'transform-origin'. Did you mean 'transformOrigin'?"), which is
+              what was crashing this Circle on web. Switched to the plain SVG
+              `transform` attribute instead — same rotation-around-center effect,
+              but it's raw SVG syntax react-native-svg doesn't need to translate,
+              so there's nothing for its web path to get wrong. */}
           {clamped > 0 && (
             <Circle
               cx={cx}
@@ -89,8 +97,7 @@ export default function OccupancyGauge({
               strokeLinecap="round"
               strokeDasharray={`${filled} ${circumference}`}
               strokeDashoffset={0}
-              rotation={-90}
-              origin={`${cx}, ${cy}`}
+              transform={`rotate(-90 ${cx} ${cy})`}
             />
           )}
         </Svg>
@@ -112,7 +119,8 @@ export default function OccupancyGauge({
 const styles = StyleSheet.create({
   wrap: { alignItems: 'center' },
   centerLabel: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
