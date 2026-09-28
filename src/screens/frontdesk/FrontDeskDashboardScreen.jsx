@@ -315,7 +315,12 @@ export default function FrontDeskDashboardScreen({ onNavigate }) {
           icon="calendar-outline"
           label="Total Reservations"
           value={String(totalReservations)}
-          accent={colors.primary}
+          // Was colors.primary (the same near-black as Total Revenue
+          // below, and as the Occupancy card above) — on a monochrome
+          // portal theme that made the two trend cards indistinguishable
+          // except by reading their labels. Blue/green here mirrors how
+          // Today's Check-ins/Check-outs already get their own accents.
+          accent="#1D5FBF"
           trend={reservationsTrend}
           sparklineData={reservationsSparkline}
           tooltip="All reservations ever created, regardless of status."
@@ -325,7 +330,7 @@ export default function FrontDeskDashboardScreen({ onNavigate }) {
           icon="cash-outline"
           label="Total Revenue"
           value={formatCurrency(totalRevenue)}
-          accent={colors.accent}
+          accent="#1E7B34"
           trend={revenueTrend}
           sparklineData={revenueSparkline}
           note="Confirmed bookings only"

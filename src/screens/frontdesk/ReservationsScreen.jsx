@@ -14,10 +14,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { formatCurrency } from '../../utils/roomRates';
-import { createBillingRecord } from '../../utils/BillingService';
+import { createBillingRecord, getBillingRecordByReservation } from '../../utils/BillingService';
 import { updateRoomStatus, ROOM_STATUS } from '../../utils/Roomsservice';
 import WalkInScreen from './WalkInScreen';
 import TapeChartScreen from './TapeChartScreen';
+import RecordPaymentModal from './RecordPaymentModal';
 
 // All 8 Reservation Management sidebar items, now tabs at the top of this
 // one screen instead of separate sidebar sub-items/routes. The first 6 are
@@ -34,6 +35,17 @@ const TABS = [
   { key: 'reservations:walkin',    label: 'Walk-In',      icon: 'person-add-outline' },
   { key: 'reservations:tapechart', label: 'Tape Chart',   icon: 'grid-outline' },
 ];
+
+// Same bg/text/accent trio BillingRecordsScreen.jsx's STATUS_STYLE uses for
+// these two folio states — kept as its own small map here (rather than
+// importing that file's local const) since the outstanding-balance
+// checkpoint below is the only place in this screen that needs it. 'paid'
+// has no entry on purpose: the checkpoint never shows once a folio is
+// fully settled, so there's nothing to look up for it.
+const BALANCE_STATUS_STYLE = {
+  unpaid:         { bg: '#FBE7E7', accent: '#B3261E', label: 'Unpaid' },
+  partially_paid: { bg: '#FFF4D6', accent: '#C99400', label: 'Partially Paid' },
+};
 
 // confirmDialog/notifyDialog used to be module-level functions calling
 // window.confirm()/window.alert() on web and Alert.alert() on native —
@@ -78,6 +90,14 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
   // component. null = closed. `onConfirm` present = two-button
   // confirm/cancel dialog; `onConfirm` absent = single-button info dialog.
   const [dialogState, setDialogState] = useState(null);
+
+  // Checkout-time balance checkpoint (see handleCheckOut below).
+  // checkoutWarning: { item, folio } | null — shown instead of the plain
+  // "Check out this guest?" dialog when the folio still has money owed.
+  // recordPaymentFolio: the folio | null currently open in
+  // RecordPaymentModal, reached from checkoutWarning's "Collect Payment".
+  const [checkoutWarning, setCheckoutWarning] = useState(null);
+  const [recordPaymentFolio, setRecordPaymentFolio] = useState(null);
 
   const confirmDialog = (title, message, confirmLabel, onConfirmPressed) => {
     setDialogState({
@@ -408,7 +428,37 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     );
   };
 
-  const handleCheckOut = (item) => {
+  // Checks out a guest — but first checks whether they still owe
+  // anything. Checking out never used to touch billing_records at all,
+  // which meant a charge that landed on the folio AFTER it looked
+  // settled (e.g. an F&B order charged to the room post-payment — see
+  // BillingService.js's chargeToRoom() note) could ride along silently:
+  // nothing here would catch it, and once status flips to 'checked-out'
+  // the guest is gone and Charge to Room can never be used again for
+  // this stay. The balance itself is never lost from the data (it just
+  // sits on the folio until someone opens Billing Records), but nothing
+  // used to stop a checkout from happening before anyone noticed it.
+  const handleCheckOut = async (item) => {
+    setActingId(item.id); // reuses the existing per-card spinner during this lookup
+    let folio = null;
+    try {
+      folio = await getBillingRecordByReservation(item.id);
+    } catch (err) {
+      // Fails open rather than blocking checkout entirely on a network
+      // hiccup — logged so it's debuggable, but see the plain-checkout
+      // fallback below.
+      console.error('Could not check billing balance before checkout:', err);
+    }
+    setActingId(null);
+
+    const remainingBalance = folio?.remainingBalance || 0;
+    if (folio && remainingBalance > 0) {
+      setCheckoutWarning({ item, folio });
+      return;
+    }
+
+    // No balance owed (or no folio found / lookup failed) — same plain
+    // confirmation checkout has always used.
     confirmDialog(
       'Check out this guest?',
       `${getGuestName(item)} — ${item.roomType}`,
@@ -426,6 +476,25 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
           sideEffect: () => markRoomsNeedInspection(item),
         })
     );
+  };
+
+  // "Check Out Anyway" from the outstanding-balance checkpoint — same
+  // checkout as above, just reached from checkoutWarning instead of the
+  // plain confirm dialog, and the toast says so explicitly rather than
+  // pretending the balance doesn't exist.
+  const handleCheckOutWithBalance = () => {
+    if (!checkoutWarning) return;
+    const { item, folio } = checkoutWarning;
+    setCheckoutWarning(null);
+    runStatusUpdate({
+      item,
+      newStatus: 'checked-out',
+      extraFields: { checked_out_at: new Date().toISOString() },
+      notifTitle: 'Thanks for Staying With Us! 👋',
+      notifMessage: `You've been checked out of your ${item.roomType} room. We hope you enjoyed your stay!`,
+      toastMessage: `${getGuestName(item)} checked out — ${formatCurrency(folio.remainingBalance)} still owed`,
+      sideEffect: () => markRoomsNeedInspection(item),
+    });
   };
 
   // Marks a flagged refund as actually sent. Kept as its own function
@@ -840,6 +909,88 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
           </View>
         </View>
       </Modal>
+
+      {/* Outstanding-balance checkpoint — shown instead of the plain
+          checkout confirm when the guest's folio still has money owed.
+          "Collect Payment" is the recommended path (opens
+          RecordPaymentModal right here); "Check Out Anyway" stays
+          available but is visually de-emphasized so it's a deliberate
+          choice, not the path of least resistance. */}
+      <Modal visible={!!checkoutWarning} transparent animationType="fade" onRequestClose={() => setCheckoutWarning(null)}>
+        <View style={styles.dialogOverlay}>
+          <View style={styles.dialogCard}>
+            {!!checkoutWarning && (() => {
+              const { item, folio } = checkoutWarning;
+              const balanceStyle = BALANCE_STATUS_STYLE[folio.billingStatus] || BALANCE_STATUS_STYLE.unpaid;
+              const roomLabel = getRoomNumbersForFolio(item).join(', ');
+              return (
+                <>
+                  <View style={[styles.dialogIconWrap, { backgroundColor: balanceStyle.bg }]}>
+                    <Ionicons name="alert-circle" size={26} color={balanceStyle.accent} />
+                  </View>
+
+                  <Text style={styles.dialogTitle}>Outstanding Balance</Text>
+                  <Text style={styles.balanceDialogSubtitle}>
+                    Room {roomLabel} · {getGuestName(item)}
+                  </Text>
+
+                  <Text style={styles.balanceDialogAmount}>{formatCurrency(folio.remainingBalance)}</Text>
+                  <View style={[styles.balancePill, { backgroundColor: balanceStyle.bg }]}>
+                    <Text style={[styles.balancePillText, { color: balanceStyle.accent }]}>
+                      {balanceStyle.label.toUpperCase()}
+                    </Text>
+                  </View>
+
+                  <Text style={styles.dialogMessage}>
+                    Collect it now, or check out anyway and settle it later.
+                  </Text>
+
+                  <DialogHoverButton
+                    style={[styles.dialogConfirmBtn, styles.balanceDialogCollectBtn]}
+                    hoverStyle={styles.balanceDialogCollectBtnHovered}
+                    onPress={() => {
+                      setCheckoutWarning(null);
+                      setRecordPaymentFolio(folio);
+                    }}
+                  >
+                    <Ionicons name="cash-outline" size={16} color={colors.white} style={{ marginRight: 6 }} />
+                    <Text style={styles.dialogConfirmText}>Collect Payment</Text>
+                  </DialogHoverButton>
+
+                  <View style={[styles.dialogActions, { marginTop: spacing.sm }]}>
+                    <DialogHoverButton
+                      style={styles.dialogCancelBtn}
+                      hoverStyle={styles.dialogCancelBtnHovered}
+                      onPress={() => setCheckoutWarning(null)}
+                    >
+                      <Text style={styles.dialogCancelText}>Cancel</Text>
+                    </DialogHoverButton>
+                    <DialogHoverButton
+                      style={[styles.dialogCancelBtn, styles.checkoutAnywayBtn]}
+                      hoverStyle={styles.checkoutAnywayBtnHovered}
+                      onPress={handleCheckOutWithBalance}
+                    >
+                      <Text style={[styles.dialogCancelText, styles.checkoutAnywayText]}>Check Out Anyway</Text>
+                    </DialogHoverButton>
+                  </View>
+                </>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
+
+      <RecordPaymentModal
+        visible={!!recordPaymentFolio}
+        folio={recordPaymentFolio}
+        staffUid={staffUid}
+        staffName={staffName}
+        onClose={() => setRecordPaymentFolio(null)}
+        onSuccess={() => {
+          setRecordPaymentFolio(null);
+          showToast('Payment recorded — you can check the guest out now.');
+        }}
+      />
     </View>
   );
 }
@@ -870,6 +1021,26 @@ function ReservationTabButton({ tab, active, onPress }) {
       >
         {tab.label}
       </Text>
+    </Pressable>
+  );
+}
+
+// Same Pressable + onHoverIn/onHoverOut + local `hovered` state as
+// ReservationTabButton above, generalized so the outstanding-balance
+// dialog's three action buttons don't each need to repeat that dance —
+// pass the button's resting style, its hover-only overlay style, and
+// whatever's inside it (icon + text, or just text).
+function DialogHoverButton({ style, hoverStyle, disabled, onPress, children }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      style={[style, !disabled && hovered && hoverStyle]}
+    >
+      {children}
     </Pressable>
   );
 }
@@ -1117,4 +1288,68 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   dialogOkText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.white },
+
+  // "Check Out Anyway" on the outstanding-balance checkpoint — same
+  // shape as dialogCancelBtn, just tinted as a deliberate-but-discouraged
+  // choice rather than a neutral one.
+  checkoutAnywayBtn: { borderColor: colors.danger },
+  checkoutAnywayText: { color: colors.danger },
+
+  // Outstanding-balance checkpoint — room/guest context line, the big
+  // peso figure that's the actual point of the dialog, and the small
+  // status pill next to it (same bg/accent pairing as the Billing
+  // Records status badges, via BALANCE_STATUS_STYLE above).
+  balanceDialogSubtitle: {
+    fontSize: 12.5,
+    fontFamily: fonts.bodyMedium,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  balanceDialogAmount: {
+    fontSize: 30,
+    fontFamily: fonts.headingExtraBold,
+    color: colors.text,
+    textAlign: 'center',
+    marginTop: spacing.md,
+  },
+  balancePill: {
+    alignSelf: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    marginTop: 6,
+    marginBottom: spacing.md,
+  },
+  balancePillText: { fontSize: 10.5, fontFamily: fonts.bodySemiBold, letterSpacing: 0.4 },
+  balanceDialogCollectBtn: { flexDirection: 'row', justifyContent: 'center', width: '100%' },
+
+  // Hover overlays for the outstanding-balance dialog's three buttons,
+  // applied via DialogHoverButton above. Same "darken + lift" treatment
+  // RecordPaymentModal.jsx uses for its own Confirm/Cancel pair, so this
+  // dialog and the payment form it opens into feel like one system.
+  balanceDialogCollectBtnHovered: {
+    backgroundColor: '#17662B',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  dialogCancelBtnHovered: {
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.textMuted,
+    shadowColor: '#332B22',
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  // Check Out Anyway hovers into a light red wash rather than the same
+  // neutral tint Cancel gets — it's still the discouraged option even on
+  // hover, not just at rest.
+  checkoutAnywayBtnHovered: {
+    backgroundColor: 'rgba(179,38,30,0.08)',
+    borderColor: colors.danger,
+  },
 });

@@ -62,6 +62,46 @@ const TAX_RATE = 0.17; // matches the guest-facing booking flow (ReviewPayScreen
  * OrderFoodScreen's cart. Total is pinned to a floating bottom bar
  * (same pattern as OrderFoodScreen's cart bar) so it's always visible
  * while scrolling a long room list.
+ *
+ * Refinements on top of that original pass, all purely presentational —
+ * no state, validation, or submit logic touched by any of them:
+ *  (1) Text inputs and the Guests/Nights steppers are width-capped
+ *      (fieldHalf / fieldQuarter) instead of stretching to fill half
+ *      the row — on a wide desktop card a flex:1 "First Name" box was
+ *      ballooning to 600+px for no benefit.
+ *  (2) Once Nights is more than 1, each selected room's card shows its
+ *      own "× N nights = ₱X" line under the nightly rate, so the
+ *      per-room cost is readable at a glance instead of only appearing
+ *      once you scroll to the Summary card below.
+ *  (3) Guest Details is capped at guestDetailsCard's 900px and First/
+ *      Last Name now share the inputWithIcon treatment Phone/Email
+ *      already had — a short form stretched across the same width as
+ *      the room grid below it was leaving a large dead gap to the
+ *      right of every field; the room grid keeps the full width, since
+ *      that one benefits from it (more cards per row, less wrapping,
+ *      which also keeps it shorter under the floating action bar).
+ *  (4) That same 900px cap leaves real empty space of its own on a wide
+ *      screen — same row, to the right of the form — now filled by a
+ *      live Guest Preview card (previewCard) instead of left blank:
+ *      avatar initials, name, phone/email, guests/nights and selected
+ *      room(s), read straight from the same form state and updating as
+ *      staff types (see previewName/previewInitials below). Deliberately
+ *      identity/stay info only, not money — the Summary card further
+ *      down already owns subtotal/tax/total, no reason to duplicate
+ *      that here too.
+ *      Also added a required-field "*" on First Name/Last Name/Phone —
+ *      they were the only three actually enforced by validate() but
+ *      had no visual cue, unlike Email/Special Requests' "(optional)".
+ *
+ * A note for whoever touches this file next: the floating actionBar is
+ * position:'absolute' over the ScrollView, so it always covers whatever
+ * content sits at its fixed screen position, independent of scroll
+ * offset — that's inherent to a floating bottom bar, not a bug. Just be
+ * careful growing anything ABOVE the room grid (or the room cards
+ * themselves) vertically — extra height there pushes room labels further
+ * into the bar's zone. That's exactly what happened when the room cards
+ * were briefly sized up (132→156px) in an earlier pass; reverted once
+ * it visibly covered the first row's labels.
  */
 export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
   const [rooms, setRooms] = useState([]);
@@ -129,6 +169,17 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
   const tax = Math.round(subtotal * TAX_RATE);
   const total = subtotal + tax;
 
+  // Live "what staff is about to create" preview — rendered in
+  // previewCard, beside the Guest Details form (see the header comment's
+  // point (4)), so front desk can sanity-check the whole walk-in at a
+  // glance without scrolling to the Summary card, which only covers the
+  // money side (subtotal/tax/total). Pure reads of existing state —
+  // no new state, no effect on validate()/handleConfirmCheckIn.
+  const previewName = (firstName.trim() || lastName.trim())
+    ? `${firstName.trim()} ${lastName.trim()}`.trim()
+    : 'New Guest';
+  const previewInitials = `${firstName.trim().charAt(0)}${lastName.trim().charAt(0)}`.toUpperCase();
+
   const validate = () => {
     const e = {};
     if (!firstName.trim()) e.firstName = 'First name is required.';
@@ -165,8 +216,23 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
     setSaving(true);
     try {
       const guestName = `${firstName.trim()} ${lastName.trim()}`;
-      const nowIso = new Date().toISOString();
-      const checkOutIso = new Date(Date.now() + nights * 24 * 60 * 60 * 1000).toISOString();
+      const now = new Date();
+      const nowIso = now.toISOString();
+      // Checkout is a FIXED time on a fixed calendar date, not "24h ×
+      // nights from the exact check-in instant" — real hotel policy (see
+      // RateCard.jsx's own Terms & Conditions: "check-out time is on or
+      // before 12:00 noon") never pushes the checkout deadline later just
+      // because a guest happened to arrive later in the day. A walk-in
+      // checking in at 3:00 PM for 1 night still checks out by noon the
+      // next day — roughly 21 hours later, not a full 24. setDate/
+      // setHours run in this device's own local time, which is already
+      // the front-desk terminal's local clock, so this lands on the
+      // hotel's own local noon regardless of what timezone the server
+      // stores UTC timestamps in.
+      const checkOutDate = new Date(now);
+      checkOutDate.setDate(checkOutDate.getDate() + nights);
+      checkOutDate.setHours(12, 0, 0, 0);
+      const checkOutIso = checkOutDate.toISOString();
       const roomTypeSummary = [...new Set(selectedRooms.map((r) => r.roomTypeName))].join(', ');
 
       // Lightweight guest record — same user_id: null convention
@@ -302,38 +368,47 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
           </View>
         )}
 
-        {/* Guest Details */}
-        <View style={styles.card}>
+        {/* Guest Details, plus a live preview card filling the space
+            that used to sit empty to its right on wide screens — see
+            the header comment's point (4) */}
+        <View style={styles.guestDetailsRow}>
+        <View style={[styles.card, styles.guestDetailsCard]}>
           <SectionHeader icon="person-outline" title="Guest Details" />
 
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>First Name</Text>
-              <TextInput
-                style={[styles.input, errors.firstName && styles.inputError]}
-                value={firstName}
-                onChangeText={(v) => { setFirstName(v); if (errors.firstName) setErrors((p) => ({ ...p, firstName: null })); }}
-                placeholder="Juan"
-                placeholderTextColor={colors.disabled}
-              />
+              <Text style={styles.fieldLabel}>First Name<Text style={styles.requiredMark}> *</Text></Text>
+              <View style={[styles.inputWithIcon, errors.firstName && styles.inputError]}>
+                <Ionicons name="person-outline" size={14} color={colors.textMuted} />
+                <TextInput
+                  style={styles.inputWithIconText}
+                  value={firstName}
+                  onChangeText={(v) => { setFirstName(v); if (errors.firstName) setErrors((p) => ({ ...p, firstName: null })); }}
+                  placeholder="Juan"
+                  placeholderTextColor={colors.disabled}
+                />
+              </View>
               {!!errors.firstName && <Text style={styles.errorText}>{errors.firstName}</Text>}
             </View>
             <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>Last Name</Text>
-              <TextInput
-                style={[styles.input, errors.lastName && styles.inputError]}
-                value={lastName}
-                onChangeText={(v) => { setLastName(v); if (errors.lastName) setErrors((p) => ({ ...p, lastName: null })); }}
-                placeholder="Dela Cruz"
-                placeholderTextColor={colors.disabled}
-              />
+              <Text style={styles.fieldLabel}>Last Name<Text style={styles.requiredMark}> *</Text></Text>
+              <View style={[styles.inputWithIcon, errors.lastName && styles.inputError]}>
+                <Ionicons name="person-outline" size={14} color={colors.textMuted} />
+                <TextInput
+                  style={styles.inputWithIconText}
+                  value={lastName}
+                  onChangeText={(v) => { setLastName(v); if (errors.lastName) setErrors((p) => ({ ...p, lastName: null })); }}
+                  placeholder="Dela Cruz"
+                  placeholderTextColor={colors.disabled}
+                />
+              </View>
               {!!errors.lastName && <Text style={styles.errorText}>{errors.lastName}</Text>}
             </View>
           </View>
 
           <View style={styles.fieldRow}>
             <View style={styles.fieldHalf}>
-              <Text style={styles.fieldLabel}>Phone</Text>
+              <Text style={styles.fieldLabel}>Phone<Text style={styles.requiredMark}> *</Text></Text>
               <View style={[styles.inputWithIcon, errors.phone && styles.inputError]}>
                 <Ionicons name="call-outline" size={14} color={colors.textMuted} />
                 <TextInput
@@ -366,11 +441,11 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
           </View>
 
           <View style={styles.fieldRow}>
-            <View style={styles.fieldHalf}>
+            <View style={styles.fieldQuarter}>
               <Text style={styles.fieldLabel}>Guests</Text>
               <Stepper value={guestCount} min={1} onChange={setGuestCount} />
             </View>
-            <View style={styles.fieldHalf}>
+            <View style={styles.fieldQuarter}>
               <Text style={styles.fieldLabel}>Nights</Text>
               <Stepper value={nights} min={1} onChange={(v) => { setNights(v); if (errors.nights) setErrors((p) => ({ ...p, nights: null })); }} />
               {!!errors.nights && <Text style={styles.errorText}>{errors.nights}</Text>}
@@ -386,6 +461,43 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
             placeholderTextColor={colors.disabled}
             multiline
           />
+        </View>
+
+        {/* Live preview — see the header comment's point (4) */}
+        <View style={[styles.card, styles.previewCard]}>
+          <SectionHeader icon="id-card-outline" title="Guest Preview" />
+          <Text style={styles.previewHint}>Updates live as you fill in the form.</Text>
+
+          <View style={styles.previewAvatarWrap}>
+            <View style={styles.previewAvatar}>
+              {previewInitials ? (
+                <Text style={styles.previewAvatarText}>{previewInitials}</Text>
+              ) : (
+                <Ionicons name="person" size={24} color={colors.onPrimary} />
+              )}
+            </View>
+            <Text style={styles.previewGuestName} numberOfLines={1}>{previewName}</Text>
+          </View>
+
+          <View style={styles.previewDivider} />
+
+          <PreviewRow icon="call-outline" label="Phone" value={phone.trim() || 'Not entered yet'} />
+          {!!email.trim() && <PreviewRow icon="mail-outline" label="Email" value={email.trim()} />}
+          <PreviewRow icon="people-outline" label="Guests" value={String(guestCount)} />
+          <PreviewRow icon="moon-outline" label="Nights" value={String(nights)} />
+          <PreviewRow
+            icon="bed-outline"
+            label={selectedRooms.length > 1 ? 'Rooms' : 'Room'}
+            value={selectedRooms.length > 0 ? selectedRooms.map((r) => r.roomNumber).join(', ') : 'Not selected yet'}
+          />
+
+          {!!specialRequests.trim() && (
+            <View style={styles.previewNoteWrap}>
+              <Ionicons name="chatbubble-ellipses-outline" size={14} color={colors.textMuted} />
+              <Text style={styles.previewNoteText} numberOfLines={3}>{specialRequests.trim()}</Text>
+            </View>
+          )}
+        </View>
         </View>
 
         {/* Room selection */}
@@ -431,6 +543,9 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
                       <Text style={styles.roomCardType} numberOfLines={1}>{room.roomTypeName}</Text>
                       {room.price != null && (
                         <Text style={styles.roomCardPrice}>{formatCurrency(room.price)}<Text style={styles.roomCardPriceUnit}> / night</Text></Text>
+                      )}
+                      {room.price != null && nights > 1 && (
+                        <Text style={styles.roomCardPriceTotal}>× {nights} nights = {formatCurrency(room.price * nights)}</Text>
                       )}
                     </View>
                   </TouchableOpacity>
@@ -586,6 +701,18 @@ function SectionHeader({ icon, title }) {
   );
 }
 
+// One label/value line in the Guest Preview card — see previewCard's
+// JSX above for how each row is used.
+function PreviewRow({ icon, label, value }) {
+  return (
+    <View style={styles.previewRow}>
+      <Ionicons name={icon} size={15} color={colors.textMuted} style={styles.previewRowIcon} />
+      <Text style={styles.previewRowLabel}>{label}</Text>
+      <Text style={styles.previewRowValue} numberOfLines={1}>{value}</Text>
+    </View>
+  );
+}
+
 function Stepper({ value, min = 0, max = 99, onChange }) {
   return (
     <View style={styles.stepper}>
@@ -665,6 +792,66 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 2,
   },
+  // Guest Details + Guest Preview, side by side — see the header
+  // comment's point (4). Wraps to its own line below guestDetailsCard
+  // once the combined min-widths don't fit (narrow/mobile widths).
+  // alignItems: 'stretch' (the default, set explicitly so it's clear
+  // it's intentional) makes both cards match the row's tallest member
+  // instead of each sitting at its own natural height — previewCard's
+  // content is shorter than the form, so without this its card ended
+  // well above guestDetailsCard's bottom edge, leaving the two
+  // misaligned and the row looking unfinished.
+  guestDetailsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.lg, alignItems: 'stretch' },
+  // A short form doesn't need to stretch the full width of a wide
+  // desktop screen the way the room grid below it does (that one wants
+  // the width, to fit more cards per row and stay shorter). 900
+  // comfortably fits two capped fieldHalf columns (420 + 420 + the
+  // fieldRow gap) without wrapping. flex: 2 (vs. previewCard's flex: 1)
+  // means this one claims the lion's share of any space beyond both
+  // cards' own minWidths.
+  guestDetailsCard: { flex: 2, minWidth: 340, maxWidth: 900 },
+  // Deliberately narrower than guestDetailsCard — it's a glance-sized
+  // summary, not a form. 320 originally left real leftover space
+  // unclaimed on a wide screen: once guestDetailsCard hit its own 900
+  // cap and stopped growing, flexbox hands the rest of the row's space
+  // to the other flexible sibling (this one), but only up to THAT
+  // sibling's own max-width — 320 was too tight a ceiling to actually
+  // absorb it, leaving a dead gray strip to the right. 440 gives it
+  // enough room to claim that space instead.
+  previewCard: { flex: 1, minWidth: 240, maxWidth: 440 },
+  // Own copy of sectionHint rather than reusing that shared style —
+  // sized up separately (below) without also resizing the Select
+  // Room(s) section's hint text, which shares sectionHint too.
+  previewHint: { fontSize: 11.5, fontFamily: fonts.body, color: colors.textMuted, marginTop: 4, marginBottom: spacing.md, marginLeft: 34 },
+  previewAvatarWrap: { alignItems: 'center', marginTop: spacing.sm, marginBottom: spacing.md },
+  previewAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Every size below was tuned for the original 320px-wide card and
+  // read small/sparse once it grew to 440 — sized back up as a set so
+  // the card still reads as one deliberate piece, not just wider.
+  previewAvatarText: { fontSize: 22, fontFamily: fonts.headingBold, color: colors.onPrimary },
+  previewGuestName: { fontSize: 17, fontFamily: fonts.headingBold, color: colors.text, marginTop: spacing.sm, maxWidth: '100%' },
+  previewDivider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.sm },
+  previewRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 7 },
+  previewRowIcon: { marginRight: 6 },
+  previewRowLabel: { flex: 1, fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
+  previewRowValue: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text, maxWidth: '55%', textAlign: 'right' },
+  previewNoteWrap: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: colors.background,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  previewNoteText: { flex: 1, fontSize: 12.5, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic', lineHeight: 17 },
 
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 2 },
   sectionIconBadge: {
@@ -679,8 +866,14 @@ const styles = StyleSheet.create({
   sectionHint: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: 4, marginBottom: spacing.md, marginLeft: 34 },
 
   fieldRow: { flexDirection: 'row', gap: spacing.md, flexWrap: 'wrap', marginTop: spacing.md },
-  fieldHalf: { flex: 1, minWidth: 160 },
+  // Capped rather than a bare flex:1 — on a wide desktop card, two
+  // uncapped fields stretch to ~600px each for no benefit. fieldQuarter
+  // is its own (narrower) size, not half of fieldHalf, since a stepper
+  // needs far less room than a name/phone/email text input.
+  fieldHalf: { flex: 1, minWidth: 160, maxWidth: 420 },
+  fieldQuarter: { flex: 1, minWidth: 140, maxWidth: 220 },
   fieldLabel: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.textMuted, marginBottom: 5 },
+  requiredMark: { color: colors.primary },
   input: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -781,6 +974,8 @@ const styles = StyleSheet.create({
   roomCardType: { fontSize: 10.5, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1 },
   roomCardPrice: { fontSize: 11.5, fontFamily: fonts.headingBold, color: colors.primary, marginTop: 4 },
   roomCardPriceUnit: { fontSize: 10, fontFamily: fonts.body, color: colors.textMuted },
+  // Only shown once Nights > 1 — see the header comment for why.
+  roomCardPriceTotal: { fontSize: 9.5, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1 },
 
   summaryCard: { borderLeftWidth: 3, borderLeftColor: colors.primary },
   summaryRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, marginLeft: 34 },

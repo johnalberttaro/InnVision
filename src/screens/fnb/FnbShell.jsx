@@ -35,11 +35,15 @@ const WIDE_BREAKPOINT = 1024;
  *    screen only ever needed `staffUid` to begin with, so it was
  *    already role-agnostic; no changes needed to share it here.
  *
- * No DashboardNavbar reuse here — that shared component's notification
- * bell is wired specifically to guest inquiries (contact_messages), a
- * Front Desk/Admin concern that doesn't apply to Kitchen/F&B staff. A
- * plain top bar (title + mobile menu button only) avoids showing a
- * bell tied to a feature this role doesn't use.
+ * No DashboardNavbar reuse here. That shared component's bell now
+ * covers new reservations, new food orders, and Charge-to-Room
+ * postings — all Front Desk/Admin concerns (staff deciding whether to
+ * escalate, check someone in, or reconcile a folio), not things Kitchen
+ * staff act on from their own portal; this screen already has its own
+ * new-order alert system built in (see playNewOrderChime()/
+ * triggerNewOrderPulse() in KitchenOrdersScreen.jsx, which this screen
+ * embeds), so there's nothing here for that bell to usefully add. Keeps
+ * its own plain top bar — title + mobile menu button only.
  *
  * Props:
  *  - onLoggedOut: () => void

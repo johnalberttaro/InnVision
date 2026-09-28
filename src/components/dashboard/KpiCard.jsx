@@ -19,6 +19,20 @@ import Sparkline from './Sparkline';
  *     instead of a bare chevron alone — the old version's actionability
  *     (that tapping a card drills down) was easy to miss entirely.
  *
+ * INNVISION GRAPH REDESIGN (trend/sparkline cards specifically — "This
+ * Week's Performance" on the Front Desk dashboard, and the matching
+ * cards on the Admin dashboard):
+ *  4. The trend pill moved out of the bottom row and now sits right
+ *     under the value, restyled as a tinted colored badge instead of a
+ *     small icon + gray text — easier to read as "the number that
+ *     matters" at a glance. This also freed up the bottom row, which
+ *     used to hide `note` whenever `trend` was set (they shared one
+ *     slot) — e.g. Total Revenue's "Confirmed bookings only" caption
+ *     was silently never showing; it renders now.
+ *  5. The sparkline is no longer squeezed beside the value text — see
+ *     Sparkline.jsx's own redesign notes. It now runs full-width below
+ *     the value/badge.
+ *
  * Props:
  *  - icon: string (Ionicons name)
  *  - label, value: string
@@ -28,13 +42,24 @@ import Sparkline from './Sparkline';
  *  - sparklineData: number[]  optional, omit to hide
  *  - tooltip: string          optional hover/tap tooltip text
  *  - onPress: () => void      optional; makes the card clickable (drill-down)
- *  - customVisual: ReactNode  optional, replaces the value+sparkline row entirely (used for the occupancy gauge)
+ *  - customVisual: ReactNode  optional, replaces the value/trend/chart block entirely (used for the occupancy gauge)
  */
+// Chart's pixel width = the card's own inner content width, so it lines
+// up flush with the value/label above it: 216 (card) - 4 (left accent
+// border) - 16*2 (left+right padding) = 180.
+const CHART_WIDTH = 180;
+const CHART_HEIGHT = 44;
+
 export default function KpiCard({ icon, label, value, accent, note, trend, sparklineData, tooltip, onPress, customVisual }) {
   const [showTooltip, setShowTooltip] = useState(false);
 
   const trendColor = trend?.direction === 'up' ? '#1E7B34' : trend?.direction === 'down' ? '#B3261E' : colors.textMuted;
   const trendIcon = trend?.direction === 'up' ? 'trending-up' : trend?.direction === 'down' ? 'trending-down' : 'remove';
+  // Soft tint behind the trend badge — same hue as trendColor at low
+  // opacity, so "up"/"down"/"flat" reads as a colored pill at a glance
+  // instead of a bare icon + small gray text.
+  const trendBg =
+    trend?.direction === 'up' ? 'rgba(30,123,52,0.12)' : trend?.direction === 'down' ? 'rgba(179,38,30,0.12)' : 'rgba(107,107,112,0.12)';
 
   const Wrapper = onPress ? Pressable : View;
   const wrapperProps = onPress
@@ -70,26 +95,31 @@ export default function KpiCard({ icon, label, value, accent, note, trend, spark
         {customVisual ? (
           customVisual
         ) : (
-          <View style={styles.valueRow}>
+          <>
             <Text style={[styles.value, { color: accent }]}>{value}</Text>
-            {sparklineData && sparklineData.length > 1 && (
-              <Sparkline data={sparklineData} color={accent} />
+
+            {trend && (
+              <View style={[styles.trendBadge, { backgroundColor: trendBg }]}>
+                <Ionicons name={trendIcon} size={12} color={trendColor} />
+                <Text style={[styles.trendBadgeText, { color: trendColor }]}>{trend.deltaLabel}</Text>
+              </View>
             )}
-          </View>
+
+            {sparklineData && sparklineData.length > 1 && (
+              <View style={styles.chartWrap}>
+                <Sparkline data={sparklineData} color={accent} width={CHART_WIDTH} height={CHART_HEIGHT} />
+              </View>
+            )}
+          </>
         )}
       </View>
 
       <View style={styles.bottomRow}>
-        {trend ? (
-          <View style={styles.trendPill}>
-            <Ionicons name={trendIcon} size={12} color={trendColor} />
-            <Text style={[styles.trendText, { color: trendColor }]}>{trend.deltaLabel}</Text>
-          </View>
-        ) : note ? (
-          <Text style={styles.note}>{note}</Text>
-        ) : (
-          <View />
-        )}
+        {/* note and trend used to share this one slot (trend always won,
+            so a card with both — e.g. Total Revenue's "Confirmed bookings
+            only" — silently never showed its note). Trend now has its own
+            spot above, so note can just always render here. */}
+        {note ? <Text style={styles.note}>{note}</Text> : <View />}
         {onPress && (
           <View style={styles.viewDetailsWrap}>
             <Text style={styles.viewDetailsText}>View details</Text>
@@ -147,13 +177,28 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     marginBottom: 6,
   },
-  valueRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
   value: { fontSize: 30, fontFamily: fonts.headingExtraBold },
+  // Pill background is set inline per-card (trendBg, from direction);
+  // alignSelf keeps it hugging its own text width instead of stretching
+  // to the card's full width.
+  trendBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 20,
+  },
+  trendBadgeText: { fontSize: 11, fontFamily: fonts.bodySemiBold },
+  chartWrap: { marginTop: spacing.sm, marginLeft: -2 },
   bottomRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.sm, minHeight: 18 },
-  trendPill: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  trendText: { fontSize: 11, fontFamily: fonts.bodySemiBold },
-  note: { fontSize: 10, fontFamily: fonts.body, color: colors.textMuted },
-  viewDetailsWrap: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  note: { fontSize: 10, fontFamily: fonts.body, color: colors.textMuted, flexShrink: 1, paddingRight: spacing.sm },
+  // flexShrink: 0 — when a long note and "View details" both have to
+  // share the bottom row, the note wraps first (it has flexShrink: 1);
+  // the "View details" call-to-action always stays on one line intact.
+  viewDetailsWrap: { flexDirection: 'row', alignItems: 'center', gap: 2, flexShrink: 0 },
   viewDetailsText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.primary },
   tooltip: {
     position: 'absolute',

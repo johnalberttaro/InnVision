@@ -44,6 +44,19 @@ import ConfirmDialog from '../../components/shared/ConfirmDialog';
  * confirmation step, same reasoning as the logout confirmation
  * elsewhere in the app.
  *
+ * "Revenue Today" mirrors FnbDashboardScreen.jsx's own today-revenue
+ * stat exactly (delivered orders, created today, summed total_amount)
+ * — kept here too since Front Desk has no reason to open the F&B
+ * portal just to see the same number.
+ *
+ * A resolved order (delivered & fully paid, or cancelled) only stays
+ * visible here — under Delivered, Cancelled, and All alike — through
+ * the rest of the day it happened; see hasRolledOff() below. Nothing is
+ * lost when it rolls off: Kitchen/F&B's own Order History screen
+ * (OrderHistoryScreen.jsx) already keeps every delivered/cancelled
+ * order permanently. This screen is meant to answer "what just
+ * happened / what still needs doing," not to double as that archive.
+ *
  * Props:
  *  - staffUid, staffName: the signed-in front desk user (not currently
  *    stored on the order itself, but kept for parity with the other
@@ -58,6 +71,11 @@ const STATUS_META = {
   delivered: { label: 'Delivered', color: '#1E7B34', bg: '#DFF5E1' },
   cancelled: { label: 'Cancelled', color: '#B3261E', bg: '#FBE7E7' },
 };
+
+// The statuses that mean "still needs Front Desk/Kitchen attention" —
+// shared between the 'active' quick filter and the stale-rolloff check
+// below, so the two can't drift out of sync with each other.
+const ACTIVE_STATUSES = ['pending', 'escalated', 'preparing', 'out_for_delivery'];
 
 const FILTERS = [
   { key: 'active', label: 'Active' },
@@ -84,6 +102,26 @@ function timeAgo(dateString) {
   return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+// A resolved order (delivered & paid, or cancelled) rolls off this
+// screen once the day it happened is over — this is Front Desk's
+// "what needs attention / what just happened" view, not a permanent
+// log, and losing it from here loses nothing: Kitchen/F&B's own Order
+// History screen (OrderHistoryScreen.jsx) already keeps the full record
+// of every delivered/cancelled order indefinitely. Still-active orders,
+// and a delivered order still awaiting e-wallet payment confirmation (a
+// real unfinished task — see handleConfirmPayment below), are never
+// considered resolved, so they stay visible no matter how old — only
+// actually-done orders roll off. Compares by calendar day (same
+// toDateString() convention the "Delivered Today"/"Revenue Today" KPIs
+// below already use), not a rolling 24h window, so the whole screen
+// agrees on one single idea of "today".
+function hasRolledOff(order) {
+  if (ACTIVE_STATUSES.includes(order.status)) return false;
+  if (order.status === 'delivered' && order.paymentStatus === 'pending_confirmation') return false;
+  const referenceDate = order.status === 'delivered' ? (order.deliveredAt || order.createdAt) : order.createdAt;
+  return new Date(referenceDate).toDateString() !== new Date().toDateString();
+}
+
 export default function FoodOrdersScreen({ staffUid, staffName }) {
   const { width } = useWindowDimensions();
   const isWide = width >= 900;
@@ -108,6 +146,7 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
     totalAmount: row.total_amount,
     placedBy: row.placed_by,
     createdAt: row.created_at,
+    deliveredAt: row.delivered_at,
     items: (row.food_order_items || []).map((i) => ({
       id: i.id,
       name: i.item_name,
@@ -150,13 +189,20 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
     const today = new Date().toDateString();
     return orders.filter((o) => o.status === 'delivered' && new Date(o.createdAt).toDateString() === today).length;
   }, [orders]);
+  const fnbRevenueToday = useMemo(() => {
+    const today = new Date().toDateString();
+    return orders
+      .filter((o) => o.status === 'delivered' && new Date(o.createdAt).toDateString() === today)
+      .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+  }, [orders]);
 
   // ── Filtering ────────────────────────────────────────────────────────
   const visibleOrders = useMemo(() => {
-    if (activeFilter === 'all') return orders;
-    if (activeFilter === 'active') return orders.filter((o) => ['pending', 'escalated', 'preparing', 'out_for_delivery'].includes(o.status));
-    if (activeFilter === 'payment_pending') return orders.filter((o) => o.status === 'delivered' && o.paymentStatus === 'pending_confirmation');
-    return orders.filter((o) => o.status === activeFilter);
+    const current = orders.filter((o) => !hasRolledOff(o));
+    if (activeFilter === 'all') return current;
+    if (activeFilter === 'active') return current.filter((o) => ACTIVE_STATUSES.includes(o.status));
+    if (activeFilter === 'payment_pending') return current.filter((o) => o.status === 'delivered' && o.paymentStatus === 'pending_confirmation');
+    return current.filter((o) => o.status === activeFilter);
   }, [orders, activeFilter]);
 
   const handleEscalate = async (order) => {
@@ -253,6 +299,7 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
         <KpiCard icon="arrow-redo-outline" label="Sent to Kitchen" value={String(escalatedCount)} accent="#2C5EA8" />
         <KpiCard icon="wallet-outline" label="Payment Pending" value={String(paymentPendingCount)} accent="#B3261E" />
         <KpiCard icon="checkmark-done-outline" label="Delivered Today" value={String(deliveredTodayCount)} accent="#1E7B34" />
+        <KpiCard icon="cash-outline" label="Revenue Today" value={formatCurrency(fnbRevenueToday)} accent="#1E7B34" />
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow} contentContainerStyle={styles.filterRowContent}>

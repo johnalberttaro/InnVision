@@ -180,6 +180,24 @@ export async function getBillingRecord(folioId) {
   return billingRecordToCamel(data);
 }
 
+/**
+ * Same lookup as getBillingRecord, keyed by reservation instead of folio
+ * id — used at checkout time (ReservationsScreen.jsx's handleCheckOut) to
+ * catch a balance that reappeared after the room bill was already
+ * settled, e.g. an F&B order charged to the room via KitchenOrdersScreen.
+ * Returns null if this reservation has no folio at all rather than
+ * throwing, same as getBillingRecord does for an unknown id.
+ */
+export async function getBillingRecordByReservation(reservationId) {
+  const { data, error } = await supabase
+    .from('billing_records')
+    .select('*')
+    .eq('reservation_id', reservationId)
+    .maybeSingle();
+  if (error) throw error;
+  return billingRecordToCamel(data);
+}
+
 export async function getAllBillingRecords() {
   const { data, error } = await supabase
     .from('billing_records')
@@ -413,6 +431,27 @@ export async function getTransactionsByPaymentMethod(paymentType) {
     .from('transactions')
     .select('*')
     .eq('payment_type', paymentType)
+    .order('timestamp', { ascending: false });
+  if (error) throw error;
+  return (data || []).map(transactionToCamel);
+}
+
+/**
+ * Every "Charge to Room" posted against one stay — what
+ * BillingRecordDetailScreen.jsx's "Room Charges" card renders so staff
+ * (or a guest asking why their balance went up) can see what each charge
+ * actually was, not just the aggregate total. add_room_charge() already
+ * writes one of these per charge (payment_type: 'room_charge', note like
+ * "F&B Order #35 — Room 101") — this just reads that existing trail back
+ * for one reservation, the same way getReceiptsForFolio() reads payments
+ * back for one folio.
+ */
+export async function getRoomChargesForReservation(reservationId) {
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('*')
+    .eq('reservation_id', reservationId)
+    .eq('payment_type', 'room_charge')
     .order('timestamp', { ascending: false });
   if (error) throw error;
   return (data || []).map(transactionToCamel);

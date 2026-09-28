@@ -57,6 +57,17 @@ const LOGO_SOURCE = require('../../../assets/logo.png');
  *    (₱152,217.00) — scoped to this file rather than changing the
  *    shared roomRates.js version, which other screens (room rate
  *    cards) intentionally show without decimals.
+ *
+ *  - F&B Revenue: a 5th card alongside the four reservation-revenue
+ *    ones, summing delivered food_orders.total_amount — same rule
+ *    FnbDashboardScreen.jsx's own "Revenue Today" stat uses, just not
+ *    locked to "today." Respects the Date Range filter above (Room
+ *    Type / Booking Source don't apply — those are reservation-only
+ *    concepts a food order doesn't have) and gets the same decoupled
+ *    last-7-days trend as the room-revenue cards. Deliberately no
+ *    drill-down modal like the other cards get — a real per-order F&B
+ *    ledger is its own future feature (see BillingManagementScreen.jsx's
+ *    "Transaction History" placeholder), not a rebuild inside this card.
  */
 
 // ── Currency / date formatting (2-decimal, this screen only) ──────────────
@@ -264,6 +275,7 @@ function buildReportHtml({ filterSummary, metrics, list, logoUri }) {
 
 export default function RevenueReportScreen() {
   const [reservations, setReservations] = useState([]);
+  const [foodOrders, setFoodOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [exportError, setExportError] = useState(null);
 
@@ -304,6 +316,38 @@ export default function RevenueReportScreen() {
     const channel = supabase
       .channel('revenue-report-reservations')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, loadReservations)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, []);
+
+  // F&B revenue source — mirrors the reservations load/realtime pair
+  // above, just scoped to delivered food_orders (the only ones that
+  // count as realized revenue, same rule FnbDashboardScreen.jsx uses).
+  useEffect(() => {
+    const foodOrderToCamel = (row) => ({
+      id: row.id,
+      totalAmount: row.total_amount,
+      createdAt: row.created_at,
+    });
+
+    const loadFoodOrders = async () => {
+      const { data, error } = await supabase
+        .from('food_orders')
+        .select('id, total_amount, created_at')
+        .eq('status', 'delivered')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.error('Failed to load food orders for revenue:', error);
+        return;
+      }
+      setFoodOrders((data || []).map(foodOrderToCamel));
+    };
+    loadFoodOrders();
+
+    const channel = supabase
+      .channel('revenue-report-food-orders')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'food_orders' }, loadFoodOrders)
       .subscribe();
 
     return () => supabase.removeChannel(channel);
@@ -355,6 +399,35 @@ export default function RevenueReportScreen() {
     const lastWeek = trendBase.filter((r) => r.createdAt && new Date(r.createdAt) >= twoWeeksAgo && new Date(r.createdAt) < weekAgo);
     return { thisWeekMetrics: computeMetrics(thisWeek), lastWeekMetrics: computeMetrics(lastWeek) };
   }, [trendBase]);
+
+  // F&B revenue only respects the Date Range filter — Room Type and
+  // Booking Source are reservation-only concepts (see file header)
+  // that don't map onto a food order, so forcing them on would just
+  // silently zero out this card whenever either filter is active.
+  const filteredFoodOrders = useMemo(() => {
+    const rangeOpt = DATE_RANGE_OPTIONS.find((o) => o.key === dateRangeKey);
+    const cutoff = rangeOpt?.days ? (() => { const d = new Date(); d.setDate(d.getDate() - rangeOpt.days); return d; })() : null;
+    if (!cutoff) return foodOrders;
+    return foodOrders.filter((o) => o.createdAt && new Date(o.createdAt) >= cutoff);
+  }, [foodOrders, dateRangeKey]);
+
+  const fnbRevenue = useMemo(
+    () => filteredFoodOrders.reduce((sum, o) => sum + (o.totalAmount || 0), 0),
+    [filteredFoodOrders]
+  );
+
+  // Same decoupled-from-dateRangeKey trend window as the room-revenue
+  // cards above: last 7 days vs the 7 days before, always, regardless
+  // of the selected date range.
+  const { thisWeekFnbRevenue, lastWeekFnbRevenue } = useMemo(() => {
+    const now = new Date();
+    const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate() - 7);
+    const twoWeeksAgo = new Date(now); twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
+    const sum = (arr) => arr.reduce((acc, o) => acc + (o.totalAmount || 0), 0);
+    const thisWeek = foodOrders.filter((o) => o.createdAt && new Date(o.createdAt) >= weekAgo);
+    const lastWeek = foodOrders.filter((o) => o.createdAt && new Date(o.createdAt) >= twoWeeksAgo && new Date(o.createdAt) < weekAgo);
+    return { thisWeekFnbRevenue: sum(thisWeek), lastWeekFnbRevenue: sum(lastWeek) };
+  }, [foodOrders]);
 
   const filterSummary = useMemo(() => {
     const parts = [
@@ -445,7 +518,7 @@ export default function RevenueReportScreen() {
         <View style={{ flex: 1 }}>
           <Text style={styles.pageTitle}>Revenue Report</Text>
           <Text style={styles.pageSubtitle}>
-            Total revenue from reservations, plus pending and declined booking values.
+            Total revenue from reservations and F&amp;B orders, plus pending and declined booking values.
           </Text>
         </View>
         <View style={styles.exportRow}>
@@ -507,6 +580,10 @@ export default function RevenueReportScreen() {
           label="Declined Revenue" value={formatCurrency(metrics.declinedRevenue)} accent={colors.danger}
           current={thisWeekMetrics.declinedRevenue} previous={lastWeekMetrics.declinedRevenue}
           onPress={() => openDetail('Declined Bookings', metrics.declined)}
+        />
+        <ReportCard
+          label="F&B Revenue" value={formatCurrency(fnbRevenue)} accent="#B3792A"
+          current={thisWeekFnbRevenue} previous={lastWeekFnbRevenue}
         />
       </View>
 
@@ -614,11 +691,19 @@ function TrendBadge({ current, previous }) {
 }
 
 function ReportCard({ label, value, accent, current, previous, onPress }) {
+  // onPress is optional — the F&B Revenue card has no drill-down list
+  // to show (see file header), so it renders as a plain, non-tappable
+  // card instead of implying an affordance that does nothing.
   return (
-    <TouchableOpacity style={[styles.kpiCard, accent ? { borderColor: accent } : null]} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity
+      style={[styles.kpiCard, accent ? { borderColor: accent } : null]}
+      onPress={onPress}
+      activeOpacity={onPress ? 0.8 : 1}
+      disabled={!onPress}
+    >
       <View style={styles.kpiTopRow}>
         <Text style={styles.kpiLabel}>{label}</Text>
-        <Ionicons name="chevron-forward" size={13} color={colors.textMuted} />
+        {!!onPress && <Ionicons name="chevron-forward" size={13} color={colors.textMuted} />}
       </View>
       <View style={styles.kpiValueRow}>
         <Text style={[styles.kpiValue, accent ? { color: accent } : null]}>{value}</Text>

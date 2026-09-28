@@ -2,6 +2,28 @@
 // Overlay modal for recording a payment against a folio. Used from both
 // Billingrecorddetailscreen's "Record Payment" button and (eventually)
 // Paymentsscreen's folio list — one shared form for both entry points.
+//
+// UI PASS (this redesign):
+//  1. Removed "Pay at Hotel" from the selectable payment methods — a
+//     front-desk staffer is recording a payment that has already
+//     happened, and "pay at hotel" describes a future promise to pay,
+//     not something you'd record after the fact. (Historical payments
+//     already recorded with this method still display correctly
+//     elsewhere — ReceiptsScreen/ReceiptDetailModal's label lookups
+//     were deliberately left alone.) With it gone, the remaining 3
+//     chips also now fit on one row instead of "Pay at Hotel" wrapping
+//     alone onto a second row.
+//  2. Every interactive element (chips, Full Balance, Cancel, Confirm)
+//     switched from TouchableOpacity to Pressable with onHoverIn/
+//     onHoverOut, the same pattern KpiCard.jsx already uses — this app
+//     runs on web (npm run build:web), where TouchableOpacity gives no
+//     mouse-hover feedback at all.
+//  3. General polish to match the rest of the app: a real card shadow
+//     (was missing entirely), a focus ring on the amount input, emoji
+//     icons swapped for the same Ionicons set used everywhere else,
+//     and the error message promoted from bare red text to a small
+//     tinted banner (same "status color as a soft pill" language as
+//     the dashboard KPI cards).
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -9,18 +31,18 @@ import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
+  Pressable,
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { recordPayment } from '../../utils/BillingService';
 
 const PAYMENT_METHODS = [
-  { key: 'cash', label: 'Cash', icon: '💵' },
-  { key: 'gcash', label: 'GCash', icon: '📱' },
-  { key: 'card', label: 'Credit/Debit Card', icon: '💳' },
-  { key: 'pay_at_hotel', label: 'Pay at Hotel', icon: '🏨' },
+  { key: 'cash', label: 'Cash', icon: 'cash-outline' },
+  { key: 'e-wallet', label: 'E-Wallet', icon: 'wallet-outline' },
+  { key: 'card', label: 'Credit/Debit Card', icon: 'card-outline' },
 ];
 
 function formatCurrency(amount) {
@@ -42,6 +64,12 @@ export default function RecordPaymentModal({ visible, folio, staffUid, staffName
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
 
+  const [amountFocused, setAmountFocused] = useState(false);
+  const [fullBalanceHovered, setFullBalanceHovered] = useState(false);
+  const [hoveredMethod, setHoveredMethod] = useState(null);
+  const [cancelHovered, setCancelHovered] = useState(false);
+  const [confirmHovered, setConfirmHovered] = useState(false);
+
   // Reset form state each time the modal opens for a (possibly different) folio.
   useEffect(() => {
     if (visible) {
@@ -57,6 +85,7 @@ export default function RecordPaymentModal({ visible, folio, staffUid, staffName
   const remainingBalance = folio.remainingBalance || 0;
   const parsedAmount = parseFloat(amount);
   const isValidAmount = !isNaN(parsedAmount) && parsedAmount > 0 && parsedAmount <= remainingBalance;
+  const confirmDisabled = !isValidAmount || submitting;
 
   const handlePayFullBalance = () => {
     setAmount(remainingBalance.toFixed(2));
@@ -105,7 +134,7 @@ export default function RecordPaymentModal({ visible, folio, staffUid, staffName
           <Text style={styles.fieldLabel}>Payment Amount</Text>
           <View style={styles.amountRow}>
             <TextInput
-              style={styles.amountInput}
+              style={[styles.amountInput, amountFocused && styles.amountInputFocused]}
               placeholder="0.00"
               placeholderTextColor={colors.textMuted}
               keyboardType="decimal-pad"
@@ -114,50 +143,79 @@ export default function RecordPaymentModal({ visible, folio, staffUid, staffName
                 setAmount(text);
                 setError(null);
               }}
+              onFocus={() => setAmountFocused(true)}
+              onBlur={() => setAmountFocused(false)}
             />
-            <TouchableOpacity style={styles.fullBalanceButton} onPress={handlePayFullBalance}>
+            <Pressable
+              onHoverIn={() => setFullBalanceHovered(true)}
+              onHoverOut={() => setFullBalanceHovered(false)}
+              style={[styles.fullBalanceButton, fullBalanceHovered && styles.fullBalanceButtonHovered]}
+              onPress={handlePayFullBalance}
+            >
               <Text style={styles.fullBalanceButtonText}>Full Balance</Text>
-            </TouchableOpacity>
+            </Pressable>
           </View>
 
           <Text style={styles.fieldLabel}>Payment Method</Text>
           <View style={styles.methodGrid}>
-            {PAYMENT_METHODS.map((m) => (
-              <TouchableOpacity
-                key={m.key}
-                style={[styles.methodChip, paymentMethod === m.key && styles.methodChipActive]}
-                onPress={() => setPaymentMethod(m.key)}
-              >
-                <Text style={styles.methodIcon}>{m.icon}</Text>
-                <Text
+            {PAYMENT_METHODS.map((m) => {
+              const isActive = paymentMethod === m.key;
+              const isHovered = hoveredMethod === m.key;
+              return (
+                <Pressable
+                  key={m.key}
+                  onHoverIn={() => setHoveredMethod(m.key)}
+                  onHoverOut={() => setHoveredMethod((k) => (k === m.key ? null : k))}
                   style={[
-                    styles.methodChipText,
-                    paymentMethod === m.key && styles.methodChipTextActive,
+                    styles.methodChip,
+                    isActive && styles.methodChipActive,
+                    !isActive && isHovered && styles.methodChipHovered,
                   ]}
+                  onPress={() => setPaymentMethod(m.key)}
                 >
-                  {m.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                  <Ionicons name={m.icon} size={15} color={isActive ? colors.white : colors.textMuted} />
+                  <Text style={[styles.methodChipText, isActive && styles.methodChipTextActive]}>
+                    {m.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
 
-          {error && <Text style={styles.errorText}>{error}</Text>}
+          {error && (
+            <View style={styles.errorBanner}>
+              <Ionicons name="alert-circle" size={14} color="#B3261E" />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          )}
 
           <View style={styles.actionsRow}>
-            <TouchableOpacity style={styles.cancelButton} onPress={onClose} disabled={submitting}>
+            <Pressable
+              onHoverIn={() => setCancelHovered(true)}
+              onHoverOut={() => setCancelHovered(false)}
+              style={[styles.cancelButton, !submitting && cancelHovered && styles.cancelButtonHovered]}
+              onPress={onClose}
+              disabled={submitting}
+            >
               <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.submitButton, (!isValidAmount || submitting) && styles.submitButtonDisabled]}
+            </Pressable>
+            <Pressable
+              onHoverIn={() => setConfirmHovered(true)}
+              onHoverOut={() => setConfirmHovered(false)}
+              style={[
+                styles.submitButton,
+                !confirmDisabled && confirmHovered && styles.submitButtonHovered,
+                confirmDisabled && styles.submitButtonDisabled,
+              ]}
               onPress={handleSubmit}
-              disabled={!isValidAmount || submitting}
+              disabled={confirmDisabled}
             >
               {submitting ? (
                 <ActivityIndicator color={colors.white} size="small" />
               ) : (
                 <Text style={styles.submitButtonText}>Confirm Payment</Text>
               )}
-            </TouchableOpacity>
+            </Pressable>
           </View>
         </View>
       </View>
@@ -168,7 +226,7 @@ export default function RecordPaymentModal({ visible, folio, staffUid, staffName
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: colors.overlayDim,
     alignItems: 'center',
     justifyContent: 'center',
     padding: spacing.lg,
@@ -177,8 +235,15 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 440,
     backgroundColor: colors.white,
-    borderRadius: radius.lg || 16,
+    borderRadius: radius.lg,
     padding: spacing.lg,
+    // Modals sit a level above inline cards in the visual hierarchy, so
+    // this is deliberately heavier than e.g. KpiCard's shadow.
+    shadowColor: '#332B22',
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
   },
   title: { fontFamily: fonts.headingExtraBold, fontSize: 20, color: colors.primary },
   subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2, marginBottom: spacing.md },
@@ -205,13 +270,17 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: 16,
     color: colors.text,
+    outlineStyle: 'none', // web: swap the browser's default blue focus ring for amountInputFocused's border below
   },
+  amountInputFocused: { borderColor: colors.primary },
   fullBalanceButton: {
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
     borderRadius: radius.sm,
     backgroundColor: colors.primaryTint,
+    cursor: 'pointer',
   },
+  fullBalanceButtonHovered: { backgroundColor: colors.border },
   fullBalanceButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.primary },
   methodGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
   methodChip: {
@@ -224,12 +293,23 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     borderWidth: 1,
     borderColor: colors.border,
+    cursor: 'pointer',
   },
+  methodChipHovered: { borderColor: colors.primary, backgroundColor: colors.primaryTint },
   methodChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  methodIcon: { fontSize: 14 },
   methodChipText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: colors.textMuted },
   methodChipTextActive: { color: colors.white },
-  errorText: { fontFamily: fonts.body, fontSize: 12, color: '#B3261E', marginBottom: spacing.sm },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(179,38,30,0.08)',
+    borderRadius: radius.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  errorText: { fontFamily: fonts.body, fontSize: 12, color: '#B3261E', flex: 1 },
   actionsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
   cancelButton: {
     flex: 1,
@@ -238,6 +318,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: 'center',
+    cursor: 'pointer',
+  },
+  // backgroundColor tint alone (background vs. white) was too close to
+  // register at a glance — added borderColor + a slight shadow so the
+  // hover state is unmistakable, not just technically-present.
+  cancelButtonHovered: {
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.textMuted,
+    shadowColor: '#332B22',
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   cancelButtonText: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.textMuted },
   submitButton: {
@@ -246,7 +339,19 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: colors.primary,
     alignItems: 'center',
+    cursor: 'pointer',
   },
-  submitButtonDisabled: { opacity: 0.5 },
+  // primary -> primaryDark is a genuine color change, but both are
+  // near-black, so on its own it barely reads at a glance — the shadow
+  // lift is what actually makes the hover state unmistakable here.
+  submitButtonHovered: {
+    backgroundColor: colors.primaryDark,
+    shadowColor: '#000000',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  submitButtonDisabled: { opacity: 0.5, cursor: 'not-allowed' },
   submitButtonText: { fontFamily: fonts.headingSemiBold, fontSize: 13, color: colors.white },
 });

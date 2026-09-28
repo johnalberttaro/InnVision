@@ -126,6 +126,10 @@ function getRoomNumbers(res) {
  * just cut off at the edge, with a small arrow indicating it continues
  * off-screen.
  *
+ * A bar's right edge lands half a day INSIDE the checkout date's own
+ * column, not flush against its start — see the comment above
+ * endOffsetVisual in barsByRoom below for why.
+ *
  * Sticky headers/room column use CSS `position: sticky`, which React
  * Native Web maps directly to real browser sticky positioning — this
  * works correctly on web (this app's primary surface) but has no
@@ -360,6 +364,23 @@ export default function TapeChartScreen() {
       const startOffset = daysBetween(windowStart, clippedStart);
       const endOffset = daysBetween(windowStart, clippedEnd);
       if (endOffset <= startOffset) continue;
+      const continuesRight = checkOut > windowEnd;
+
+      // endOffset lands exactly on the checkout day's own column line —
+      // correct by hotel convention (checkout day isn't a night stayed),
+      // but on screen every bar then stops flush at the END of the
+      // PREVIOUS day's column, so a 3-night stay reads as if it ends a
+      // day early instead of reaching its actual checkout date. Nudging
+      // the visual edge half a column further, into the checkout day
+      // itself, makes the bar visibly reach that date (the guest is
+      // still there part of that day) without claiming the full night —
+      // real hotel tape charts shade checkout day the same way, so a
+      // same-day back-to-back booking in this room still reads right,
+      // with the new arrival's bar starting in the other half of that
+      // column. Skipped when the stay is already cut off at the window
+      // edge (continuesRight) — nothing to nudge into there — and capped
+      // at WINDOW_DAYS so it never draws past the grid itself.
+      const endOffsetVisual = continuesRight ? endOffset : Math.min(endOffset + 0.5, WINDOW_DAYS);
 
       for (const roomNumber of getRoomNumbers(res)) {
         if (!(roomNumber in map)) continue; // reservation references a room not currently in the room list
@@ -367,9 +388,9 @@ export default function TapeChartScreen() {
           reservation: res,
           roomNumber,
           left: startOffset * dayWidth,
-          width: (endOffset - startOffset) * dayWidth,
+          width: (endOffsetVisual - startOffset) * dayWidth,
           continuesLeft: checkIn < windowStart,
-          continuesRight: checkOut > windowEnd,
+          continuesRight,
         });
       }
     }

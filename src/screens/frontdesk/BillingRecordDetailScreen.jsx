@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
-import { getBillingRecord, getReceiptsForFolio } from '../../utils/BillingService';
+import { getBillingRecord, getReceiptsForFolio, getRoomChargesForReservation } from '../../utils/BillingService';
 
 function formatDate(value) {
   if (!value) return '—';
@@ -57,6 +57,7 @@ const STATUS_STYLE = {
 export default function BillingRecordDetailScreen({ folioId, onBack, onRecordPayment }) {
   const [folio, setFolio] = useState(null);
   const [receipts, setReceipts] = useState([]);
+  const [roomCharges, setRoomCharges] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -70,6 +71,10 @@ export default function BillingRecordDetailScreen({ folioId, onBack, onRecordPay
       ]);
       setFolio(folioData);
       setReceipts(receiptData);
+      // Room charges are keyed by reservation, not folio id, so this can
+      // only run once folioData (and its reservationRef) is in hand —
+      // can't fold it into the Promise.all above.
+      setRoomCharges(folioData?.reservationRef ? await getRoomChargesForReservation(folioData.reservationRef) : []);
     } catch (err) {
       console.error('Failed to load billing record:', err);
       setError('Could not load this billing record.');
@@ -147,6 +152,35 @@ export default function BillingRecordDetailScreen({ folioId, onBack, onRecordPay
         <DetailRow label="Total Amount Due" value={formatCurrency(folio.totalAmountDue)} emphasize />
         <DetailRow label="Amount Paid" value={formatCurrency(folio.amountPaid)} />
         <DetailRow label="Remaining Balance" value={formatCurrency(folio.remainingBalance)} emphasize />
+      </View>
+
+      {/* Room charges — F&B (or other) charges posted straight to this
+          stay via "Charge to Room", separate from Payment History below
+          (that's money actually collected; this is money added to what's
+          owed). Answers "what did they order" / "why did my balance go
+          up" without staff having to go ask F&B. See
+          getRoomChargesForReservation() in BillingService.js. */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Room Charges</Text>
+        {roomCharges.length === 0 ? (
+          <Text style={styles.emptyText}>No charges added to this room.</Text>
+        ) : (
+          roomCharges.map((c) => (
+            <View key={c.id} style={styles.receiptRow}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.roomChargeNoteRow}>
+                  <Ionicons name="restaurant-outline" size={12} color={colors.textMuted} />
+                  <Text style={styles.receiptNumber}>{c.note || 'Room charge'}</Text>
+                </View>
+                <Text style={styles.receiptMeta}>
+                  {formatDate(c.timestamp)}
+                  {c.staffName ? ` • ${c.staffName}` : ''}
+                </Text>
+              </View>
+              <Text style={styles.receiptAmount}>{formatCurrency(c.amount)}</Text>
+            </View>
+          ))
+        )}
       </View>
 
       {/* Payment history for this folio */}
@@ -254,6 +288,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  roomChargeNoteRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   receiptNumber: { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.text },
   receiptMeta: { fontFamily: fonts.body, fontSize: 11, color: colors.textMuted, marginTop: 2 },
   receiptAmount: { fontFamily: fonts.headingSemiBold, fontSize: 14, color: colors.text },

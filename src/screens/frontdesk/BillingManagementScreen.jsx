@@ -4,15 +4,18 @@ import { Ionicons } from '@expo/vector-icons';
 import BillingRecordsScreen from './BillingRecordsScreen';
 import PaymentsScreen from './PaymentsScreen';
 import ReceiptsScreen from './ReceiptsScreen';
+import OutstandingBalancesScreen from './OutstandingBalancesScreen';
+import TransactionHistoryScreen from './TransactionHistoryScreen';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
 // Every possible Billing Management sub-screen. Which show up as tabs is
-// controlled by the `tabKeys` prop — Admin's fd:billing:* sidebar list has
-// always had 2 extra entries (Outstanding Balances, Transaction History)
-// that Front Desk's own sidebar never listed and that were never wired to
-// a real screen (they fell through to the Shell's placeholder). Kept as
-// pre-existing "coming soon" tabs here rather than quietly dropped, so
-// nothing that was reachable before becomes unreachable.
+// controlled by the `tabKeys` prop — Admin's fd:billing:* sidebar list
+// originally had 2 extra entries (Outstanding Balances, Transaction
+// History) that Front Desk's own sidebar never listed and that were never
+// wired to a real screen. Both are now real screens, and both are now in
+// Front Desk's tabKeys too (FrontDeskShell.jsx) — Outstanding Balances
+// first, Transaction History right after it once Front Desk staff asked
+// where it was.
 const ALL_TABS = [
   { key: 'records', label: 'Billing Records', icon: 'document-text-outline' },
   { key: 'payments', label: 'Payments', icon: 'cash-outline' },
@@ -65,18 +68,8 @@ export default function BillingManagementScreen({ section = 'records', tabKeys, 
       {activeTab === 'records' && <BillingRecordsScreen onSelectRecord={onSelectRecord} />}
       {activeTab === 'payments' && <PaymentsScreen staffUid={staffUid} staffName={staffName} />}
       {activeTab === 'receipts' && <ReceiptsScreen />}
-      {activeTab === 'outstanding' && <ComingSoonPanel label="Outstanding Balances" />}
-      {activeTab === 'transactions' && <ComingSoonPanel label="Transaction History" />}
-    </View>
-  );
-}
-
-function ComingSoonPanel({ label }) {
-  return (
-    <View style={styles.centerWrap}>
-      <Text style={styles.comingSoonIcon}>🚧</Text>
-      <Text style={styles.comingSoonTitle}>Coming soon</Text>
-      <Text style={styles.comingSoonSubtitle}>The "{label}" section hasn't been built yet.</Text>
+      {activeTab === 'outstanding' && <OutstandingBalancesScreen onSelectRecord={onSelectRecord} />}
+      {activeTab === 'transactions' && <TransactionHistoryScreen />}
     </View>
   );
 }
@@ -155,9 +148,4 @@ const styles = StyleSheet.create({
   tabBtnTextHovered: {
     color: colors.primary,
   },
-
-  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
-  comingSoonIcon: { fontSize: 40, marginBottom: spacing.md },
-  comingSoonTitle: { fontSize: 18, fontFamily: fonts.headingBold, color: colors.text, marginBottom: spacing.xs },
-  comingSoonSubtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, textAlign: 'center' },
 });

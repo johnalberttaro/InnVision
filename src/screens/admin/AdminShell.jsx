@@ -26,6 +26,20 @@ import { colors, spacing, fonts } from '../../utils/portalTheme';
 
 const WIDE_BREAKPOINT = 1024;
 
+// Where DashboardNavbar's notification panel sends you for each event
+// type, in Admin's own 'fd:*' activeKey scheme (Front Desk uses a
+// different one — see FrontDeskShell.jsx's own copy of this map). No
+// 'foodorder' entry: Admin has never had a Kitchen/Food Orders screen —
+// it's not in AdminSidebar.jsx's Front Desk Operations section, so
+// there'd be nowhere to send that tap. NOTIFICATION_TYPES below leaves
+// that source out of the panel entirely rather than showing a row with
+// no destination.
+const NOTIFICATION_ROUTES = {
+  reservation: 'fd:reservations:all',
+  roomcharge: 'fd:billing:transactions',
+};
+const NOTIFICATION_TYPES = ['reservation', 'roomcharge'];
+
 /**
  * AdminShell — top-level shell for the Admin Portal (superadmin role).
  *
@@ -116,7 +130,9 @@ export default function AdminShell({ onLoggedOut, adminName }) {
           title="InnVision Admin"
           isWide={isWide}
           onMenuPress={() => setMobileSidebarOpen(true)}
-          onInquiriesPress={() => handleNavigate('fd:guests:inquiries')}
+          staffUid={staffUid}
+          notificationTypes={NOTIFICATION_TYPES}
+          onNotificationNavigate={(type) => handleNavigate(NOTIFICATION_ROUTES[type])}
         />
 
         <View style={styles.screenContent}>
@@ -226,10 +242,14 @@ function renderActiveScreen(props) {
   if (activeKey.startsWith('fd:guests:')) {
     // Admin's own sidebar only ever listed Profiles/Records/Special
     // Requests here (never Ratings — that gap predates this refactor).
-    // Inquiries isn't in the tab list either, but the top navbar's
-    // inquiries shortcut still lands on 'fd:guests:inquiries' directly,
-    // and GuestManagementScreen renders that content regardless of which
-    // tabs are visible, so it keeps working exactly as before.
+    // Inquiries isn't in the tab list either. It used to still be
+    // reachable via the top navbar's inquiries shortcut landing on
+    // 'fd:guests:inquiries' directly — that shortcut is gone now
+    // (DashboardNavbar's bell no longer targets Inquiries at all), so
+    // this route has no way to be reached from Admin's UI any more.
+    // GuestManagementScreen would still render it correctly if
+    // something set activeKey here — add 'inquiries' to tabKeys below
+    // if Admin needs it back.
     return (
       <GuestManagementScreen
         section={activeKey.split(':')[2]}

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import FrontDeskSidebar from './FrontDeskSidebar';
 import FrontDeskDashboardScreen from './FrontDeskDashboardScreen';
@@ -18,6 +18,17 @@ import { supabase } from '../../services/supabase';
 import { colors, spacing, fonts } from '../../utils/portalTheme';
 
 const WIDE_BREAKPOINT = 1024;
+
+// Where DashboardNavbar's notification panel sends you for each event
+// type, in THIS shell's own activeKey scheme (Admin uses a different
+// one — 'fd:reservations:all' etc. — see its own copy of this map in
+// AdminShell.jsx). All three types are available here since Front Desk
+// has a real screen for each of them.
+const NOTIFICATION_ROUTES = {
+  reservation: 'reservations:all',
+  foodorder: 'foodorders',
+  roomcharge: 'billing:transactions',
+};
 
 export default function FrontDeskShell({ onLoggedOut, staffName, staffRole, staffUid }) {
   const [activeKey, setActiveKey] = useState('dashboard');
@@ -165,7 +176,8 @@ export default function FrontDeskShell({ onLoggedOut, staffName, staffRole, staf
           title="InnVision Front Desk"
           isWide={isWide}
           onMenuPress={() => setMobileSidebarOpen(true)}
-          onInquiriesPress={() => handleNavigate('guests:inquiries')}
+          staffUid={staffUid}
+          onNotificationNavigate={(type) => handleNavigate(NOTIFICATION_ROUTES[type])}
         />
 
         <View style={styles.screenContent}>
@@ -302,7 +314,7 @@ function renderActiveScreen(
     return (
       <BillingManagementScreen
         section={activeKey.split(':')[1]}
-        tabKeys={['records', 'payments', 'receipts']}
+        tabKeys={['records', 'payments', 'receipts', 'outstanding', 'transactions']}
         onSelectRecord={openFolioDetail}
         staffUid={staffUid}
         staffName={staffName}
