@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
+import { chargeToRoom } from '../../utils/BillingService';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
 function escapeHtml(str) {
@@ -170,7 +171,7 @@ function buildBillHTML(order) {
           <div class="label">Total Due</div>
           <div class="amount-value">${formatCurrency(order.totalAmount)}</div>
         </div>
-        <div class="note">Please pay by cash or scan the e-wallet QR code provided by the delivering staff member.</div>
+        <div class="note">Please pay by cash, scan the e-wallet QR code provided by the delivering staff member, or ask to have this charged to your room.</div>
       </body>
     </html>
   `;
@@ -249,10 +250,11 @@ function HoverButton({ style, hoverStyle, children, ...props }) {
  *                 (picks a staff member from the F&B roster;
  *                  assigned_to / assigned_to_name get set)
  *   out_for_delivery  →  [Mark Delivered]  →  delivered
- *                 (records HOW it was paid — cash or e-wallet — since
- *                  payment is collected on delivery, not through the
- *                  app; see OrderFoodScreen.jsx's own header comment
- *                  for why there's no in-app payment step at all)
+ *                 (records HOW it was paid — cash, e-wallet, or charged
+ *                  to the room — since payment is decided on delivery,
+ *                  not through the app; see OrderFoodScreen.jsx's own
+ *                  header comment for why there's no in-app payment
+ *                  step at all)
  *
  * LAYOUT: a 3-column Kanban board (To Prepare / Preparing / Out for
  * Delivery) — lets kitchen staff see every stage of the workflow at
@@ -366,6 +368,7 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
     id: row.id,
     orderNumber: row.order_number,
     userId: row.user_id,
+    reservationId: row.reservation_id,
     guestName: row.guest_name,
     roomNumber: row.room_number,
     status: row.status,
@@ -377,6 +380,7 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
     createdAt: row.created_at,
     escalatedAt: row.escalated_at,
     guestPhotoUrl: null, // filled in by the guest-photo lookup pass below
+    reservationStatus: null, // filled in by the reservation-status lookup pass below; only 'checked-in' unlocks Charge to Room
     items: (row.food_order_items || []).map((i) => ({
       id: i.id,
       name: i.item_name,
@@ -445,6 +449,25 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
           const photoById = Object.fromEntries(profileRows.map((p) => [p.id, p.photo_url]));
           setOrders((prev) => prev.map((o) => (
             o.userId && photoById[o.userId] ? { ...o, guestPhotoUrl: photoById[o.userId] } : o
+          )));
+        }
+      }
+
+      // Same separate-lookup pattern as guest photos above — feeds the
+      // "still checked-in" guard on Charge to Room. A plain lookup
+      // rather than a `reservations(status)` embed, since that
+      // relationship isn't confirmed registered with PostgREST and this
+      // feeds a billing-adjacent action — not worth guessing on.
+      const reservationIds = [...new Set(mapped.map((o) => o.reservationId).filter(Boolean))];
+      if (reservationIds.length > 0) {
+        const { data: reservationRows, error: reservationError } = await supabase
+          .from('reservations')
+          .select('id, status')
+          .in('id', reservationIds);
+        if (!reservationError && reservationRows) {
+          const statusById = Object.fromEntries(reservationRows.map((r) => [r.id, r.status]));
+          setOrders((prev) => prev.map((o) => (
+            o.reservationId && statusById[o.reservationId] ? { ...o, reservationStatus: statusById[o.reservationId] } : o
           )));
         }
       }
@@ -574,6 +597,58 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
     setDeliverSaving(true);
     setDeliverError('');
     try {
+      const deliveredAt = new Date().toISOString();
+
+      // Charge to Room: no money changes hands at the door at all — the
+      // order's total gets posted straight onto the guest's existing
+      // room folio instead. Only available while the reservation is
+      // still checked-in; add_room_charge() re-checks that itself too
+      // (never trust the UI alone for something that touches billing).
+      if (paymentMethod === 'charge_to_room') {
+        if (deliverTarget.reservationStatus !== 'checked-in') {
+          throw new Error('This guest is no longer checked in — Charge to Room is not available.');
+        }
+
+        const { data: folioRow, error: folioError } = await supabase
+          .from('billing_records')
+          .select('id')
+          .eq('reservation_id', deliverTarget.reservationId)
+          .maybeSingle();
+        if (folioError) throw folioError;
+        if (!folioRow) throw new Error('No billing record found for this guest — cannot charge to room.');
+
+        // The actual charge — the one step that moves money/debt, so it
+        // happens before food_orders is touched at all. If this
+        // succeeds but the update below fails, the charge still stands;
+        // don't press this button again for the same order, or it'll
+        // charge the room a second time.
+        await chargeToRoom({
+          folioId: folioRow.id,
+          amount: deliverTarget.totalAmount,
+          note: `F&B Order #${deliverTarget.orderNumber ?? deliverTarget.id} — Room ${deliverTarget.roomNumber}`,
+          processedByUid: staffUid,
+          processedByName: staffName,
+        });
+
+        const { error } = await supabase
+          .from('food_orders')
+          .update({ status: 'delivered', payment_status: 'charged_to_room', payment_method: 'charge_to_room', delivered_at: deliveredAt })
+          .eq('id', deliverTarget.id);
+        if (error) {
+          // The charge already went through by this point — say so
+          // plainly rather than letting it look like nothing happened.
+          throw new Error(`The room was charged, but the order status couldn't be updated (${error.message}). Refresh and check manually — don't charge this order again.`);
+        }
+
+        setOrders((prev) => prev.map((o) => (
+          o.id === deliverTarget.id
+            ? { ...o, status: 'delivered', paymentStatus: 'charged_to_room', paymentMethod: 'charge_to_room', deliveredAt }
+            : o
+        )));
+        setDeliverTarget(null);
+        return;
+      }
+
       // Cash is confirmed on the spot — whoever delivered it physically
       // holds the money, nothing left to verify. E-wallet money lands in
       // the hotel's own account, not something F&B can confirm cleared
@@ -584,7 +659,6 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
       // orders land at 'pending_confirmation' until Front Desk clears
       // them (see FoodOrdersScreen.jsx's "Payment Pending" tab).
       const paymentStatus = paymentMethod === 'cash' ? 'paid' : 'pending_confirmation';
-      const deliveredAt = new Date().toISOString();
       // delivered_at feeds the F&B dashboard's "average time from
       // escalated to delivered" stat — see 011_food_service_status_timestamps.sql
       const { error } = await supabase
@@ -959,7 +1033,25 @@ export default function KitchenOrdersScreen({ staffUid, staffName }) {
                 <Ionicons name="qr-code-outline" size={20} color={colors.primary} />
                 <Text style={styles.paymentBtnText}>E-wallet</Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.paymentBtn, deliverTarget?.reservationStatus !== 'checked-in' && styles.paymentBtnDisabled]}
+                onPress={() => submitDelivered('charge_to_room')}
+                disabled={deliverSaving || deliverTarget?.reservationStatus !== 'checked-in'}
+                activeOpacity={0.85}
+              >
+                <Ionicons
+                  name="bed-outline"
+                  size={20}
+                  color={deliverTarget?.reservationStatus !== 'checked-in' ? colors.disabled : colors.primary}
+                />
+                <Text style={[styles.paymentBtnText, deliverTarget?.reservationStatus !== 'checked-in' && styles.paymentBtnTextDisabled]}>
+                  Charge to Room
+                </Text>
+              </TouchableOpacity>
             </View>
+            {!!deliverTarget && deliverTarget.reservationStatus !== 'checked-in' && (
+              <Text style={styles.chargeToRoomHint}>Charge to Room isn't available — this guest is no longer checked in.</Text>
+            )}
 
             {deliverSaving && <ActivityIndicator color={colors.primary} size="small" style={{ marginTop: spacing.sm }} />}
             {!!deliverError && <Text style={styles.deliverErrorText}>{deliverError}</Text>}
@@ -1177,12 +1269,15 @@ const styles = StyleSheet.create({
 
   deliverTotal: { fontSize: 24, fontFamily: fonts.headingExtraBold, color: colors.primary, textAlign: 'center', marginBottom: spacing.md },
   deliverErrorText: { fontSize: 12, fontFamily: fonts.body, color: '#B3261E', textAlign: 'center', marginTop: spacing.sm },
-  paymentBtnRow: { flexDirection: 'row', gap: spacing.md },
+  paymentBtnRow: { flexDirection: 'row', gap: spacing.sm },
   paymentBtn: {
     flex: 1, alignItems: 'center', gap: 6,
     borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, paddingVertical: spacing.md,
   },
-  paymentBtnText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary },
+  paymentBtnText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.primary, textAlign: 'center' },
+  paymentBtnDisabled: { opacity: 0.45, backgroundColor: colors.cardAlt },
+  paymentBtnTextDisabled: { color: colors.disabled },
+  chargeToRoomHint: { fontSize: 11.5, fontFamily: fonts.body, color: colors.textMuted, textAlign: 'center', marginTop: spacing.xs, fontStyle: 'italic' },
 
   modalActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg },
   modalCancelBtn: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 999, paddingVertical: spacing.sm + 2, alignItems: 'center', marginTop: spacing.md },

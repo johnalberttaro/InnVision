@@ -257,6 +257,52 @@ export async function recordPayment({
 }
 
 // ---------------------------------------------------------------------------
+// Room Charges (e.g. F&B orders charged to room at delivery)
+// ---------------------------------------------------------------------------
+
+/**
+ * Posts a charge directly onto an existing folio — no payment collected,
+ * the amount just becomes part of what the guest owes on the room bill.
+ * Used by "Charge to Room" at F&B delivery time (KitchenOrdersScreen.jsx).
+ *
+ * Can legitimately flip a folio's billingStatus back from 'paid' to
+ * 'partially_paid' if the room was already settled — add_room_charge()
+ * re-derives billingStatus from the numbers every time, the same way
+ * record_payment() does, so this isn't a special case in the SQL.
+ *
+ * Atomic via the add_room_charge() Postgres function. Only callable by
+ * F&B or admin staff — enforced inside that function itself, not just by
+ * hiding the button in the UI.
+ */
+export async function chargeToRoom({
+  folioId,
+  amount,
+  note,
+  processedByUid,
+  processedByName,
+}) {
+  if (amount <= 0) {
+    throw new Error('Charge amount must be greater than zero.');
+  }
+
+  const { data, error } = await supabase.rpc('add_room_charge', {
+    p_folio_id: folioId,
+    p_amount: amount,
+    p_note: note || null,
+    p_processed_by: processedByUid || null,
+    p_processed_by_name: processedByName,
+  });
+  if (error) throw error;
+
+  return {
+    transactionId: data.transactionId,
+    newTotalAmountDue: data.newTotalAmountDue,
+    newRemainingBalance: data.newRemainingBalance,
+    newStatus: data.newStatus,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Receipts
 // ---------------------------------------------------------------------------
 
