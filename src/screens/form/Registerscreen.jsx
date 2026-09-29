@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
@@ -83,8 +83,7 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
       // Create the Supabase Auth user. first_name/last_name/phone/display_name
       // go in as user metadata — the on_auth_user_created trigger (see
       // innvision_schema.sql) reads them and writes the matching `profiles`
-      // row automatically. No separate setDoc(doc(db,'guests',user.uid), ...)
-      // step needed the way Firestore required — that manual write is gone.
+      // row automatically.
       const { data, error: signUpError } = await supabase.auth.signUp({
         email: form.email.trim(),
         password: form.password,
@@ -98,6 +97,41 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
         },
       });
       if (signUpError) throw signUpError;
+
+      // DIAGNOSTIC, RESOLVED: the auth trigger above only ever writes
+      // `profiles` — it was wrongly assumed that made a separate `guests`
+      // row unnecessary (an old comment here said as much), but `guests`
+      // is its own table that Front Desk's Guest Profiles / Guest Records
+      // screens actually read from. Without this insert, every
+      // self-registered account got a profiles row but never showed up
+      // as a guest anywhere in the app — confirmed by comparing
+      // profiles(role='guest') against guests.user_id in Supabase: far
+      // more of the former than the latter. guests_insert_own (RLS:
+      // user_id = auth.uid()) already exists for exactly this and was
+      // simply never called. Mirrors the same insert shape
+      // GuestRecordsScreen.jsx/WalkInScreen.jsx already use for
+      // staff-entered guests, with source/created_by marking this one as
+      // self-service instead of staff-entered. Non-blocking on failure,
+      // same reasoning as WalkInScreen.jsx's own guests insert: the auth
+      // account and profile already exist at this point, so a hiccup
+      // here shouldn't strand someone mid-signup over a secondary record
+      // they can't do anything about.
+      if (data.user) {
+        try {
+          const { error: guestInsertError } = await supabase.from('guests').insert({
+            user_id: data.user.id,
+            first_name: form.firstName.trim(),
+            last_name: form.lastName.trim(),
+            email: form.email.trim(),
+            phone: form.phone.trim(),
+            source: 'App Sign-Up',
+            created_by: 'self',
+          });
+          if (guestInsertError) throw guestInsertError;
+        } catch (guestErr) {
+          console.warn('Failed to create guest record (registration still proceeding):', guestErr);
+        }
+      }
 
       // NOTE: if email confirmation is enabled in Supabase Auth settings
       // (the default), `data.session` is null here — the user exists but

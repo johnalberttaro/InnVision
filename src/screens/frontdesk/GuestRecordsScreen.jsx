@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -73,6 +73,14 @@ import Pagination from '../../components/shared/Pagination';
  * simply no longer join to a guest card here. Conversely, deleting a
  * reservation does NOT remove the guest record — staff must delete the
  * guest separately, which is what this button is for.
+ *
+ * DELETE SCOPE: the delete button only appears on walk-in cards (no
+ * linkedUid). A registered guest's `guests` row is also their Guest
+ * Profile, so deleting THAT is done from GuestProfileTableScreen.jsx
+ * instead — one action, one deliberate place, rather than this screen
+ * silently also wiping someone's profile. Either screen's delete hits
+ * the exact same `guests` row and never touches `profiles`/`auth.users`
+ * — the guest's login is never affected by either one.
  *
  * Props:
  *  - onSelectGuest: (guest) => void
@@ -168,6 +176,9 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  // UI-only — drives the search bar's focus highlight (border + shadow)
+  // below. Doesn't touch search behavior at all.
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [form, setForm] = useState(emptyForm());
@@ -392,6 +403,14 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
     try {
       const { error } = await supabase.from('guests').delete().eq('id', guestId);
       if (error) throw error;
+      // Drop it from local state immediately instead of waiting on the
+      // postgres_changes round-trip below — that subscription depends on
+      // `guests` being in the supabase_realtime publication, and either
+      // way there's no reason to make a successful delete wait on a
+      // network round-trip to show up. The realtime subscription is
+      // still what keeps this screen in sync with deletes/adds made from
+      // OTHER sessions or tabs.
+      setGuests((prev) => prev.filter((g) => g.id !== guestId));
     } catch (err) {
       console.error('Failed to delete guest:', err);
       notifyDialog('Error', 'Could not delete this guest. Please try again.');
@@ -401,6 +420,12 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
   };
 
   const handleDeleteGuest = (guest) => {
+    // Defensive — the delete button itself is already hidden for any
+    // registered guest (see renderGuestCard), but this keeps the rule
+    // enforced even if something else ever calls this directly: a
+    // registered guest's record is deleted from Guest Profiles instead.
+    if (guest.linkedUid) return;
+
     const fullName = `${guest.firstName || ''} ${guest.lastName || ''}`.trim() || 'this guest';
     const hasActiveStay =
       guest._currentReservation && ACTIVE_RESERVATION_STATUSES.includes(guest._currentReservation.status);
@@ -460,25 +485,40 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
             </View>
           </View>
 
-          {/* Delete button — stops propagation so it doesn't also
-              trigger the card's onSelectGuest press. */}
-          <TouchableOpacity
-            style={styles.deleteBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            disabled={isDeleting}
-            onPress={(e) => {
-              e.stopPropagation?.();
-              handleDeleteGuest(item);
-            }}
-          >
-            {isDeleting ? (
-              <ActivityIndicator size="small" color={colors.danger} />
-            ) : (
-              <Ionicons name="trash-outline" size={15} color={colors.danger} />
-            )}
-          </TouchableOpacity>
+          {/* Delete button — walk-ins only (no linkedUid). A registered
+              guest's record is also their Guest Profile, and deleting it
+              from here used to make them vanish from Guest Profiles too
+              with no separate confirmation step scoped to that — the
+              same action was doing two different-weight things under
+              one button. Now: Guest Records only ever deletes the
+              walk-in card it's actually showing you, and a registered
+              guest's own delete button lives on Guest Profiles instead
+              (GuestProfileTableScreen.jsx), where deleting them from
+              their account view is the explicit, deliberate action.
+              Bordered ring + slightly larger hit area so it reads as its
+              own button instead of blending into the trailing chevron
+              next to it. Stops propagation so it doesn't also trigger
+              the card's onSelectGuest press. */}
+          {!item.linkedUid && (
+            <TouchableOpacity
+              style={styles.deleteBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.6}
+              disabled={isDeleting}
+              onPress={(e) => {
+                e.stopPropagation?.();
+                handleDeleteGuest(item);
+              }}
+            >
+              {isDeleting ? (
+                <ActivityIndicator size="small" color={colors.danger} />
+              ) : (
+                <Ionicons name="trash-outline" size={16} color={colors.danger} />
+              )}
+            </TouchableOpacity>
+          )}
 
-          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} style={styles.trailingChevron} />
         </View>
 
         {/* ── Current Reservation Information ───────────────── */}
@@ -564,17 +604,19 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
       </View>
 
       {/* ── Search ─────────────────────────────────────────────── */}
-      <View style={styles.searchBar}>
-        <Ionicons name="search-outline" size={16} color={colors.textMuted} />
+      <View style={[styles.searchBar, isSearchFocused && styles.searchBarFocused]}>
+        <Ionicons name="search-outline" size={16} color={isSearchFocused ? colors.primary : colors.textMuted} />
         <TextInput
           style={styles.searchInput}
           value={searchText}
           onChangeText={setSearchText}
+          onFocus={() => setIsSearchFocused(true)}
+          onBlur={() => setIsSearchFocused(false)}
           placeholder="Search by name, email, or phone"
           placeholderTextColor={colors.disabled}
         />
         {searchText.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchText('')}>
+          <TouchableOpacity onPress={() => setSearchText('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="close-circle" size={16} color={colors.textMuted} />
           </TouchableOpacity>
         )}
@@ -587,11 +629,32 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
         </View>
       ) : filteredGuests.length === 0 ? (
         <View style={styles.centerWrap}>
+          <View style={styles.emptyIconWrap}>
+            <Ionicons
+              name={guests.length === 0 ? 'people-outline' : 'search-outline'}
+              size={26}
+              color={colors.textMuted}
+            />
+          </View>
           <Text style={styles.emptyText}>
             {guests.length === 0
               ? 'No guests yet. Add your first guest to get started.'
               : 'No guests match your search.'}
           </Text>
+          {guests.length === 0 ? (
+            <TouchableOpacity
+              style={styles.emptyCta}
+              onPress={() => setShowAddModal(true)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="add" size={14} color={colors.white} />
+              <Text style={styles.emptyCtaText}>Add Guest</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity onPress={() => setSearchText('')} activeOpacity={0.7}>
+              <Text style={styles.emptyClearLink}>Clear search</Text>
+            </TouchableOpacity>
+          )}
         </View>
       ) : (
         <FlatList
@@ -828,13 +891,52 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  // Focus highlight — same primary-tinted shadow treatment the rest of
+  // the portal uses for "active" state, just applied here so the search
+  // bar gives visible feedback instead of looking identical whether or
+  // not it's actually focused.
+  searchBarFocused: {
+    borderColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
   searchInput: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text },
 
   centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl, backgroundColor: colors.background },
+  emptyIconWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.cardAlt,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
   emptyText: { fontSize: 14, fontFamily: fonts.body, color: colors.textMuted, textAlign: 'center' },
+  emptyCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    marginTop: spacing.md,
+  },
+  emptyCtaText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.white },
+  emptyClearLink: {
+    fontSize: 12,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.primary,
+    marginTop: spacing.md,
+    textDecorationLine: 'underline',
+  },
 
   listContent: { padding: spacing.lg, paddingBottom: spacing.sm },
-  separator: { height: 8 },
+  separator: { height: 10 },
 
   card: {
     backgroundColor: colors.white,
@@ -899,20 +1001,32 @@ const styles = StyleSheet.create({
   contactText: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, flexShrink: 1 },
   contactDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: colors.disabled, marginHorizontal: 4 },
 
+  // Bumped 28→32 with a visible border ring added (rgba of colors.danger
+  // — portalTheme has no separate "tinted border" token, so it's derived
+  // here rather than inventing a new global one for a single use). Purely
+  // a background dot at the old size read as decorative, not tappable;
+  // the ring is what makes it register as its own button next to the
+  // chevron beside it.
   deleteBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#FDECEA',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.dangerBg,
+    borderWidth: 1,
+    borderColor: 'rgba(179, 38, 30, 0.3)',
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
   },
+  // A little extra breathing room beyond identityRow's own `gap` so the
+  // chevron doesn't read as part of the same cluster as the delete
+  // button right next to it.
+  trailingChevron: { marginLeft: 4 },
 
   reservationBox: {
     backgroundColor: colors.cardAlt,
     borderRadius: radius.sm,
-    padding: 6,
+    padding: 8,
     marginTop: spacing.sm,
   },
   sectionLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 2 },
@@ -947,7 +1061,7 @@ const styles = StyleSheet.create({
   statDivider: { width: 1, height: 28, backgroundColor: colors.border, marginHorizontal: spacing.md },
   statItem: { flex: 1, alignItems: 'center' },
   statIcon: { marginBottom: 2 },
-  statValue: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.text, textAlign: 'center' },
+  statValue: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.text, textAlign: 'center' },
   statLabel: { fontSize: 9, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1, textAlign: 'center' },
 
   /* Modal */

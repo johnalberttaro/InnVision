@@ -8,10 +8,37 @@ import {
   StyleSheet,
   ActivityIndicator,
   Image,
+  Platform,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
+
+// ── Web-safe confirm helper ─────────────────────────────────────────────
+// Alert.alert is a no-op on react-native-web. Same helper GuestRecordsScreen
+// uses for its own delete confirm (worth extracting into a shared
+// utils/webDialogs.js at some point rather than a third copy).
+function confirmAction(title, message, onConfirm) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) {
+      onConfirm();
+    }
+    return;
+  }
+  Alert.alert(title, message, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Delete', style: 'destructive', onPress: onConfirm },
+  ]);
+}
+
+function notifyDialog(title, message) {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}
 
 /**
  * GuestProfilesTableScreen — "Guest Profiles" sidebar section.
@@ -39,6 +66,16 @@ import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
  * GuestRecordsScreen — so it can navigate into the existing
  * GuestProfileScreen detail view for that guest.
  *
+ * DELETE: this is now the ONLY screen that can delete a registered
+ * guest's record (GuestRecordsScreen's delete is scoped to walk-ins —
+ * guests with no linkedUid — for exactly this reason). Deleting here
+ * removes the same single `guests` row Guest Records would have, and
+ * for the same reason: it's the guest DIRECTORY entry, not the
+ * account. The guest's actual login (`profiles` / `auth.users`) is a
+ * separate table this never touches, so they keep the ability to sign
+ * in — they'd just no longer show up in Guest Profiles or Guest
+ * Records unless someone re-adds them.
+ *
  * Props:
  *  - onSelectGuest: (guest) => void
  */
@@ -46,6 +83,10 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
   const [guests, setGuests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
+  // Track which guest id is currently being deleted so we can show a
+  // per-row spinner and disable that row's delete button without
+  // blocking the rest of the table — same pattern as GuestRecordsScreen.
+  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
     const loadGuests = async () => {
@@ -60,11 +101,18 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
       // uploaded photo could ever show here. Now prefers the real
       // profiles.photo_url, falling back to guests.photo_url only if
       // that's ever populated some other way.
+      // Sorted by first_name (then last_name as a tiebreaker for two
+      // guests sharing a first name) — the Name column displays
+      // "FirstName LastName", so this is the order that actually reads
+      // as alphabetical when scanning down the table. Sorting by
+      // last_name alone (the old order) put rows in a sequence that was
+      // technically alphabetical but not by the name each row leads with.
       const { data, error } = await supabase
         .from('guests')
         .select('*, profiles(active, photo_url)')
         .not('user_id', 'is', null)
-        .order('last_name');
+        .order('first_name', { ascending: true })
+        .order('last_name', { ascending: true });
       if (error) {
         console.error('Failed to load guests:', error);
         setLoading(false);
@@ -123,13 +171,46 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
 
   const isActive = (g) => g.active !== false;
 
+  // ── Delete guest ────────────────────────────────────────────────────
+  // Removes only the `guests` row — same single-table delete
+  // GuestRecordsScreen uses for walk-ins, just reached from here now for
+  // registered guests specifically. Does not touch `profiles` or
+  // `auth.users`, so the guest's login is untouched; they simply stop
+  // appearing in Guest Profiles / Guest Records until someone re-adds
+  // them (self-registration only creates this row on sign-up, not login,
+  // so it doesn't come back on its own).
+  const performDeleteGuest = async (guestId) => {
+    setDeletingId(guestId);
+    try {
+      const { error } = await supabase.from('guests').delete().eq('id', guestId);
+      if (error) throw error;
+      // Drop it from local state immediately rather than waiting on the
+      // postgres_changes round-trip — see GuestRecordsScreen.jsx for the
+      // same fix and why it's needed regardless of realtime config.
+      setGuests((prev) => prev.filter((g) => g.id !== guestId));
+    } catch (err) {
+      console.error('Failed to delete guest:', err);
+      notifyDialog('Error', 'Could not delete this guest. Please try again.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleDeleteGuest = (guest) => {
+    const fullName = `${guest.firstName || ''} ${guest.lastName || ''}`.trim() || 'this guest';
+    const message = `This removes ${fullName} from Guest Profiles and Guest Records. It does not delete their login or reservation history.`;
+    confirmAction('Delete Guest', message, () => performDeleteGuest(guest.id));
+  };
+
   const renderRow = ({ item, index }) => {
     const active = isActive(item);
+    const isDeleting = deletingId === item.id;
     return (
       <TouchableOpacity
         style={[styles.row, index % 2 === 1 && styles.rowAlt]}
         activeOpacity={0.7}
         onPress={() => onSelectGuest && onSelectGuest(item)}
+        disabled={isDeleting}
       >
         {/* Name (with avatar) */}
         <View style={[styles.cell, styles.nameCell]}>
@@ -163,6 +244,27 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
               {active ? 'Active' : 'Inactive'}
             </Text>
           </View>
+        </View>
+
+        {/* Delete — stops propagation so it doesn't also trigger the
+            row's onSelectGuest press. */}
+        <View style={[styles.cell, styles.actionCell]}>
+          <TouchableOpacity
+            style={styles.deleteBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            activeOpacity={0.6}
+            disabled={isDeleting}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              handleDeleteGuest(item);
+            }}
+          >
+            {isDeleting ? (
+              <ActivityIndicator size="small" color={colors.danger} />
+            ) : (
+              <Ionicons name="trash-outline" size={15} color={colors.danger} />
+            )}
+          </TouchableOpacity>
         </View>
 
         <Ionicons name="chevron-forward" size={16} color={colors.textMuted} style={styles.chevron} />
@@ -220,6 +322,7 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
             <Text style={[styles.tableHeaderText, styles.emailCell]}>Email</Text>
             <Text style={[styles.tableHeaderText, styles.phoneCell]}>Contact Number</Text>
             <Text style={[styles.tableHeaderText, styles.statusCell]}>Status</Text>
+            <View style={styles.actionCell} />
             <View style={styles.chevron} />
           </View>
 
@@ -313,6 +416,21 @@ const styles = StyleSheet.create({
   emailCell: { flex: 2, minWidth: 0 },
   phoneCell: { flex: 1.4, minWidth: 0 },
   statusCell: { flex: 1, minWidth: 0 },
+  // Fixed-width, same idea as `chevron` below it — a delete icon doesn't
+  // need to grow with the row, just enough room to sit clear of Status.
+  actionCell: { width: 32, paddingRight: 0, alignItems: 'center' },
+  // Same bordered-ring treatment as GuestRecordsScreen's delete button,
+  // just a touch smaller to fit a table row's tighter vertical rhythm.
+  deleteBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.dangerBg,
+    borderWidth: 1,
+    borderColor: 'rgba(179, 38, 30, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
   avatarWrap: {
     width: 30,

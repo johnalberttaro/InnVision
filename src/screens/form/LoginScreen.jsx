@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
@@ -23,6 +23,10 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState('');
 
+  // Lets the Email field's Return key hand focus straight to Password
+  // (see onSubmitEditing below) instead of just dismissing the keyboard.
+  const passwordInputRef = useRef(null);
+
   // Smooth entrance whenever this screen mounts — e.g. navigating here
   // from Register/ForgotPassword feels like a continuation, not an
   // abrupt cut. Runs once on mount; each screen animates itself in
@@ -37,6 +41,11 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
   }, []);
 
   const handleLogin = async () => {
+    // Guards against a double-fire now that there are two ways in:
+    // clicking Log In (already disabled while loading) and pressing
+    // Enter in the Password field (submitEditing has no disabled prop
+    // of its own to lean on).
+    if (loading) return;
     if (!email.trim() || !password) {
       setError('Please enter your email and password.');
       return;
@@ -152,6 +161,9 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
                   autoCapitalize="none"
                   autoCorrect={false}
                   keyboardType="email-address"
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => passwordInputRef.current?.focus()}
                 />
               </View>
             </View>
@@ -162,6 +174,7 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
               <View style={[styles.inputWrap, passFocused && styles.inputWrapFocused]}>
                 <Ionicons name="lock-closed-outline" size={18} color={passFocused ? colors.primary : colors.textMuted} style={styles.inputIcon} />
                 <TextInput
+                  ref={passwordInputRef}
                   style={styles.input}
                   placeholder="Enter your password..."
                   placeholderTextColor={colors.disabled}
@@ -172,6 +185,8 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
                   secureTextEntry={!showPassword}
                   autoCapitalize="none"
                   autoCorrect={false}
+                  returnKeyType="done"
+                  onSubmitEditing={handleLogin}
                 />
                 <TouchableOpacity onPress={() => setShowPassword(p => !p)} style={styles.eyeBtn} activeOpacity={0.7}>
                   <Ionicons name={showPassword ? 'eye-outline' : 'eye-off-outline'} size={20} color={colors.textMuted} />
