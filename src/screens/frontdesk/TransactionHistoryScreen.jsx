@@ -62,7 +62,7 @@ import {
   View,
   Text,
   TextInput,
-  FlatList,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -344,7 +344,11 @@ export default function TransactionHistoryScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.containerContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
       <View style={styles.headerRow}>
         <View style={styles.headerText}>
           <Text style={styles.title}>Transaction History</Text>
@@ -480,15 +484,13 @@ export default function TransactionHistoryScreen() {
             : 'No transactions match the current search/filter.'}
         </Text>
       ) : (
-        <FlatList
-          data={pagedTransactions}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={{ paddingBottom: spacing.sm }}
-        />
+        <View style={{ paddingBottom: spacing.sm }}>
+          {pagedTransactions.map((item) => (
+            <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>
+          ))}
+        </View>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -496,7 +498,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  containerContent: {
     padding: spacing.lg,
+    flexGrow: 1,
   },
   headerRow: {
     flexDirection: 'row',
