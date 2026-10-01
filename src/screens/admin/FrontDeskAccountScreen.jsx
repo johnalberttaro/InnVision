@@ -88,6 +88,27 @@ import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
  * (same gap as FrontDeskStaffScreen.jsx's roster, fixed the same way).
  * Now shows the actual photo when one exists. Stays live automatically
  * via the existing realtime subscription on the profiles table below.
+ *
+ * REDESIGNED (this pass): visual refresh to match a reference layout —
+ * icon badges on the page header and each card header, leading icons
+ * inside the create-form inputs, required-field asterisks, a Filter
+ * control (Active / All — the list previously only ever queried
+ * active=true with no way to see removed accounts at all), and
+ * client-side pagination (10/25/50 per page) over the account list. A
+ * scoped local blue accent (BLUE/BLUE_TINT below) drives this screen's
+ * primary actions and badges; the rest of the admin portal stays on
+ * portalTheme's deliberately monochrome palette (see portalTheme.js) —
+ * the reference layout for this screen specifically called for a blue
+ * accent, so it's kept local to this file rather than changed globally.
+ *
+ * ROSTER REMOVED (this pass): the separate admin-facing "Front Desk
+ * Roster" screen/sidebar item (staff:frontdesk, FrontDeskStaffScreen.jsx)
+ * was a read-only duplicate of what this screen already manages, so it's
+ * gone — this screen is now the one place to see and manage every
+ * registered front desk account. The "Need to manage existing accounts?"
+ * card's button no longer navigates anywhere; it resets the Filter to
+ * "All accounts" and the per-page size high enough to show every
+ * registered account on one page, right here.
  */
 
 // Writes one row to staff_account_audit_log. Never throws — a logging
@@ -153,6 +174,54 @@ function formatDateLabel(value) {
 const EMPTY_FORM = { firstName: '', lastName: '', email: '', password: '', confirmPassword: '', phone: '' };
 const WIDE_BREAKPOINT = 1000;
 
+// Local accent for this screen's redesign only — see the REDESIGNED note
+// in the doc comment above for why this stays scoped to this file
+// instead of changing portalTheme.js's shared (deliberately monochrome)
+// tokens.
+const BLUE = '#2F6FED';
+const BLUE_TINT = '#EAF1FF';
+const AMBER = '#B45309';
+const AMBER_TINT = '#FEF3C7';
+
+// A small, reusable single-select list in a modal — used below for both
+// the account-status Filter and the per-page picker, so neither needed
+// its own bespoke popover/positioning logic. Matches this file's
+// existing modal conventions (plain backdrop View, no tap-outside-to-
+// close, since none of this screen's other modals do that either).
+function SimpleOptionsModal({ visible, onClose, title, options, selectedValue, onSelect }) {
+  return (
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.optionsModalCard}>
+          <Text style={styles.modalTitle}>{title}</Text>
+          {options.map((opt) => {
+            const active = selectedValue === opt.value;
+            return (
+              <TouchableOpacity
+                key={String(opt.value)}
+                style={styles.optionRow}
+                onPress={() => {
+                  onSelect(opt.value);
+                  onClose();
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.optionRadio, active && styles.optionRadioActive]}>
+                  {active && <View style={styles.optionRadioDot} />}
+                </View>
+                <Text style={styles.optionRowText}>{opt.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+          <TouchableOpacity style={styles.modalCancelButton} onPress={onClose}>
+            <Text style={styles.modalCancelText}>Close</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export default function FrontDeskAccountsScreen() {
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
@@ -175,6 +244,17 @@ export default function FrontDeskAccountsScreen() {
   const [pendingStaffRemoval, setPendingStaffRemoval] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
 
+  // ── Filter (active / all) + pagination ──────────────────────────────
+  // The account list used to ALWAYS query active=true with no way to see
+  // removed accounts at all. It now fetches every front-desk profile
+  // regardless of status and filters client-side, so the Filter control
+  // below can switch between the two without a second round trip.
+  const [statusFilter, setStatusFilter] = useState('active'); // 'active' | 'all'
+  const [filterModalVisible, setFilterModalVisible] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
+  const [pageSizeModalVisible, setPageSizeModalVisible] = useState(false);
+
   const [editingStaff, setEditingStaff] = useState(null);
   const [editForm, setEditForm] = useState({ firstName: '', lastName: '', phone: '' });
   const [savingEdit, setSavingEdit] = useState(false);
@@ -189,11 +269,14 @@ export default function FrontDeskAccountsScreen() {
 
   useEffect(() => {
     const loadStaff = async () => {
+      // No .eq('active', true) here on purpose — the Filter control lets
+      // the admin see removed accounts too, so every front-desk profile
+      // is fetched once and the active/all split happens client-side in
+      // filteredStaff below.
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('role', 'frontdesk')
-        .eq('active', true)
         .order('created_at', { ascending: false });
       if (error) {
         console.error('Failed to load front desk accounts:', error);
@@ -209,6 +292,7 @@ export default function FrontDeskAccountsScreen() {
           phone: row.phone,
           photoUrl: row.photo_url,
           createdAt: row.created_at,
+          active: row.active,
         }))
       );
     };
@@ -223,13 +307,36 @@ export default function FrontDeskAccountsScreen() {
   }, []);
 
   const filteredStaff = useMemo(() => {
+    const statusMatched =
+      statusFilter === 'all' ? staffAccounts : staffAccounts.filter((s) => s.active !== false);
     const term = searchTerm.trim().toLowerCase();
-    if (!term) return staffAccounts;
-    return staffAccounts.filter((s) => {
-      const haystack = [s.displayName, s.firstName, s.lastName, s.email, s.phone].filter(Boolean).join(' ').toLowerCase();
-      return haystack.includes(term);
+    const termMatched = !term
+      ? statusMatched
+      : statusMatched.filter((s) => {
+          const haystack = [s.displayName, s.firstName, s.lastName, s.email, s.phone].filter(Boolean).join(' ').toLowerCase();
+          return haystack.includes(term);
+        });
+    // Alphabetical by name (A–Z, case-insensitive), same name shown on each
+    // card — independent of created_at, so the list doesn't reshuffle by
+    // signup date and newly-added staff don't jump to the top or bottom.
+    return [...termMatched].sort((a, b) => {
+      const nameA = a.displayName || `${a.firstName || ''} ${a.lastName || ''}`.trim() || '';
+      const nameB = b.displayName || `${b.firstName || ''} ${b.lastName || ''}`.trim() || '';
+      return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
     });
-  }, [staffAccounts, searchTerm]);
+  }, [staffAccounts, searchTerm, statusFilter]);
+
+  // Reset to page 1 whenever the visible set could have changed shape —
+  // otherwise a search or filter change could leave the admin stranded
+  // on a now-empty page.
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, statusFilter, pageSize]);
+
+  const pageCount = Math.max(1, Math.ceil(filteredStaff.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pagedStaff = filteredStaff.slice(pageStart, pageStart + pageSize);
 
   const passwordStrength = scorePasswordStrength(staffForm.password);
 
@@ -418,6 +525,16 @@ export default function FrontDeskAccountsScreen() {
   };
 
   const resetPasswordStrength = scorePasswordStrength(resetPassword);
+  // Derived display bits for the modal UI: who the password is for (name +
+  // initial, for a small recipient card so the admin can confirm at a
+  // glance they're resetting the right account) and whether the two
+  // password fields currently agree (drives the inline match icon next to
+  // "Confirm new password" instead of making the admin wait for Submit to
+  // find out they don't match).
+  const resetStaffName = resettingStaff?.displayName || `${resettingStaff?.firstName || ''} ${resettingStaff?.lastName || ''}`.trim() || 'this staff member';
+  const resetStaffInitial = resetStaffName.charAt(0).toUpperCase();
+  const resetPasswordsMatch = resetConfirm.length > 0 && resetPassword === resetConfirm;
+  const resetPasswordsMismatch = resetConfirm.length > 0 && resetPassword !== resetConfirm;
 
   const handleResetPassword = async () => {
     if (!resettingStaff) return;
@@ -430,7 +547,7 @@ export default function FrontDeskAccountsScreen() {
       return;
     }
 
-    const name = resettingStaff.displayName || `${resettingStaff.firstName || ''} ${resettingStaff.lastName || ''}`.trim() || 'this staff member';
+    const name = resetStaffName;
 
     setResetSubmitting(true);
     setResetError('');
@@ -472,7 +589,10 @@ export default function FrontDeskAccountsScreen() {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.headerRow}>
-        <View>
+        <View style={styles.pageIconBadge}>
+          <Ionicons name="people-outline" size={20} color={BLUE} />
+        </View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.pageTitle}>Front Desk Accounts</Text>
           <Text style={styles.pageSubtitle}>
             Create and manage front desk staff accounts without leaving the admin portal.
@@ -494,80 +614,100 @@ export default function FrontDeskAccountsScreen() {
       )}
 
       <View style={isWide ? styles.columnsWrap : undefined}>
-      <View style={[styles.staffCard, isWide && styles.staffCardWide]}>
+      <View style={[styles.leftColumn, isWide && styles.leftColumnWide]}>
+      <View style={styles.staffCard}>
         <View style={styles.cardHeaderRow}>
-          <Ionicons name="person-add-outline" size={16} color={colors.primary} />
-          <Text style={styles.sectionTitle}>Create Front Desk Account</Text>
+          <View style={styles.cardIconBadge}>
+            <Ionicons name="person-add-outline" size={16} color={BLUE} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.sectionTitle}>Create Front Desk Account</Text>
+            <Text style={styles.helperText}>Only administrators can create front-desk staff accounts.</Text>
+          </View>
         </View>
-        <Text style={styles.helperText}>Only administrators can create front-desk staff accounts.</Text>
 
         <View style={styles.formRow}>
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>First name</Text>
-            <TextInput
-              style={[styles.input, fieldError('firstName') && styles.inputError]}
-              value={staffForm.firstName}
-              onChangeText={(v) => setField('firstName', v)}
-              onBlur={() => handleBlur('firstName')}
-              placeholder="First name"
-              autoCapitalize="words"
-            />
+            <Text style={styles.inputLabel}>First name <Text style={styles.requiredMark}>*</Text></Text>
+            <View style={[styles.inputRow, fieldError('firstName') && styles.inputRowError]}>
+              <Ionicons name="person-outline" size={15} color={colors.textMuted} />
+              <TextInput
+                style={styles.inputRowField}
+                value={staffForm.firstName}
+                onChangeText={(v) => setField('firstName', v)}
+                onBlur={() => handleBlur('firstName')}
+                placeholder="Enter first name"
+                autoCapitalize="words"
+              />
+            </View>
             {!!fieldError('firstName') && <Text style={styles.fieldErrorText}>{fieldError('firstName')}</Text>}
           </View>
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Last name</Text>
-            <TextInput
-              style={[styles.input, fieldError('lastName') && styles.inputError]}
-              value={staffForm.lastName}
-              onChangeText={(v) => setField('lastName', v)}
-              onBlur={() => handleBlur('lastName')}
-              placeholder="Last name"
-              autoCapitalize="words"
-            />
+            <Text style={styles.inputLabel}>Last name <Text style={styles.requiredMark}>*</Text></Text>
+            <View style={[styles.inputRow, fieldError('lastName') && styles.inputRowError]}>
+              <Ionicons name="person-outline" size={15} color={colors.textMuted} />
+              <TextInput
+                style={styles.inputRowField}
+                value={staffForm.lastName}
+                onChangeText={(v) => setField('lastName', v)}
+                onBlur={() => handleBlur('lastName')}
+                placeholder="Enter last name"
+                autoCapitalize="words"
+              />
+            </View>
             {!!fieldError('lastName') && <Text style={styles.fieldErrorText}>{fieldError('lastName')}</Text>}
           </View>
         </View>
 
         <View style={styles.formRow}>
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Email</Text>
-            <TextInput
-              style={[styles.input, fieldError('email') && styles.inputError]}
-              value={staffForm.email}
-              onChangeText={(v) => setField('email', v)}
-              onBlur={() => handleBlur('email')}
-              placeholder="staff@innvision.com"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
+            <Text style={styles.inputLabel}>Email <Text style={styles.requiredMark}>*</Text></Text>
+            <View style={[styles.inputRow, fieldError('email') && styles.inputRowError]}>
+              <Ionicons name="mail-outline" size={15} color={colors.textMuted} />
+              <TextInput
+                style={styles.inputRowField}
+                value={staffForm.email}
+                onChangeText={(v) => setField('email', v)}
+                onBlur={() => handleBlur('email')}
+                placeholder="staff@innvision.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
             {!!fieldError('email') && <Text style={styles.fieldErrorText}>{fieldError('email')}</Text>}
           </View>
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Phone</Text>
-            <TextInput
-              style={[styles.input, fieldError('phone') && styles.inputError]}
-              value={staffForm.phone}
-              onChangeText={(v) => setField('phone', v)}
-              onBlur={() => handleBlur('phone')}
-              placeholder="Phone number"
-              keyboardType="phone-pad"
-            />
+            <Text style={styles.inputLabel}>Phone number</Text>
+            <View style={[styles.inputRow, fieldError('phone') && styles.inputRowError]}>
+              <Ionicons name="call-outline" size={15} color={colors.textMuted} />
+              <TextInput
+                style={styles.inputRowField}
+                value={staffForm.phone}
+                onChangeText={(v) => setField('phone', v)}
+                onBlur={() => handleBlur('phone')}
+                placeholder="Phone number"
+                keyboardType="phone-pad"
+              />
+            </View>
             {!!fieldError('phone') && <Text style={styles.fieldErrorText}>{fieldError('phone')}</Text>}
           </View>
         </View>
 
         <View style={styles.formRow}>
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Password</Text>
-            <TextInput
-              style={[styles.input, fieldError('password') && styles.inputError]}
-              value={staffForm.password}
-              onChangeText={(v) => setField('password', v)}
-              onBlur={() => handleBlur('password')}
-              placeholder="At least 8 characters"
-              secureTextEntry
-            />
+            <Text style={styles.inputLabel}>Password <Text style={styles.requiredMark}>*</Text></Text>
+            <View style={[styles.inputRow, fieldError('password') && styles.inputRowError]}>
+              <Ionicons name="lock-closed-outline" size={15} color={colors.textMuted} />
+              <TextInput
+                style={styles.inputRowField}
+                value={staffForm.password}
+                onChangeText={(v) => setField('password', v)}
+                onBlur={() => handleBlur('password')}
+                placeholder="At least 8 characters"
+                secureTextEntry
+              />
+            </View>
             {!!staffForm.password && (
               <View style={styles.strengthRow}>
                 <View style={styles.strengthTrack}>
@@ -579,15 +719,18 @@ export default function FrontDeskAccountsScreen() {
             {!!fieldError('password') && <Text style={styles.fieldErrorText}>{fieldError('password')}</Text>}
           </View>
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Confirm password</Text>
-            <TextInput
-              style={[styles.input, fieldError('confirmPassword') && styles.inputError]}
-              value={staffForm.confirmPassword}
-              onChangeText={(v) => setField('confirmPassword', v)}
-              onBlur={() => handleBlur('confirmPassword')}
-              placeholder="Re-enter password"
-              secureTextEntry
-            />
+            <Text style={styles.inputLabel}>Confirm password <Text style={styles.requiredMark}>*</Text></Text>
+            <View style={[styles.inputRow, fieldError('confirmPassword') && styles.inputRowError]}>
+              <Ionicons name="lock-closed-outline" size={15} color={colors.textMuted} />
+              <TextInput
+                style={styles.inputRowField}
+                value={staffForm.confirmPassword}
+                onChangeText={(v) => setField('confirmPassword', v)}
+                onBlur={() => handleBlur('confirmPassword')}
+                placeholder="Re-enter password"
+                secureTextEntry
+              />
+            </View>
             {!!fieldError('confirmPassword') && <Text style={styles.fieldErrorText}>{fieldError('confirmPassword')}</Text>}
           </View>
         </View>
@@ -598,38 +741,94 @@ export default function FrontDeskAccountsScreen() {
           activeOpacity={0.85}
           disabled={creatingStaff}
         >
-          {creatingStaff ? <ActivityIndicator color={colors.white} /> : <Text style={styles.createButtonText}>Create Front Desk Account</Text>}
+          {creatingStaff ? (
+            <ActivityIndicator color={colors.white} />
+          ) : (
+            <>
+              <Ionicons name="add" size={17} color={colors.white} />
+              <Text style={styles.createButtonText}>Create Front Desk Account</Text>
+            </>
+          )}
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.manageCard}>
+        <View style={styles.manageIconBadge}>
+          <Ionicons name="shield-outline" size={18} color={BLUE} />
+        </View>
+        <Text style={styles.manageTitle}>Need to manage existing accounts?</Text>
+        <Text style={styles.manageText}>
+          View and manage all registered front desk staff accounts, including edit, reset password, or remove access.
+        </Text>
+        <TouchableOpacity
+          style={styles.manageButton}
+          onPress={() => {
+            // No separate roster screen to navigate to anymore — this
+            // just widens the list on the right to show literally every
+            // registered account: clears any search term, switches the
+            // Filter to "All accounts" (so removed ones show up too),
+            // and sets the page size high enough that it's all one page.
+            setSearchTerm('');
+            setStatusFilter('all');
+            setPageSize(1000);
+          }}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="eye-outline" size={14} color={BLUE} />
+          <Text style={styles.manageButtonText}>View All Registered Front Desk</Text>
+          <Ionicons name="chevron-forward" size={14} color={BLUE} />
+        </TouchableOpacity>
+      </View>
       </View>
 
       <View style={[styles.staffListCard, isWide && styles.staffListCardWide]}>
         <View style={styles.cardHeaderRow}>
-          <Ionicons name="people-outline" size={16} color={colors.primary} />
-          <Text style={styles.sectionTitle}>Existing Front Desk Accounts</Text>
+          <View style={styles.cardIconBadge}>
+            <Ionicons name="people-outline" size={16} color={BLUE} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.sectionTitle}>Front Desk Accounts</Text>
+            <Text style={styles.helperText}>
+              {pageSize >= 1000
+                ? 'Manage all registered front desk staff accounts.'
+                : `Manage the ${pageSize} most recent front desk staff accounts.`}
+            </Text>
+          </View>
         </View>
 
-        <View style={styles.searchBar}>
-          <Ionicons name="search-outline" size={15} color={colors.textMuted} />
-          <TextInput
-            style={styles.searchInput}
-            value={searchTerm}
-            onChangeText={setSearchTerm}
-            placeholder="Search by name, email, or phone"
-            placeholderTextColor={colors.disabled}
-          />
-          {!!searchTerm && (
-            <TouchableOpacity onPress={() => setSearchTerm('')}>
-              <Ionicons name="close-circle" size={15} color={colors.textMuted} />
-            </TouchableOpacity>
-          )}
+        <View style={styles.searchFilterRow}>
+          <View style={styles.searchBar}>
+            <Ionicons name="search-outline" size={15} color={colors.textMuted} />
+            <TextInput
+              style={styles.searchInput}
+              value={searchTerm}
+              onChangeText={setSearchTerm}
+              placeholder="Search by name, email, or phone..."
+              placeholderTextColor={colors.disabled}
+            />
+            {!!searchTerm && (
+              <TouchableOpacity onPress={() => setSearchTerm('')}>
+                <Ionicons name="close-circle" size={15} color={colors.textMuted} />
+              </TouchableOpacity>
+            )}
+          </View>
+          <TouchableOpacity style={styles.filterButton} onPress={() => setFilterModalVisible(true)} activeOpacity={0.8}>
+            <Ionicons name="funnel-outline" size={14} color={colors.text} />
+            <Text style={styles.filterButtonText}>Filter</Text>
+            {statusFilter !== 'active' && <View style={styles.filterActiveDot} />}
+          </TouchableOpacity>
         </View>
 
-        {filteredStaff.length === 0 ? (
+        {pagedStaff.length === 0 ? (
           <Text style={styles.emptyText}>
-            {staffAccounts.length === 0 ? 'No front desk accounts yet.' : 'No accounts match your search.'}
+            {staffAccounts.length === 0
+              ? 'No front desk accounts yet.'
+              : filteredStaff.length === 0
+              ? 'No accounts match your search.'
+              : 'No accounts on this page.'}
           </Text>
         ) : (
-          filteredStaff.map((staff) => {
+          pagedStaff.map((staff) => {
             const name = staff.displayName || `${staff.firstName || ''} ${staff.lastName || ''}`.trim() || 'Front Desk Staff';
             const initial = name.charAt(0).toUpperCase();
             return (
@@ -647,20 +846,35 @@ export default function FrontDeskAccountsScreen() {
                     <View style={styles.roleBadge}>
                       <Text style={styles.roleBadgeText}>Front Desk</Text>
                     </View>
+                    {staff.active === false && (
+                      <View style={styles.inactiveBadge}>
+                        <Text style={styles.inactiveBadgeText}>Inactive</Text>
+                      </View>
+                    )}
                   </View>
-                  <Text style={styles.staffMeta}>{staff.email || 'No email provided'}</Text>
-                  <Text style={styles.staffMeta}>
-                    {staff.phone ? `${staff.phone} · ` : ''}Created {formatDateLabel(staff.createdAt)}
-                  </Text>
+                  <View style={styles.staffMetaRow}>
+                    <Ionicons name="mail-outline" size={11} color={colors.textMuted} />
+                    <Text style={styles.staffMeta}>{staff.email || 'No email provided'}</Text>
+                  </View>
+                  {!!staff.phone && (
+                    <View style={styles.staffMetaRow}>
+                      <Ionicons name="call-outline" size={11} color={colors.textMuted} />
+                      <Text style={styles.staffMeta}>{staff.phone}</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.staffCreatedWrap}>
+                  <Ionicons name="calendar-outline" size={11} color={colors.textMuted} />
+                  <Text style={styles.staffCreatedText}>Created {formatDateLabel(staff.createdAt)}</Text>
                 </View>
                 <View style={styles.staffActions}>
                   <TouchableOpacity style={styles.editButton} onPress={() => openEdit(staff)} activeOpacity={0.8}>
-                    <Ionicons name="pencil-outline" size={13} color={colors.text} />
+                    <Ionicons name="pencil-outline" size={13} color={BLUE} />
                     <Text style={styles.editButtonText}>Edit</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.editButton} onPress={() => openReset(staff)} activeOpacity={0.8}>
-                    <Ionicons name="key-outline" size={13} color={colors.text} />
-                    <Text style={styles.editButtonText}>Reset Password</Text>
+                  <TouchableOpacity style={styles.resetButton} onPress={() => openReset(staff)} activeOpacity={0.8}>
+                    <Ionicons name="refresh-outline" size={13} color={AMBER} />
+                    <Text style={styles.resetButtonText}>Reset</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.removeButton}
@@ -683,8 +897,71 @@ export default function FrontDeskAccountsScreen() {
             );
           })
         )}
+
+        {filteredStaff.length > 0 && (
+          <View style={styles.paginationFooter}>
+            <Text style={styles.paginationSummary}>
+              Showing {pageStart + 1}
+              {pagedStaff.length > 1 ? `–${pageStart + pagedStaff.length}` : ''} of {filteredStaff.length} account{filteredStaff.length !== 1 ? 's' : ''}
+            </Text>
+            <View style={styles.paginationControls}>
+              <TouchableOpacity
+                disabled={currentPage <= 1}
+                onPress={() => setPage((p) => Math.max(1, p - 1))}
+                style={styles.pageArrowBtn}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="chevron-back" size={14} color={currentPage <= 1 ? colors.disabled : colors.text} />
+              </TouchableOpacity>
+              <View style={styles.pageNumberPill}>
+                <Text style={styles.pageNumberText}>{currentPage}</Text>
+              </View>
+              <TouchableOpacity
+                disabled={currentPage >= pageCount}
+                onPress={() => setPage((p) => Math.min(pageCount, p + 1))}
+                style={styles.pageArrowBtn}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="chevron-forward" size={14} color={currentPage >= pageCount ? colors.disabled : colors.text} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.pageSizeButton} onPress={() => setPageSizeModalVisible(true)} activeOpacity={0.8}>
+                <Text style={styles.pageSizeButtonText}>{pageSize >= 1000 ? 'Show all' : `${pageSize} / page`}</Text>
+                <Ionicons name="chevron-down" size={12} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
       </View>
+
+      {/* ── Filter ───────────────────────────────────────────────────── */}
+      <SimpleOptionsModal
+        visible={filterModalVisible}
+        onClose={() => setFilterModalVisible(false)}
+        title="Filter Accounts"
+        options={[
+          { value: 'active', label: 'Active accounts' },
+          { value: 'all', label: 'All accounts (incl. removed)' },
+        ]}
+        selectedValue={statusFilter}
+        onSelect={setStatusFilter}
+      />
+
+      {/* ── Accounts per page ────────────────────────────────────────── */}
+      <SimpleOptionsModal
+        visible={pageSizeModalVisible}
+        onClose={() => setPageSizeModalVisible(false)}
+        title="Accounts per page"
+        options={[
+          { value: 5, label: '5 / page' },
+          { value: 10, label: '10 / page' },
+          { value: 25, label: '25 / page' },
+          { value: 50, label: '50 / page' },
+          { value: 1000, label: 'Show all' },
+        ]}
+        selectedValue={pageSize}
+        onSelect={setPageSize}
+      />
 
       {/* ── Remove confirmation ─────────────────────────────────────── */}
       <Modal transparent visible={!!pendingStaffRemoval} animationType="fade" onRequestClose={() => setPendingStaffRemoval(null)}>
@@ -753,16 +1030,57 @@ export default function FrontDeskAccountsScreen() {
       </Modal>
 
       {/* ── Reset Password ──────────────────────────────────────────── */}
+      {/* ENHANCED (this pass): icon badge + a short centered description
+          (previously one long sentence doing both jobs) now split from a
+          dedicated recipient card — avatar, name, email — so the admin
+          can confirm at a glance whose password this is before typing
+          anything. Both password fields get a matching leading lock icon
+          (mirrors the create-form fields above); Confirm gets a live
+          check/✕ icon the moment it's non-empty instead of only learning
+          about a mismatch after pressing Submit. The "share it with them"
+          note is now a small amber tip box instead of running into the
+          same paragraph as the explanation, and the submit button is
+          amber-filled with a key icon to match the row-level "Reset"
+          action that opens this modal. Added a corner close (×) button
+          for a quick dismiss. */}
       <Modal transparent visible={!!resettingStaff} animationType="fade" onRequestClose={closeReset}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
+            <TouchableOpacity
+              style={styles.modalCloseBtn}
+              onPress={closeReset}
+              disabled={resetSubmitting}
+              activeOpacity={0.7}
+              accessibilityLabel="Close"
+            >
+              <Ionicons name="close" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+
+            <View style={styles.resetIconWrap}>
+              <Ionicons name="key-outline" size={22} color={AMBER} />
+            </View>
             <Text style={styles.modalTitle}>Reset Password</Text>
-            <Text style={styles.editHint}>
-              Sets a new password for {resettingStaff?.displayName || `${resettingStaff?.firstName || ''} ${resettingStaff?.lastName || ''}`.trim() || 'this staff member'}, the same way a default password is set when creating an account. Share it with them directly — they can change it themselves from My Profile once logged in.
+            <Text style={styles.modalText}>
+              Set a new password for this account, the same way a default password is set when creating one.
             </Text>
 
-            <Text style={styles.inputLabel}>New password</Text>
+            <View style={styles.resetRecipientCard}>
+              <View style={styles.resetRecipientAvatar}>
+                {resettingStaff?.photoUrl ? (
+                  <Image source={{ uri: resettingStaff.photoUrl }} style={styles.resetRecipientAvatarImage} />
+                ) : (
+                  <Text style={styles.resetRecipientAvatarText}>{resetStaffInitial}</Text>
+                )}
+              </View>
+              <View style={styles.resetRecipientTextWrap}>
+                <Text style={styles.resetRecipientName} numberOfLines={1}>{resetStaffName}</Text>
+                <Text style={styles.resetRecipientEmail} numberOfLines={1}>{resettingStaff?.email || 'No email on file'}</Text>
+              </View>
+            </View>
+
+            <Text style={[styles.inputLabel, { marginTop: spacing.lg }]}>New password</Text>
             <View style={styles.passwordInputRow}>
+              <Ionicons name="lock-closed-outline" size={15} color={colors.textMuted} />
               <TextInput
                 style={styles.passwordInput}
                 value={resetPassword}
@@ -785,7 +1103,8 @@ export default function FrontDeskAccountsScreen() {
             )}
 
             <Text style={[styles.inputLabel, { marginTop: spacing.sm }]}>Confirm new password</Text>
-            <View style={styles.passwordInputRow}>
+            <View style={[styles.passwordInputRow, resetPasswordsMismatch && styles.passwordInputRowError]}>
+              <Ionicons name="lock-closed-outline" size={15} color={colors.textMuted} />
               <TextInput
                 style={styles.passwordInput}
                 value={resetConfirm}
@@ -794,16 +1113,37 @@ export default function FrontDeskAccountsScreen() {
                 secureTextEntry={!resetShowPw}
                 autoCapitalize="none"
               />
+              {resetConfirm.length > 0 && (
+                <Ionicons
+                  name={resetPasswordsMatch ? 'checkmark-circle' : 'close-circle'}
+                  size={17}
+                  color={resetPasswordsMatch ? '#1E7B34' : '#B3261E'}
+                />
+              )}
             </View>
 
             {!!resetError && <Text style={styles.fieldErrorText}>{resetError}</Text>}
+
+            <View style={styles.resetInfoBox}>
+              <Ionicons name="information-circle-outline" size={15} color={AMBER} />
+              <Text style={styles.resetInfoText}>
+                Share the new password with {resetStaffName.split(' ')[0]} directly — they can change it themselves from My Profile once logged in.
+              </Text>
+            </View>
 
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.modalCancelButton} onPress={closeReset} disabled={resetSubmitting}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.modalSaveButton} onPress={handleResetPassword} disabled={resetSubmitting}>
-                {resetSubmitting ? <ActivityIndicator color={colors.white} size="small" /> : <Text style={styles.modalConfirmText}>Reset Password</Text>}
+              <TouchableOpacity style={styles.resetConfirmButton} onPress={handleResetPassword} disabled={resetSubmitting}>
+                {resetSubmitting ? (
+                  <ActivityIndicator color={colors.white} size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="key-outline" size={14} color={colors.white} />
+                    <Text style={styles.modalConfirmText}>Reset Password</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -816,26 +1156,31 @@ export default function FrontDeskAccountsScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { padding: spacing.xl, maxWidth: 1200, width: '100%', alignSelf: 'center' },
-  headerRow: { marginBottom: spacing.xl },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.xl },
+  pageIconBadge: { width: 44, height: 44, borderRadius: radius.lg, backgroundColor: BLUE_TINT, alignItems: 'center', justifyContent: 'center' },
   pageTitle: { fontSize: 22, fontFamily: fonts.headingExtraBold, color: colors.primary, marginBottom: spacing.xs },
   pageSubtitle: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
 
   // Side-by-side panels on wide (desktop/tablet) viewports: the create
-  // form stays a fixed, comfortably-narrow width on the left, and the
-  // account list fills the rest on the right. Falls back to the
-  // original single stacked column below WIDE_BREAKPOINT.
+  // form + "manage existing accounts" cards stay a fixed, comfortably-
+  // narrow column on the left, and the account list fills the rest on
+  // the right. Falls back to the original single stacked column below
+  // WIDE_BREAKPOINT.
   columnsWrap: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xl },
+  leftColumn: { gap: spacing.lg, marginBottom: spacing.xl },
+  leftColumnWide: { flexBasis: 420, flexGrow: 0, flexShrink: 0, marginBottom: 0 },
 
   errorBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: colors.dangerBg, borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.lg },
   errorBannerText: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.danger },
   successBanner: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, backgroundColor: '#DFF5E1', borderRadius: radius.sm, padding: spacing.md, marginBottom: spacing.lg },
   successBannerText: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: '#1E7B34' },
 
-  staffCard: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.xl },
-  staffCardWide: { flexBasis: 420, flexGrow: 0, flexShrink: 0, marginBottom: 0 },
-  cardHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.xs },
+  staffCard: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg },
+  cardHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginBottom: spacing.lg },
+  cardIconBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: BLUE_TINT, alignItems: 'center', justifyContent: 'center' },
   sectionTitle: { fontSize: 16, fontFamily: fonts.headingBold, color: colors.text },
-  helperText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginBottom: spacing.md },
+  helperText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
+  requiredMark: { color: colors.danger },
   // flexWrap + a minWidth per field (not a hardcoded row/column split)
   // means this lays out sensibly whether it's in the narrower left
   // panel on desktop, a full-width stacked card on tablet, or anything
@@ -848,58 +1193,168 @@ const styles = StyleSheet.create({
   inputError: { borderColor: '#B3261E', backgroundColor: colors.dangerBg },
   fieldErrorText: { fontSize: 11, fontFamily: fonts.body, color: '#B3261E', marginTop: 4 },
 
+  // Leading-icon input row used by the create-form fields — a bordered
+  // container holding an Ionicons glyph and a borderless TextInput,
+  // same shape as the pre-existing searchBar/passwordInputRow pattern
+  // below rather than a new one-off.
+  inputRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    paddingHorizontal: spacing.md, backgroundColor: colors.cardAlt,
+  },
+  inputRowError: { borderColor: '#B3261E', backgroundColor: colors.dangerBg },
+  inputRowField: { flex: 1, paddingVertical: spacing.sm, fontFamily: fonts.body, fontSize: 13, color: colors.text, outlineStyle: 'none' },
+
   strengthRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.xs },
   strengthTrack: { flex: 1, height: 4, borderRadius: 2, backgroundColor: colors.border, overflow: 'hidden' },
   strengthFill: { height: '100%', borderRadius: 2 },
   strengthLabel: { fontSize: 10, fontFamily: fonts.bodySemiBold, minWidth: 42 },
   passwordInputRow: {
-    flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.border,
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderWidth: 1, borderColor: colors.border,
     borderRadius: radius.md, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.md, marginTop: spacing.xs,
   },
+  // Live-mismatch state for the Confirm field (mirrors inputRowError above).
+  passwordInputRowError: { borderColor: '#B3261E', backgroundColor: colors.dangerBg },
   passwordInput: { flex: 1, paddingVertical: spacing.sm, fontFamily: fonts.body, fontSize: 13, color: colors.text },
-  eyeBtn: { paddingLeft: spacing.xs, paddingVertical: spacing.xs },
+  eyeBtn: { paddingVertical: spacing.xs },
 
-  createButton: { backgroundColor: colors.primary, borderRadius: 999, paddingVertical: spacing.md, alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },
+  createButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: BLUE, borderRadius: radius.md, paddingVertical: spacing.md, marginTop: spacing.sm,
+  },
   createButtonText: { fontFamily: fonts.headingSemiBold, fontSize: 13, color: colors.white },
   buttonDisabled: { opacity: 0.7 },
 
+  // "Need to manage existing accounts?" prompt card — its button widens
+  // the list on the right to show every registered account in one go
+  // (see the onPress handler above) rather than navigating anywhere.
+  manageCard: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg },
+  manageIconBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: BLUE_TINT, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.sm },
+  manageTitle: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.text, marginBottom: spacing.xs },
+  manageText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, lineHeight: 17, marginBottom: spacing.md },
+  manageButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
+    borderWidth: 1, borderColor: BLUE, borderRadius: radius.md, paddingVertical: spacing.sm + 2, backgroundColor: BLUE_TINT,
+  },
+  manageButtonText: { fontSize: 12.5, fontFamily: fonts.bodySemiBold, color: BLUE },
+
   staffListCard: { backgroundColor: colors.white, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg },
   staffListCardWide: { flex: 1, minWidth: 0 },
+  searchFilterRow: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
   searchBar: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
-    paddingHorizontal: spacing.md, height: 38, backgroundColor: colors.cardAlt, marginBottom: spacing.md,
+    paddingHorizontal: spacing.md, height: 38, backgroundColor: colors.cardAlt,
   },
-  searchInput: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text },
+  searchInput: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text, outlineStyle: 'none' },
+  filterButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    paddingHorizontal: spacing.md, height: 38,
+  },
+  filterButtonText: { fontSize: 12.5, fontFamily: fonts.bodySemiBold, color: colors.text },
+  filterActiveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: BLUE },
   emptyText: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted },
 
   staffRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
   staffAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primaryTint, alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' },
   staffAvatarImage: { width: 40, height: 40 },
   staffAvatarText: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.primary },
-  staffTextWrap: { flex: 1 },
+  staffTextWrap: { flex: 1, minWidth: 140 },
   staffNameRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' },
   staffName: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
-  roleBadge: { backgroundColor: colors.primaryTint, borderRadius: 999, paddingVertical: 2, paddingHorizontal: spacing.sm },
-  roleBadgeText: { fontSize: 10, fontFamily: fonts.bodySemiBold, color: colors.primary },
-  staffMeta: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
+  roleBadge: { backgroundColor: BLUE_TINT, borderRadius: 999, paddingVertical: 2, paddingHorizontal: spacing.sm },
+  roleBadgeText: { fontSize: 10, fontFamily: fonts.bodySemiBold, color: BLUE },
+  inactiveBadge: { backgroundColor: colors.cardAlt, borderWidth: 1, borderColor: colors.border, borderRadius: 999, paddingVertical: 2, paddingHorizontal: spacing.sm },
+  inactiveBadgeText: { fontSize: 10, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+  staffMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  staffMeta: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted },
+
+  staffCreatedWrap: { flexDirection: 'row', alignItems: 'center', gap: 4, minWidth: 108, flexShrink: 0 },
+  staffCreatedText: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted },
 
   staffActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: spacing.xs, maxWidth: 260 },
-  editButton: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: colors.border, borderRadius: 999, paddingHorizontal: spacing.md, paddingVertical: 8 },
-  editButtonText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.text },
-  removeButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: colors.danger, borderRadius: 999, paddingHorizontal: spacing.md, paddingVertical: 8, minWidth: 88 },
+  // Edit / Reset / Remove read as three distinct action weights — a
+  // filled light tint for the two non-destructive actions (blue for
+  // Edit, amber for Reset, matching BLUE/AMBER above) and a solid fill
+  // for the destructive one (Remove), rather than all three sharing the
+  // same neutral outline.
+  editButton: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: BLUE_TINT, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 8 },
+  editButtonText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: BLUE },
+  resetButton: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: AMBER_TINT, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 8 },
+  resetButtonText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: AMBER },
+  removeButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: colors.danger, borderRadius: radius.md, paddingHorizontal: spacing.md, paddingVertical: 8, minWidth: 88 },
   removeButtonText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.white },
+
+  paginationFooter: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: spacing.sm,
+    marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.border,
+  },
+  paginationSummary: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
+  paginationControls: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  pageArrowBtn: { width: 28, height: 28, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  pageNumberPill: { minWidth: 28, height: 28, borderRadius: radius.sm, backgroundColor: BLUE, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  pageNumberText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.white },
+  pageSizeButton: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.sm, paddingHorizontal: spacing.sm, height: 28, marginLeft: spacing.xs,
+  },
+  pageSizeButtonText: { fontSize: 12, fontFamily: fonts.body, color: colors.text },
 
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: spacing.xl },
   modalCard: { backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.xl, width: '100%', maxWidth: 420 },
+  // Corner dismiss button for the Reset Password modal. `modalCard` has no
+  // explicit `position`, but React Native (and RN-Web's View reset) treats
+  // every View as the positioning root for its own absolutely-positioned
+  // children regardless, so this needs no change to modalCard itself.
+  modalCloseBtn: {
+    position: 'absolute', top: spacing.md, right: spacing.md, width: 28, height: 28, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: colors.cardAlt, zIndex: 1,
+  },
   modalIconWrap: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FBE7E7', alignItems: 'center', justifyContent: 'center', marginBottom: spacing.md, alignSelf: 'center' },
+  // Amber twin of modalIconWrap, scoped to Reset Password to match the
+  // amber row-level "Reset" action that opens this modal.
+  resetIconWrap: { width: 48, height: 48, borderRadius: 24, backgroundColor: AMBER_TINT, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.md, alignSelf: 'center' },
   modalTitle: { fontSize: 18, fontFamily: fonts.headingBold, color: colors.text, marginBottom: spacing.sm, textAlign: 'center' },
   modalText: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, lineHeight: 20, marginBottom: spacing.lg, textAlign: 'center' },
   editHint: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginBottom: spacing.md, lineHeight: 16 },
+  // "Who is this for?" card in the Reset Password modal — avatar + name +
+  // email, so the admin can confirm the account at a glance rather than
+  // relying on a name buried mid-sentence in a paragraph.
+  resetRecipientCard: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, backgroundColor: colors.cardAlt,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.sm, marginTop: spacing.md,
+  },
+  resetRecipientAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: AMBER_TINT, alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' },
+  resetRecipientAvatarImage: { width: 36, height: 36 },
+  resetRecipientAvatarText: { fontSize: 14, fontFamily: fonts.headingBold, color: AMBER },
+  resetRecipientTextWrap: { flex: 1, minWidth: 0 },
+  resetRecipientName: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
+  resetRecipientEmail: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1 },
+  // Small amber tip box for the "share it with them" note — pulled out of
+  // the explanatory paragraph above so it reads as a tip, not a warning.
+  resetInfoBox: { flexDirection: 'row', gap: spacing.xs, backgroundColor: AMBER_TINT, borderRadius: radius.md, padding: spacing.sm, marginTop: spacing.md },
+  resetInfoText: { flex: 1, fontSize: 11, fontFamily: fonts.body, color: AMBER, lineHeight: 15 },
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.sm, marginTop: spacing.lg },
   modalCancelButton: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm + 2, borderRadius: 999, borderWidth: 1, borderColor: colors.border },
   modalCancelText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
   modalConfirmButton: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm + 2, borderRadius: 999, backgroundColor: colors.danger },
   modalSaveButton: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm + 2, borderRadius: 999, backgroundColor: colors.primary, minWidth: 130, alignItems: 'center' },
+  // Amber twin of modalSaveButton, scoped to Reset Password's own submit
+  // button (icon + label, row layout) so Edit's "Save Changes" button
+  // (still modalSaveButton, unchanged) keeps its neutral dark fill.
+  resetConfirmButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm + 2, borderRadius: 999, backgroundColor: AMBER, minWidth: 130,
+  },
   modalConfirmText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.white },
+
+  // Filter / page-size option list, reusing modalBackdrop/modalCard's
+  // shape at a narrower width.
+  optionsModalCard: { backgroundColor: colors.white, borderRadius: radius.lg, padding: spacing.lg, width: '100%', maxWidth: 300 },
+  optionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm + 2 },
+  optionRadio: { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  optionRadioActive: { borderColor: BLUE },
+  optionRadioDot: { width: 9, height: 9, borderRadius: 4.5, backgroundColor: BLUE },
+  optionRowText: { fontSize: 13, fontFamily: fonts.body, color: colors.text },
 });

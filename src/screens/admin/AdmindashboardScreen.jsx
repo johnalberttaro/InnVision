@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { formatCurrency } from '../../utils/roomRates';
@@ -25,6 +25,15 @@ function toDate(value) {
 
 function isSameCalendarDay(a, b) {
   return a && b && a.toDateString() === b.toDateString();
+}
+
+// Look-back day helper — n=0 is today, n=1 is yesterday, etc. Mirrors
+// FrontDeskDashboardScreen.jsx's identical helper, which backs the same
+// "Look back: 1-5 days ago" selector on the Recent Activity card there.
+function daysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d;
 }
 
 function dayLabel(d) {
@@ -78,6 +87,17 @@ function buildTrend(current, previous, formatter) {
  *
  * KPI cards show a "vs last week" trend delta and support drill-down
  * navigation via onNavigate (e.g. Outstanding Balances -> billing screen).
+ *
+ * Recent Activity (the card at the bottom) shows bookings created on one
+ * selected day, picked via the "Look back: 1 2 3 4 5 day ago" pill
+ * selector at the bottom of the card — day 1 is today, day 5 is four days
+ * ago. This mirrors FrontDeskDashboardScreen.jsx's identical pattern, kept
+ * consistent across both portals rather than Admin inventing its own
+ * pagination scheme. Still reservations only, same as before — payments,
+ * food orders and other activity types each already have their own
+ * dedicated history screen (Payment History, Order History, Transaction
+ * History), so this card isn't trying to become a single unified activity
+ * feed across all of them.
  */
 export default function AdminDashboardScreen({ onNavigate }) {
   const [bookings, setBookings] = useState([]);
@@ -86,6 +106,7 @@ export default function AdminDashboardScreen({ onNavigate }) {
   const [outstanding, setOutstanding] = useState(null);
   const [loading, setLoading] = useState(true);
   const [dossierReservation, setDossierReservation] = useState(null);
+  const [lookBackDays, setLookBackDays] = useState(1);
 
   // Maps a Postgres reservations row (snake_case) to the same camelCase
   // shape the Firestore version used.
@@ -233,7 +254,12 @@ export default function AdminDashboardScreen({ onNavigate }) {
     });
   }
 
-  const recentActivity = bookings.slice(0, 5);
+  // Recent activity: filtered to the selected look-back day (1-5 days
+  // ago), same pattern as FrontDeskDashboardScreen.jsx's
+  // activityForSelectedDay.
+  const activityForSelectedDay = bookings
+    .filter((b) => isSameCalendarDay(toDate(b.createdAt), daysAgo(lookBackDays - 1)))
+    .slice(0, 20);
 
   const getGuestName = (item) => {
     if (!item.guestDetails) return item.guestName || 'A guest';
@@ -295,7 +321,7 @@ export default function AdminDashboardScreen({ onNavigate }) {
           accent={colors.primary}
           note="Active accounts"
           tooltip="Front desk accounts with an active role."
-          onPress={onNavigate ? () => onNavigate('staff:frontdesk') : undefined}
+          onPress={onNavigate ? () => onNavigate('staff:accounts') : undefined}
         />
         <KpiCard
           icon="log-in-outline"
@@ -357,13 +383,15 @@ export default function AdminDashboardScreen({ onNavigate }) {
       {/* Recent activity */}
       <Text style={styles.sectionTitle}>Recent Activity</Text>
       <View style={styles.activityCard}>
-        {recentActivity.length === 0 ? (
-          <Text style={styles.emptyText}>No reservations yet.</Text>
+        {activityForSelectedDay.length === 0 ? (
+          <Text style={styles.emptyText}>
+            No reservations were created {lookBackDays === 1 ? 'today' : `${lookBackDays} days ago`}.
+          </Text>
         ) : (
-          recentActivity.map((booking, index) => (
+          activityForSelectedDay.map((booking, index) => (
             <PressableRow
               key={booking.id}
-              isLast={index === recentActivity.length - 1}
+              isLast={index === activityForSelectedDay.length - 1}
               onPress={() => setDossierReservation(booking)}
             >
               <View style={styles.activityIconBadge}>
@@ -384,6 +412,24 @@ export default function AdminDashboardScreen({ onNavigate }) {
             </PressableRow>
           ))
         )}
+
+        {/* Look-back day selector, placed at the bottom of the Recent
+            Activity card (not above the list), matching the pattern in
+            FrontDeskDashboardScreen.jsx. */}
+        <View style={styles.lookBackRow}>
+          <Text style={styles.lookBackLabel}>Look back:</Text>
+          {[1, 2, 3, 4, 5].map((n) => (
+            <TouchableOpacity
+              key={n}
+              onPress={() => setLookBackDays(n)}
+              style={[styles.lookBackPill, lookBackDays === n && styles.lookBackPillActive]}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.lookBackPillText, lookBackDays === n && styles.lookBackPillTextActive]}>{n}</Text>
+            </TouchableOpacity>
+          ))}
+          <Text style={styles.lookBackSuffix}>day{lookBackDays !== 1 ? 's' : ''} ago</Text>
+        </View>
       </View>
 
       <GuestDossierModal
@@ -446,4 +492,22 @@ const styles = StyleSheet.create({
   activityTitle: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
   activitySubtitle: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
   activityAmount: { fontSize: 13, fontFamily: fonts.headingBold, color: colors.accent },
+
+  lookBackRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    padding: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  lookBackLabel: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginRight: spacing.xs },
+  lookBackPill: {
+    width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.cardAlt, borderWidth: 1, borderColor: colors.border,
+  },
+  lookBackPillActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  lookBackPillText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text },
+  lookBackPillTextActive: { color: colors.white },
+  lookBackSuffix: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginLeft: spacing.xs },
 });

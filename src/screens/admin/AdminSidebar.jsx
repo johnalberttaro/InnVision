@@ -53,7 +53,6 @@ const MENU_SECTIONS = [
     label: 'Staff',
     subItems: [
       { key: 'staff:accounts', label: 'Front Desk Accounts' },
-      { key: 'staff:frontdesk', label: 'Front Desk Roster' },
       { key: 'staff:fnb', label: 'F&B Accounts' },
       { key: 'staff:housekeeping', label: 'Housekeeping Accounts' },
       { key: 'staff:maintenance', label: 'Maintenance Accounts' },
@@ -107,6 +106,7 @@ const MENU_SECTIONS = [
       { key: 'reports:occupancy', label: 'Occupancy Report' },
       { key: 'reports:revenue', label: 'Revenue Report' },
       { key: 'reports:ratings', label: 'Guest Ratings' },
+      { key: 'reports:feedback', label: 'Guest Feedback' },
     ],
   },
 ];
@@ -249,8 +249,19 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
                     // directly, same as the exact-match would for the
                     // collapsed key itself.
                     const subNamespace = sub.key.split(':').slice(0, -1).join(':');
+                    // Only fall back to the namespace-prefix match when a
+                    // sub-item actually stands in for a collapsed GROUP of
+                    // deeper keys (e.g. 'fd:reservations:all' representing
+                    // 'fd:reservations:checkins' etc. — see Front Desk
+                    // Operations above). For a flat, standalone leaf like
+                    // 'staff:accounts', subNamespace reduces to just the
+                    // section key ('staff'), which every sibling under Staff
+                    // shares — without this guard, activating any one of
+                    // them (activeKey.startsWith('staff:')) highlighted all
+                    // of them.
                     const isActive =
-                      activeKey === sub.key || activeKey.startsWith(`${subNamespace}:`);
+                      activeKey === sub.key ||
+                      (subNamespace !== section.key && activeKey.startsWith(`${subNamespace}:`));
                     return (
                       <TouchableOpacity
                         key={sub.key}
@@ -323,6 +334,17 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
     </View>
   );
 }
+
+// Shared by every sidebar row (menuItem, subMenuItem): on web, React
+// Native Web focuses and tap-highlights a pressed TouchableOpacity by
+// default, which shows up as an unwanted light/white flash over this dark
+// sidebar when a menu item (e.g. "Staff") is clicked. Both lines below
+// suppress that; neither does anything on native (iOS/Android), where an
+// unrecognized style key is just ignored.
+const noWebClickHighlight = {
+  outlineStyle: 'none',
+  WebkitTapHighlightColor: 'transparent',
+};
 
 const styles = StyleSheet.create({
   fixedWrap: {
@@ -400,6 +422,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   menuItem: {
+    ...noWebClickHighlight,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: spacing.sm + 2,
@@ -431,6 +454,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xs,
   },
   subMenuItem: {
+    ...noWebClickHighlight,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: spacing.sm,

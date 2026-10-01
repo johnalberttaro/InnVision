@@ -35,6 +35,26 @@ import { useTheme } from '../../context/ThemeContext';
  * Submission requires a logged-in user (matches the same rule
  * ContactUsScreen.jsx follows) — shows a "please log in" message rather
  * than failing silently if nobody's signed in.
+ *
+ * FIXED: the "already prompted" marker above was being read/written
+ * through the @react-native-async-storage/async-storage package
+ * directly, which doesn't reliably persist on web — supabase.js already
+ * documents the same gap for its own session storage (`storage:
+ * Platform.OS === 'web' ? undefined : AsyncStorage`, falling back to the
+ * browser's own localStorage there). This file never had that fallback,
+ * so on web the "prompted" write was effectively lost on every reload:
+ * AsyncStorage.getItem() came back empty next time regardless of
+ * whether this had already been shown (or even submitted), so the popup
+ * re-opened on every single login instead of once per reservation.
+ * storageGetItem/storageSetItem below apply the exact same
+ * Platform.OS-based fallback supabase.js uses, kept local to this file
+ * since nothing else here touches storage. Also added a secondary
+ * `.order('id', …)` to the latest-reservation lookup — with no
+ * tiebreaker, two reservations sharing an identical created_at
+ * (plausible with seeded/test data inserted in one batch) could make
+ * Postgres return a different "latest" row on different calls, which
+ * would silently change the computed key and look like this exact bug
+ * even with storage working correctly.
  */
 const RATING_OPTIONS = [
   { value: 1, emoji: '😠', label: 'Terrible' },
@@ -45,6 +65,36 @@ const RATING_OPTIONS = [
 ];
 
 const promptedKey = (userId, reservationId) => `feedbackPrompted:${userId}:${reservationId}`;
+
+// Same Platform.OS fallback supabase.js already uses for its own session
+// storage, and for the same reason — AsyncStorage's own module isn't a
+// reliable persistence layer on web in this app. Native keeps using
+// AsyncStorage; web reads/writes the browser's own localStorage
+// directly, guarded for the (rare, e.g. SSR or disabled storage) case
+// where it isn't available at all.
+async function storageGetItem(key) {
+  if (Platform.OS === 'web') {
+    try {
+      return typeof window !== 'undefined' ? window.localStorage.getItem(key) : null;
+    } catch {
+      return null;
+    }
+  }
+  return AsyncStorage.getItem(key);
+}
+
+async function storageSetItem(key, value) {
+  if (Platform.OS === 'web') {
+    try {
+      if (typeof window !== 'undefined') window.localStorage.setItem(key, value);
+    } catch {
+      // Best-effort, e.g. private browsing with storage disabled —
+      // worst case the prompt just shows again next time.
+    }
+    return;
+  }
+  return AsyncStorage.setItem(key, value);
+}
 
 export default function FeedbackWidget({ autoOpenOnRecentBooking = false }) {
   const { colors, spacing, radius, fonts } = useTheme();
@@ -76,19 +126,20 @@ export default function FeedbackWidget({ autoOpenOnRecentBooking = false }) {
           .select('id')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
           .limit(1)
           .maybeSingle();
 
         if (!latestReservation) return; // never booked — nothing to prompt about
 
         const key = promptedKey(user.id, latestReservation.id);
-        const alreadyPrompted = await AsyncStorage.getItem(key);
+        const alreadyPrompted = await storageGetItem(key);
         if (alreadyPrompted) return;
 
         // Mark it prompted immediately — the popup should show exactly
         // once for this reservation regardless of whether the guest
         // actually submits or just closes it.
-        await AsyncStorage.setItem(key, '1');
+        await storageSetItem(key, '1');
         setError('');
         setSubmitted(false);
         setVisible(true);

@@ -1,5 +1,5 @@
-﻿import React, { useState, useEffect } from 'react';
-import { StyleSheet, StatusBar, Modal } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, StatusBar, Modal, Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { Baloo2_800ExtraBold } from '@expo-google-fonts/baloo-2/800ExtraBold';
@@ -20,6 +20,7 @@ import HomeScreen           from './src/screens/home/HomeScreen';
 import LoginScreen          from './src/screens/form/LoginScreen';
 import RegisterScreen       from './src/screens/form/Registerscreen';
 import ForgotPasswordScreen from './src/screens/form/Forgotpasswordscreen';
+import ResetPasswordScreen  from './src/screens/form/ResetPasswordScreen';
 import ProfileScreen        from './src/screens/profile/Profilescreen';
 import AboutScreen          from './src/screens/about/AboutScreen';
 import ContactUsScreen      from './src/screens/contact/ContactUsScreen';
@@ -144,6 +145,23 @@ import { ThemeProvider }    from './src/context/ThemeContext';
 // confirmed on-device. SafeAreaView/SafeAreaProvider are used directly
 // below, same as everywhere else in the app.
 
+// Supabase's own recovery-email link lands back on this app (wherever
+// getPasswordResetRedirectUrl() in Forgotpasswordscreen.jsx pointed it at)
+// with `type=recovery` somewhere in the URL — in the hash for the classic
+// implicit flow (`#access_token=...&type=recovery`), or the query string
+// if a given Supabase project is set up for the newer PKCE flow
+// (`?code=...&type=recovery`). Checked directly here (not only via the
+// 'PASSWORD_RECOVERY' auth event below) because this also has to gate the
+// very first supabase.auth.getSession() resolution on load — without it,
+// a recovery session could get routed straight into that user's normal
+// role portal before the PASSWORD_RECOVERY event has had a chance to fire.
+const isPasswordRecoveryUrl = () => {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
+  const hash = window.location.hash || '';
+  const search = window.location.search || '';
+  return /type=recovery/.test(hash) || /type=recovery/.test(search);
+};
+
 export default function App() {
   // DIAGNOSTIC: now also capturing `fontError`, the second value useFonts()
   // returns — the original code only destructured `fontsLoaded`, so if font
@@ -246,6 +264,17 @@ export default function App() {
       if (!mounted) return;
       const sessionUser = data?.session?.user || null;
       setUser(sessionUser);
+      // A recovery link creates a real (if narrowly-scoped) session too,
+      // but it must land on the "set new password" screen, never jump
+      // straight into that user's normal role portal — re-check the URL
+      // here rather than trusting isPasswordRecoveryUrl() only ran once
+      // before, since this callback can resolve after Supabase's own
+      // hash-parsing has run.
+      if (isPasswordRecoveryUrl()) {
+        setScreen('resetPassword');
+        setAuthLoading(false);
+        return;
+      }
       resolveRoleAndRoute(sessionUser).finally(() => {
         if (mounted) setAuthLoading(false);
       });
@@ -259,10 +288,21 @@ export default function App() {
     // events — Supabase also fires this listener on background token
     // refreshes, which shouldn't reroute someone away from wherever
     // they currently are.
+    //
+    // PASSWORD_RECOVERY is Supabase's own, separate event for exactly the
+    // recovery-link case above — fired instead of SIGNED_IN so apps can
+    // tell the two apart. Handled the same way here: always wins, routes
+    // to ResetPasswordScreen regardless of where `screen` currently is
+    // (covers the rarer case where this fires after the initial
+    // getSession() resolution already routed into a portal).
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
       const sessionUser = session?.user || null;
       setUser(sessionUser);
+      if (event === 'PASSWORD_RECOVERY') {
+        setScreen('resetPassword');
+        return;
+      }
       if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
         resolveRoleAndRoute(sessionUser);
       }
@@ -275,9 +315,10 @@ export default function App() {
   }, []);
 
   // ── Screen state ────────────────────────────────────────────────────
-  // 'home' | 'login' | 'register' | 'forgotPassword' | 'profile' | 'about'
-  // | 'contact' | 'myReservations' | 'orderFood' | 'roomRates' | 'reviewPay'
-  // | 'frontdesk' | 'fnb' | 'admin' | 'housekeeping' | 'maintenance'
+  // 'home' | 'login' | 'register' | 'forgotPassword' | 'resetPassword'
+  // | 'profile' | 'about' | 'contact' | 'myReservations' | 'orderFood'
+  // | 'roomRates' | 'reviewPay' | 'frontdesk' | 'fnb' | 'admin'
+  // | 'housekeeping' | 'maintenance'
   const [screen, setScreen]                   = useState('home');
   const [showReservation, setShowReservation] = useState(false);
   const [bookingDetails, setBookingDetails]   = useState(null);
@@ -314,6 +355,32 @@ export default function App() {
     } catch (e) {
       console.error('Logout error:', e);
     }
+  };
+
+  // ResetPasswordScreen's two exits. Either way the one-time recovery
+  // session shouldn't linger as a "signed in" state, so both sign out
+  // first — same shape as handleRegister above. onGoToLogin covers both
+  // a successful reset and backing out mid-form; onRequestNewLink is only
+  // for the expired/invalid case, sending the guest back to request a
+  // fresh link instead of a dead end.
+  const handleGoToLoginAfterRecovery = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('Sign out after password reset failed:', e.message);
+    }
+    setUser(null);
+    setScreen('login');
+  };
+
+  const handleRequestNewResetLink = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn('Sign out after cancelling password reset failed:', e.message);
+    }
+    setUser(null);
+    setScreen('forgotPassword');
   };
 
   // ── Booking flow ────────────────────────────────────────────────────
@@ -474,6 +541,12 @@ export default function App() {
           {screen === 'forgotPassword' && (
             <ForgotPasswordScreen
               onLoginPress={() => setScreen('login')}
+            />
+          )}
+          {screen === 'resetPassword' && (
+            <ResetPasswordScreen
+              onGoToLogin={handleGoToLoginAfterRecovery}
+              onRequestNewLink={handleRequestNewResetLink}
             />
           )}
 

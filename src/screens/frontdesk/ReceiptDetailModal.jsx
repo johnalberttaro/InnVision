@@ -11,11 +11,14 @@
 // on-brand receipt, and adds a working Print action.
 //
 // DESIGN: built to actually look like InnVision's receipt, not a
-// generic dialog — real logo, the app's warm cream/charcoal palette
-// (lightColors from utils/theme.js, hardcoded rather than the live
-// theme — a printed/paper receipt should stay light regardless of
-// whether the app itself is in dark mode), dashed section dividers
-// like a real paper receipt, and a rotated "PAID" stamp.
+// generic dialog — real logo, a clean white/neutral palette (the same
+// neutral tokens portalTheme.js uses for staff screens, hardcoded here
+// rather than imported — a printed/paper receipt should stay light
+// regardless of whether the app itself is in dark mode), dashed
+// section dividers like a real paper receipt, and a rotated "PAID"
+// stamp. Headings and body are both set in Inter — one typeface
+// throughout, no second display font — matching the rest of the staff
+// portal's own typography.
 //
 // PRINT, CROSS-PLATFORM: no new native dependency was added (the
 // project already learned that lesson once with expo-file-system on
@@ -70,15 +73,15 @@ const LOGO_SOURCE = require('../../../assets/logo.png');
 // always render light, the same way it would if this were a real
 // thermal-printer receipt at the front desk.
 const PRINT_COLORS = {
-  background: '#F5EFE6',
-  card: '#FDFAF4',
-  cardAlt: '#EFE7D8',
-  border: '#E2D6C1',
-  primary: '#332B22',
-  primaryTint: '#EFE7D8',
-  onPrimary: '#FDFAF4',
-  text: '#332B22',
-  textMuted: '#8A7C64',
+  background: '#FFFFFF',
+  card: '#FFFFFF',
+  cardAlt: '#F0F0F2',
+  border: '#E1E1E4',
+  primary: '#1A1A1E',
+  primaryTint: '#F0F0F2',
+  onPrimary: '#FFFFFF',
+  text: '#1A1A1E',
+  textMuted: '#6B6B70',
 };
 
 const PAYMENT_METHOD_LABELS = {
@@ -182,7 +185,7 @@ function buildReceiptHtml(receipt, folio, logoUri, roomCharges) {
 <meta charset="utf-8" />
 <title>Receipt ${escapeHtml(receipt.receiptNumber || '')}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
   html, body { background: ${PRINT_COLORS.background}; }
@@ -204,7 +207,7 @@ function buildReceiptHtml(receipt, folio, logoUri, roomCharges) {
   .header { text-align: center; margin-bottom: 4px; }
   .logo { width: 52px; height: 52px; object-fit: contain; margin-bottom: 8px; }
   .hotel-name {
-    font-family: 'Baloo 2', 'Inter', sans-serif;
+    font-family: 'Inter', -apple-system, Helvetica, Arial, sans-serif;
     font-weight: 800;
     font-size: 20px;
     color: ${PRINT_COLORS.primary};
@@ -216,7 +219,7 @@ function buildReceiptHtml(receipt, folio, logoUri, roomCharges) {
     display: inline-block;
     border: 2px solid #1E7B34;
     color: #1E7B34;
-    font-family: 'Baloo 2', 'Inter', sans-serif;
+    font-family: 'Inter', -apple-system, Helvetica, Arial, sans-serif;
     font-weight: 800;
     font-size: 13px;
     letter-spacing: 2px;
@@ -242,7 +245,7 @@ function buildReceiptHtml(receipt, folio, logoUri, roomCharges) {
   .row .value { text-align: right; font-weight: 600; color: ${PRINT_COLORS.text}; }
 
   .section-label {
-    font-family: 'Baloo 2', 'Inter', sans-serif;
+    font-family: 'Inter', -apple-system, Helvetica, Arial, sans-serif;
     font-weight: 600;
     font-size: 10.5px;
     letter-spacing: 0.6px;
@@ -261,13 +264,13 @@ function buildReceiptHtml(receipt, folio, logoUri, roomCharges) {
     margin-top: 14px;
   }
   .total-label {
-    font-family: 'Baloo 2', 'Inter', sans-serif;
+    font-family: 'Inter', -apple-system, Helvetica, Arial, sans-serif;
     font-weight: 600;
     font-size: 14px;
     color: ${PRINT_COLORS.primary};
   }
   .total-value {
-    font-family: 'Baloo 2', 'Inter', sans-serif;
+    font-family: 'Inter', -apple-system, Helvetica, Arial, sans-serif;
     font-weight: 800;
     font-size: 22px;
     color: ${PRINT_COLORS.primary};

@@ -7,10 +7,10 @@ import FoodMenuScreen from './FoodMenuScreen';
 import FrontDeskAccountsScreen from './FrontDeskAccountScreen';
 import FnbAccountsScreen from './FnbAccountScreen';
 import StaffRoleAccountScreen from './StaffRoleAccountScreen';
-import FrontDeskStaffScreen from './FrontDeskStaffScreen';
 import OccupancyReportScreen from './OccupancyReportScreen';
 import RevenueReportScreen from './RevenueReportScreen';
 import GuestRatingsScreen from './GuestRatingsScreen';
+import GuestFeedbackScreen from './GuestFeedbackScreen';
 import FrontDeskDashboardScreen from '../frontdesk/FrontDeskDashboardScreen';
 import ReservationsScreen from '../frontdesk/ReservationsScreen';
 import RoomManagementScreen from '../frontdesk/RoomManagementScreen';
@@ -186,9 +186,6 @@ function renderActiveScreen(props) {
   if (activeKey === 'staff:fnb') {
     return <FnbAccountsScreen />;
   }
-  if (activeKey === 'staff:frontdesk') {
-    return <FrontDeskStaffScreen />;
-  }
   if (activeKey === 'staff:housekeeping') {
     return <StaffRoleAccountScreen role="housekeeping" roleLabel="Housekeeping" />;
   }
@@ -203,6 +200,9 @@ function renderActiveScreen(props) {
   }
   if (activeKey === 'reports:ratings') {
     return <GuestRatingsScreen />;
+  }
+  if (activeKey === 'reports:feedback') {
+    return <GuestFeedbackScreen />;
   }
 
   // ── Front Desk Operations (admin can do everything a front desk member can) ──

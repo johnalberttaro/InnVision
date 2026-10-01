@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
@@ -11,10 +11,37 @@ import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 
 // Where Supabase sends the user after they click the reset link in their
-// email. MUST also be added to Supabase Dashboard → Authentication → URL
-// Configuration → Redirect URLs, or the reset link will be rejected.
-// TODO: replace with your actual deployed web URL / deep link scheme.
-const PASSWORD_RESET_REDIRECT_URL = 'https://your-app-domain.example.com/reset-password';
+// email — now landing on ResetPasswordScreen.jsx (wired up in App.jsx),
+// which actually lets them set a new password. Previously this was a
+// hardcoded placeholder domain, so the email went out but the link had
+// nowhere real to go.
+//
+// On web, computed from the page's own origin at send-time instead of a
+// fixed string — works automatically whether that's localhost during
+// `expo start --web`, a Vercel preview URL, or the production domain,
+// with nothing to hardcode or update on deploy.
+//
+// Native has no page origin to read, so FALLBACK_WEB_ORIGIN is used there
+// instead. That's fine, not a workaround: there's no deep-link scheme
+// registered for this app (see app.json — no "scheme" key), so the email
+// link always opens in a browser regardless of platform. A guest tapping
+// it on their phone just finishes the reset on this same web app, the
+// same as on desktop, then switches back to the app to log in.
+//
+// EITHER WAY: whatever origin(s) this resolves to MUST also be added to
+// Supabase Dashboard → Authentication → URL Configuration → Redirect
+// URLs (e.g. https://your-domain.vercel.app/* — wildcards are allowed,
+// which covers every preview deployment in one entry), or Supabase will
+// reject the redirect and the link will fail even though the email sends
+// fine.
+const FALLBACK_WEB_ORIGIN = 'https://your-app-domain.example.com'; // TODO: set to your deployed web URL if this app ships on native.
+
+const getPasswordResetRedirectUrl = () => {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    return `${window.location.origin}/reset-password`;
+  }
+  return `${FALLBACK_WEB_ORIGIN}/reset-password`;
+};
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -75,7 +102,7 @@ export default function ForgotPasswordScreen({ onLoginPress }) {
       // returns success either way for security, same end behavior the
       // old auth/user-not-found branch was manually faking.
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(value.trim(), {
-        redirectTo: PASSWORD_RESET_REDIRECT_URL,
+        redirectTo: getPasswordResetRedirectUrl(),
       });
       if (resetError) throw resetError;
       setSent(true);

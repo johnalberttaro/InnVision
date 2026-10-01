@@ -21,8 +21,8 @@ import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
  * MyProfileScreen — front desk staff's own self-service profile view,
  * reached by tapping their name at the bottom of FrontDeskSidebar.jsx.
  *
- * Distinct from FrontDeskStaffScreen.jsx (the admin-facing "Front Desk
- * Roster" that manages EVERYONE's profiles) — this shows only the
+ * Distinct from FrontDeskAccountScreen.jsx (the admin-facing "Front Desk
+ * Accounts" screen that manages EVERYONE's profiles) — this shows only the
  * signed-in staff member's own record, and only lets them edit what a
  * real employee should reasonably self-manage: their profile photo,
  * phone number, and their own password. Position, access level,
