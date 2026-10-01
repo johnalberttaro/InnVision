@@ -13,6 +13,7 @@ import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import KpiCard from '../../components/dashboard/KpiCard';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import NewFoodOrderModal from './NewFoodOrderModal';
 
 /**
  * FoodOrdersScreen — Food & Dining, Phase 2 of the Food Service module.
@@ -56,6 +57,21 @@ import ConfirmDialog from '../../components/shared/ConfirmDialog';
  * (OrderHistoryScreen.jsx) already keeps every delivered/cancelled
  * order permanently. This screen is meant to answer "what just
  * happened / what still needs doing," not to double as that archive.
+ *
+ * "New Order" (NewFoodOrderModal.jsx) is the other thing this screen
+ * adds beyond Phase 2's original scope: a way for Front Desk to place
+ * an order FOR a guest, not just react to one a guest placed themselves.
+ * A walk-in guest (WalkInScreen.jsx) has no login/account at all, so
+ * OrderFoodScreen.jsx — which requires one — is simply unreachable for
+ * them; this is the only way their order gets into food_orders at all.
+ * It also covers the ordinary case of a guest who'd rather just call
+ * the front desk than open the app. Inserted with placed_by:
+ * 'frontdesk' (see the order card's "Walk-in · " label below, which
+ * existed in this screen before this modal did, with nothing that ever
+ * set that value until now). Requires
+ * 20261001_frontdesk_food_order_insert.sql to have been run — it adds
+ * the INSERT policies this write needs and makes food_orders.user_id
+ * nullable for a walk-in's null user_id.
  *
  * Props:
  *  - staffUid, staffName: the signed-in front desk user (not currently
@@ -132,6 +148,7 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
   const [busyOrderId, setBusyOrderId] = useState(null);
   const [cancelTarget, setCancelTarget] = useState(null); // order being confirmed for cancellation
   const [actionError, setActionError] = useState('');
+  const [newOrderModalVisible, setNewOrderModalVisible] = useState(false);
 
   const orderToCamel = (row) => ({
     id: row.id,
@@ -278,10 +295,18 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.title}>Food Orders</Text>
           <Text style={styles.subtitle}>Incoming room service orders — escalate them to Kitchen/F&B.</Text>
         </View>
+        <TouchableOpacity
+          style={styles.newOrderBtn}
+          onPress={() => setNewOrderModalVisible(true)}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="add" size={16} color={colors.white} />
+          <Text style={styles.newOrderBtnText}>New Order</Text>
+        </TouchableOpacity>
       </View>
 
       {!!actionError && (
@@ -420,6 +445,11 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
         onCancel={() => setCancelTarget(null)}
         onConfirm={handleConfirmCancel}
       />
+
+      <NewFoodOrderModal
+        visible={newOrderModalVisible}
+        onClose={() => setNewOrderModalVisible(false)}
+      />
     </View>
   );
 }
@@ -430,6 +460,9 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic', padding: spacing.lg },
 
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.lg,
     backgroundColor: colors.white,
@@ -438,6 +471,12 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 20, fontFamily: fonts.headingExtraBold, color: colors.primary },
   subtitle: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
+  newOrderBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: colors.primary, borderRadius: 999,
+    paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+  },
+  newOrderBtnText: { fontSize: 12.5, fontFamily: fonts.bodySemiBold, color: colors.white },
 
   errorBanner: {
     flexDirection: 'row', alignItems: 'center', gap: spacing.sm,

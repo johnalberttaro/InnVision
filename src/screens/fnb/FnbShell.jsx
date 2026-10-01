@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, StyleSheet, useWindowDimensions } from 'react-native';
 import FnbSidebar from './FnbSidebar';
 import FnbDashboardScreen from './FnbDashboardScreen';
 import KitchenOrdersScreen from './KitchenOrdersScreen';
@@ -8,8 +7,9 @@ import OrderHistoryScreen from './OrderHistoryScreen';
 import MenuAvailabilityScreen from './MenuAvailabilityScreen';
 import MyProfileScreen from '../frontdesk/MyProfileScreen';
 import DashboardFooter from '../../components/shared/DashboardFooter';
+import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, fonts } from '../../utils/portalTheme';
+import { colors } from '../../utils/portalTheme';
 
 const WIDE_BREAKPOINT = 1024;
 
@@ -35,15 +35,20 @@ const WIDE_BREAKPOINT = 1024;
  *    screen only ever needed `staffUid` to begin with, so it was
  *    already role-agnostic; no changes needed to share it here.
  *
- * No DashboardNavbar reuse here. That shared component's bell now
- * covers new reservations, new food orders, and Charge-to-Room
- * postings — all Front Desk/Admin concerns (staff deciding whether to
- * escalate, check someone in, or reconcile a folio), not things Kitchen
- * staff act on from their own portal; this screen already has its own
- * new-order alert system built in (see playNewOrderChime()/
- * triggerNewOrderPulse() in KitchenOrdersScreen.jsx, which this screen
- * embeds), so there's nothing here for that bell to usefully add. Keeps
- * its own plain top bar — title + mobile menu button only.
+ * Uses DashboardNavbar.jsx directly for its top bar (title, bell,
+ * clock + weather) rather than a hand-rolled one, scoped down with
+ * notificationTypes={['foodorder_escalated']} — fires when Front Desk
+ * escalates an order to the kitchen (food_orders.escalated_at), NOT
+ * when a guest first places one. Reservations, room charges, and plain
+ * "new food order" (Front Desk's own signal to go escalate it) are
+ * concerns this portal has no screen for or no action to take on yet.
+ * KitchenOrdersScreen.jsx (see playNewOrderChime()/
+ * triggerNewOrderPulse() there, which this screen embeds) still
+ * handles the in-the-moment sound + visual pulse while actively on
+ * that screen; this bell is what lets a staff member sitting on
+ * Dashboard/Order History/Menu Availability notice a new order came in
+ * and jump straight to it, which the chime alone can't do from outside
+ * Kitchen Orders.
  *
  * Props:
  *  - onLoggedOut: () => void
@@ -95,6 +100,14 @@ export default function FnbShell({ onLoggedOut, staffName, staffUid }) {
   // navigation.
   const handleNavigate = (key) => setActiveKey(key);
 
+  // Bell only ever carries 'foodorder_escalated' here (see
+  // notificationTypes below), so the mapping is a one-liner — straight
+  // to Kitchen Orders, the same screen the in-app chime/pulse already
+  // lives on.
+  const handleNotificationNavigate = (type) => {
+    if (type === 'foodorder_escalated') handleNavigate('kitchenorders');
+  };
+
   return (
     <View style={styles.screen}>
       <FnbSidebar
@@ -108,14 +121,14 @@ export default function FnbShell({ onLoggedOut, staffName, staffUid }) {
       />
 
       <View style={styles.contentArea}>
-        <View style={styles.topBar}>
-          {!isWide && (
-            <TouchableOpacity onPress={() => setMobileSidebarOpen(true)} style={styles.menuButton} accessibilityLabel="Open menu">
-              <Ionicons name="menu" size={22} color={colors.primary} />
-            </TouchableOpacity>
-          )}
-          <Text style={styles.topBarTitle}>Inn<Text style={styles.topBarTitleAccent}>Vision</Text> Kitchen / F&amp;B</Text>
-        </View>
+        <DashboardNavbar
+          title="InnVision Kitchen / F&B"
+          isWide={isWide}
+          onMenuPress={() => setMobileSidebarOpen(true)}
+          staffUid={staffUid}
+          notificationTypes={['foodorder_escalated']}
+          onNotificationNavigate={handleNotificationNavigate}
+        />
 
         <View style={styles.screenContent}>
           {activeKey === 'profile:me' ? (
@@ -140,13 +153,5 @@ export default function FnbShell({ onLoggedOut, staffName, staffUid }) {
 const styles = StyleSheet.create({
   screen: { flex: 1, flexDirection: 'row', backgroundColor: colors.background },
   contentArea: { flex: 1 },
-  topBar: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
-    backgroundColor: colors.white, borderBottomWidth: 1, borderBottomColor: colors.border,
-  },
-  menuButton: { marginRight: spacing.md },
-  topBarTitle: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.primary },
-  topBarTitleAccent: { color: '#E1A005' },
   screenContent: { flex: 1 },
 });

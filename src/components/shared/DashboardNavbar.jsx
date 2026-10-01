@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../services/supabase';
 import { formatCurrency } from '../../utils/Roomsservice';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
+import DateWeatherCluster from './DateWeatherCluster';
 
 const LAST_SEEN_KEY_PREFIX = 'navbar-notifications-last-seen:';
 
@@ -24,8 +25,18 @@ const NOTIF_META = {
   reservation: { icon: 'calendar-outline', color: '#2C5EA8', bg: '#E3ECF8', title: 'New reservation' },
   foodorder: { icon: 'restaurant-outline', color: '#B3792A', bg: '#F5E9D6', title: 'New food order' },
   roomcharge: { icon: 'receipt-outline', color: '#1E7B34', bg: '#DFF5E1', title: 'Charged to room' },
+  // Same blue KitchenOrdersScreen.jsx's own STATUS_META.escalated and
+  // FoodOrdersScreen.jsx's "Sent to Kitchen" meta already use for this
+  // exact status — reused here rather than picking a new color, since
+  // it's the same real-world event.
+  foodorder_escalated: { icon: 'flame-outline', color: '#2C5EA8', bg: '#E3ECF8', title: 'New escalated order' },
 };
-const ALL_TYPES = Object.keys(NOTIF_META);
+// Default set when a shell doesn't pass notificationTypes (Front Desk).
+// Deliberately NOT Object.keys(NOTIF_META) — foodorder_escalated exists
+// only for FnbShell.jsx (see the prop doc below) and must stay opt-in,
+// or Front Desk would get pinged a second time for an escalation it
+// just performed itself.
+const ALL_TYPES = ['reservation', 'foodorder', 'roomcharge'];
 
 // Same relative-time formatting KitchenOrdersScreen.jsx's order cards
 // use, kept consistent rather than inventing a second version of it.
@@ -64,46 +75,9 @@ function roomFromChargeNote(note) {
   return match ? match[1] : null;
 }
 
-// Hotel's fixed real-world location (matches the "Cebu City" label the
-// bar shows). A training hotel doesn't move, so this is a constant
-// rather than something read off device geolocation — that would also
-// mean a permission prompt for no real benefit, and wouldn't behave the
-// same way on the web build anyway.
-const CEBU_CITY_COORDS = { latitude: 10.3157, longitude: 123.8854 };
-// Current conditions don't change fast enough to justify polling more
-// often than this.
-const WEATHER_REFRESH_MS = 15 * 60 * 1000;
-
-// Open-Meteo's WMO weathercode → icon + accent color
-// (https://open-meteo.com/en/docs). Not every code is listed
-// individually — variants that read the same at a glance (every
-// rain-shower code, say) share one entry, and anything unlisted falls
-// back to DEFAULT_WEATHER_META rather than showing nothing.
-const WEATHER_CODE_META = {
-  0: { icon: 'sunny-outline', color: '#D9930E', label: 'Clear' },
-  1: { icon: 'partly-sunny-outline', color: '#D9930E', label: 'Mostly clear' },
-  2: { icon: 'partly-sunny-outline', color: '#D9930E', label: 'Partly cloudy' },
-  3: { icon: 'cloud-outline', color: '#8A8F98', label: 'Overcast' },
-  45: { icon: 'cloud-outline', color: '#8A8F98', label: 'Fog' },
-  48: { icon: 'cloud-outline', color: '#8A8F98', label: 'Fog' },
-  51: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Drizzle' },
-  53: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Drizzle' },
-  55: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Drizzle' },
-  61: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Rain' },
-  63: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Rain' },
-  65: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Heavy rain' },
-  80: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Rain showers' },
-  81: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Rain showers' },
-  82: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Heavy showers' },
-  95: { icon: 'thunderstorm-outline', color: '#5B4B8A', label: 'Thunderstorm' },
-  96: { icon: 'thunderstorm-outline', color: '#5B4B8A', label: 'Thunderstorm' },
-  99: { icon: 'thunderstorm-outline', color: '#5B4B8A', label: 'Thunderstorm' },
-};
-const DEFAULT_WEATHER_META = { icon: 'partly-sunny-outline', color: colors.primary, label: 'Weather' };
-
-function weatherMetaFor(code) {
-  return WEATHER_CODE_META[code] || DEFAULT_WEATHER_META;
-}
+// Live clock + current weather (hardcoded to Cebu City — see
+// DateWeatherCluster.jsx for why) now lives in its own component,
+// shared with FnbShell.jsx's own top bar rather than duplicated there.
 
 /**
  * DashboardNavbar — shared top bar for FrontDeskShell.jsx, AdminShell.jsx
@@ -162,16 +136,25 @@ function weatherMetaFor(code) {
  * would be reachable if you tapped a "new food order" row there. Admin
  * passes ['reservation', 'roomcharge'] to leave that source out
  * entirely rather than showing a row that goes nowhere. Defaults to all
- * three.
+ * three (ALL_TYPES) when a shell passes nothing.
  *
- * Also renders a live clock and current weather (hardcoded to Cebu
- * City — this is a fixed training hotel, not a device location) in the
- * bar's right-hand cluster, next to the bell. Self-contained: no new
- * props, since neither depends on anything a shell would need to
- * configure. Hidden when !isWide (same breakpoint as the hamburger
- * button) so the bar doesn't get cramped on a phone-width screen — the
- * bell stays visible there since it's the one thing staff actually need
- * to act on.
+ * A fourth type, 'foodorder_escalated', exists only for FnbShell.jsx —
+ * deliberately left out of ALL_TYPES/the default, since it fires on
+ * food_orders.escalated_at (set by Front Desk's own "Escalate to
+ * Kitchen" action in FoodOrdersScreen.jsx), not on order creation.
+ * Front Desk's existing 'foodorder' notification already covers "a
+ * guest just placed an order, go escalate it"; F&B needs the opposite
+ * signal — "an order just became mine to prepare" — a different moment
+ * on the same table, so it gets its own type rather than overloading
+ * 'foodorder' with two meanings.
+ *
+ * Also renders a live clock and current weather in the bar's
+ * right-hand cluster, next to the bell, via the shared
+ * DateWeatherCluster component (components/shared/DateWeatherCluster.jsx
+ * — also used by FnbShell.jsx's own top bar, same reasoning there).
+ * Hidden when !isWide (same breakpoint as the hamburger button) so the
+ * bar doesn't get cramped on a phone-width screen — the bell stays
+ * visible there since it's the one thing staff actually need to act on.
  *
  * Props:
  *  - title: string — e.g. "InnVision Front Desk" / "InnVision Admin"
@@ -193,10 +176,12 @@ export default function DashboardNavbar({
   const wantReservations = types.includes('reservation');
   const wantFoodOrders = types.includes('foodorder');
   const wantRoomCharges = types.includes('roomcharge');
+  const wantEscalatedFoodOrders = types.includes('foodorder_escalated');
 
   const [reservationRows, setReservationRows] = useState([]);
   const [foodOrderRows, setFoodOrderRows] = useState([]);
   const [roomChargeRows, setRoomChargeRows] = useState([]);
+  const [escalatedFoodOrderRows, setEscalatedFoodOrderRows] = useState([]);
   const [panelOpen, setPanelOpen] = useState(false);
   const [lastSeenAt, setLastSeenAt] = useState(null);
   // Measured, not guessed (same reasoning as TapeChartScreen.jsx's own
@@ -205,49 +190,6 @@ export default function DashboardNavbar({
   // 60 is a reasonable pre-measurement fallback (~spacing.md*2 padding
   // plus the 36px icon), only ever visible for one frame.
   const [barHeight, setBarHeight] = useState(60);
-
-  // ── Live clock + weather ────────────────────────────────────────────
-  // Independent of staffUid/notificationTypes — these two effects don't
-  // touch anything above, they just drive the right-hand info cluster.
-  // Named clockNow rather than just "now" — togglePanel below already
-  // has its own local `now` (the last-seen timestamp), and shadowing it
-  // would make both harder to follow.
-  const [clockNow, setClockNow] = useState(new Date());
-  const [weather, setWeather] = useState(null); // { temp, code } | null while loading/unavailable
-
-  useEffect(() => {
-    const clockInterval = setInterval(() => setClockNow(new Date()), 1000);
-    return () => clearInterval(clockInterval);
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadWeather = async () => {
-      try {
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${CEBU_CITY_COORDS.latitude}&longitude=${CEBU_CITY_COORDS.longitude}&current_weather=true`;
-        const res = await fetch(url);
-        const json = await res.json();
-        if (!cancelled && json?.current_weather) {
-          setWeather({ temp: json.current_weather.temperature, code: json.current_weather.weathercode });
-        }
-      } catch (err) {
-        console.error('Failed to load weather:', err);
-        // Leave `weather` as whatever it last was — a stale reading beats
-        // the block disappearing, and a first-load failure just keeps
-        // showing the "—°C" placeholder below instead of throwing.
-      }
-    };
-    loadWeather();
-    const weatherInterval = setInterval(loadWeather, WEATHER_REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(weatherInterval);
-    };
-  }, []);
-
-  const dateLine = `Today, ${clockNow.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
-  const dayTimeLine = `${clockNow.toLocaleDateString('en-US', { weekday: 'short' })} • ${clockNow.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-  const weatherMeta = weatherMetaFor(weather?.code);
 
   const storageKey = `${LAST_SEEN_KEY_PREFIX}${staffUid || 'shared'}`;
 
@@ -302,6 +244,39 @@ export default function DashboardNavbar({
   }, [wantFoodOrders]);
 
   useEffect(() => {
+    if (!wantEscalatedFoodOrders) return;
+    const loadEscalatedFoodOrders = async () => {
+      // escalated_at IS NOT NULL — "this order escalated at some
+      // point", same as every other source here: a fact that stays
+      // true (and stays in the list) regardless of what the order's
+      // CURRENT status later becomes, exactly like a reservation
+      // notification doesn't disappear once the guest checks in.
+      // Filtering on status = 'escalated' instead would make an order
+      // silently vanish from this list the moment kitchen staff start
+      // preparing it, which would look like the badge count randomly
+      // dropping for no visible reason.
+      const { data, error } = await supabase
+        .from('food_orders')
+        .select('id, guest_name, room_number, total_amount, escalated_at')
+        .not('escalated_at', 'is', null)
+        .order('escalated_at', { ascending: false })
+        .limit(MAX_PER_SOURCE);
+      if (error) {
+        console.error('Failed to load escalated food order notifications:', error);
+        return;
+      }
+      setEscalatedFoodOrderRows(data || []);
+    };
+    loadEscalatedFoodOrders();
+
+    const channel = supabase
+      .channel('navbar-notifications-escalated-foodorders')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'food_orders' }, loadEscalatedFoodOrders)
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [wantEscalatedFoodOrders]);
+
+  useEffect(() => {
     if (!wantRoomCharges) return;
     const loadRoomCharges = async () => {
       const { data, error } = await supabase
@@ -347,10 +322,16 @@ export default function DashboardNavbar({
         subtitle: `${t.guest_name || 'Guest'}${room ? ` · Room ${room}` : ''} · ${formatCurrency(t.amount)}`,
       };
     });
-    return [...fromReservations, ...fromFoodOrders, ...fromRoomCharges]
+    const fromEscalatedFoodOrders = escalatedFoodOrderRows.map((o) => ({
+      key: `foodorder_escalated-${o.id}`,
+      type: 'foodorder_escalated',
+      occurredAt: o.escalated_at,
+      subtitle: `${o.guest_name || 'Guest'} · Room ${o.room_number || '—'} · ${formatCurrency(o.total_amount)}`,
+    }));
+    return [...fromReservations, ...fromFoodOrders, ...fromRoomCharges, ...fromEscalatedFoodOrders]
       .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
       .slice(0, MAX_TOTAL);
-  }, [reservationRows, foodOrderRows, roomChargeRows]);
+  }, [reservationRows, foodOrderRows, roomChargeRows, escalatedFoodOrderRows]);
 
   const unseenCount = useMemo(() => {
     if (!lastSeenAt) return items.length; // never opened the panel on this device — everything's new
@@ -422,24 +403,7 @@ export default function DashboardNavbar({
           {isWide && (
             <>
               <View style={styles.divider} />
-
-              <View style={styles.infoBlock}>
-                <Ionicons name="calendar-outline" size={16} color={colors.primary} />
-                <View>
-                  <Text style={styles.infoPrimary}>{dateLine}</Text>
-                  <Text style={styles.infoSecondary}>{dayTimeLine}</Text>
-                </View>
-              </View>
-
-              <View style={styles.divider} />
-
-              <View style={styles.infoBlock}>
-                <Ionicons name={weatherMeta.icon} size={18} color={weatherMeta.color} />
-                <View>
-                  <Text style={styles.infoPrimary}>{weather ? `${Math.round(weather.temp)}°C` : '—°C'}</Text>
-                  <Text style={styles.infoSecondary}>Cebu City</Text>
-                </View>
-              </View>
+              <DateWeatherCluster />
             </>
           )}
         </View>
@@ -529,13 +493,12 @@ const styles = StyleSheet.create({
   },
   badgeText: { fontSize: 9, fontFamily: fonts.bodySemiBold, color: colors.white },
 
-  // Clock + weather cluster — divider is a plain 1px rule the height of
-  // the two text lines beside it, not the full bar, so it reads as
-  // separating these blocks rather than spanning the whole header.
+  // Divider before the date/weather cluster — DateWeatherCluster.jsx
+  // owns a matching divider of its own, between the date and weather
+  // blocks it renders. A plain 1px rule the height of the two text
+  // lines beside it, not the full bar, so it reads as separating the
+  // bell from the cluster rather than spanning the whole header.
   divider: { width: 1, height: 28, backgroundColor: colors.border },
-  infoBlock: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  infoPrimary: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text },
-  infoSecondary: { fontSize: 10.5, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1 },
 
   // The Modal's own overlay — transparent (a notification dropdown
   // shouldn't dim the whole screen the way a confirm dialog does) and
