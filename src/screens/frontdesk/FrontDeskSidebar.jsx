@@ -183,7 +183,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole,
             <Text style={styles.logoBadgeText}>LOGO</Text>
           </View>
         )}
-        <Text style={styles.brandName}>InnVision</Text>
+        <Text style={styles.brandName}>Inn<Text style={styles.brandNameAccent}>Vision</Text></Text>
         <Text style={styles.brandSubtitle}>Front Desk Staff Portal</Text>
       </View>
 
@@ -370,6 +370,13 @@ const styles = StyleSheet.create({
     fontFamily: fonts.headingExtraBold,
     color: colors.white,
     letterSpacing: 0.3,
+  },
+  // Sampled from the actual logo mark (assets/logo.png) so "Vision"
+  // matches the icon's gold rather than an eyeballed approximation.
+  // Nested <Text> inherits brandName's fontSize/fontFamily/letterSpacing
+  // automatically and only overrides color.
+  brandNameAccent: {
+    color: '#E1A005',
   },
   brandSubtitle: {
     fontSize: 10,

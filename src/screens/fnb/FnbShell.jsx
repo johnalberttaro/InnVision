@@ -114,7 +114,7 @@ export default function FnbShell({ onLoggedOut, staffName, staffUid }) {
               <Ionicons name="menu" size={22} color={colors.primary} />
             </TouchableOpacity>
           )}
-          <Text style={styles.topBarTitle}>InnVision Kitchen / F&amp;B</Text>
+          <Text style={styles.topBarTitle}>Inn<Text style={styles.topBarTitleAccent}>Vision</Text> Kitchen / F&amp;B</Text>
         </View>
 
         <View style={styles.screenContent}>
@@ -147,5 +147,6 @@ const styles = StyleSheet.create({
   },
   menuButton: { marginRight: spacing.md },
   topBarTitle: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.primary },
+  topBarTitleAccent: { color: '#E1A005' },
   screenContent: { flex: 1 },
 });

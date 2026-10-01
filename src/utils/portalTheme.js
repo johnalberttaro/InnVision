@@ -38,7 +38,7 @@
 // values — red-for-error is a universal convention that shouldn't
 // change just because the base palette did.
 
-import { spacing, radius, fonts } from './theme';
+import { spacing, radius, fonts as guestFonts } from './theme';
 
 export const portalColors = {
   background: '#F7F7F8',
@@ -95,8 +95,30 @@ export const portalColors = {
 // imports it statically rather than through useTheme().
 export const colors = portalColors;
 
-// Spacing, radius, and fonts are unchanged from the guest theme — this
-// request was about color only, not typography or layout rhythm — so
-// these are re-exported directly from theme.js rather than duplicated,
-// keeping one single source of truth for them.
-export { spacing, radius, fonts };
+// Spacing and radius are unchanged from the guest theme — re-exported
+// directly from theme.js rather than duplicated, keeping one single
+// source of truth for them.
+export { spacing, radius };
+
+// Portal-only font override: dashboards (Admin, Front Desk, Kitchen,
+// Housekeeping, Maintenance) use Inter for headings too, not just body
+// text — one consistent, highly-legible family for dense dashboard UI
+// (tables, forms, cards, navigation), rather than theme.js's heading/
+// body pairing (Baloo 2 + Inter), which guest-facing screens keep as
+// before. headingSemiBold/headingMedium just reuse the exact same
+// Inter weights already loaded for body*SemiBold/Medium (see App.jsx's
+// useFonts() call) rather than registering Inter a second time under a
+// different name.
+//
+// Every portal screen already imports `fonts` from this file, not
+// theme.js directly (see the ROLLOUT note above) — so this is the only
+// place that needs to change for the whole dashboard to pick it up.
+export const fonts = {
+  headingExtraBold: 'Inter_800ExtraBold',
+  headingBold: 'Inter_700Bold',
+  headingSemiBold: guestFonts.bodySemiBold, // Inter_600SemiBold
+  headingMedium: guestFonts.bodyMedium,     // Inter_500Medium
+  body: guestFonts.body,
+  bodyMedium: guestFonts.bodyMedium,
+  bodySemiBold: guestFonts.bodySemiBold,
+};

@@ -188,7 +188,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
             <Text style={styles.logoBadgeText}>LOGO</Text>
           </View>
         )}
-        <Text style={styles.brandName}>InnVision</Text>
+        <Text style={styles.brandName}>Inn<Text style={styles.brandNameAccent}>Vision</Text></Text>
         <Text style={styles.brandSubtitle}>Admin Portal</Text>
       </View>
 
@@ -383,6 +383,9 @@ const styles = StyleSheet.create({
     fontFamily: fonts.headingExtraBold,
     color: colors.white,
     letterSpacing: 0.3,
+  },
+  brandNameAccent: {
+    color: '#E1A005',
   },
   brandSubtitle: {
     fontSize: 10,

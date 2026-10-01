@@ -81,7 +81,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, onClose, staffName, s
           </TouchableOpacity>
         )}
         <Image source={LOGO_SOURCE} style={styles.logoImage} resizeMode="contain" />
-        <Text style={styles.brandName}>InnVision</Text>
+        <Text style={styles.brandName}>Inn<Text style={styles.brandNameAccent}>Vision</Text></Text>
         <Text style={styles.brandSubtitle}>Maintenance Portal</Text>
       </View>
 
@@ -202,6 +202,7 @@ const styles = StyleSheet.create({
   },
   logoImage: { width: 44, height: 44, marginBottom: spacing.sm },
   brandName: { fontSize: 17, fontFamily: fonts.headingExtraBold, color: colors.white, letterSpacing: 0.3 },
+  brandNameAccent: { color: '#E1A005' },
   brandSubtitle: { fontSize: 10, fontFamily: fonts.body, color: 'rgba(255,255,255,0.6)', textAlign: 'center', marginTop: 2 },
 
   menuScroll: { flex: 1, paddingVertical: spacing.sm },

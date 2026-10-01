@@ -158,7 +158,7 @@ export default function MaintenanceShell({ onLoggedOut, staffName, staffUid }) {
               )}
             </TouchableOpacity>
           )}
-          <Text style={styles.topBarTitle}>InnVision Maintenance</Text>
+          <Text style={styles.topBarTitle}>Inn<Text style={styles.topBarTitleAccent}>Vision</Text> Maintenance</Text>
         </View>
 
         <View style={styles.screenContent}>
@@ -196,5 +196,6 @@ const styles = StyleSheet.create({
   },
   topBarBadgeText: { fontSize: 9, fontFamily: fonts.bodySemiBold, color: '#FFFFFF' },
   topBarTitle: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.primary },
+  topBarTitleAccent: { color: '#E1A005' },
   screenContent: { flex: 1 },
 });

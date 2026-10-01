@@ -170,7 +170,7 @@ export default function HousekeepingShell({ onLoggedOut, staffName, staffUid }) 
               )}
             </TouchableOpacity>
           )}
-          <Text style={styles.topBarTitle}>InnVision Housekeeping</Text>
+          <Text style={styles.topBarTitle}>Inn<Text style={styles.topBarTitleAccent}>Vision</Text> Housekeeping</Text>
         </View>
 
         <View style={styles.screenContent}>
@@ -208,5 +208,6 @@ const styles = StyleSheet.create({
   },
   topBarBadgeText: { fontSize: 9, fontFamily: fonts.bodySemiBold, color: '#FFFFFF' },
   topBarTitle: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.primary },
+  topBarTitleAccent: { color: '#E1A005' },
   screenContent: { flex: 1 },
 });

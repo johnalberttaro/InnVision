@@ -64,6 +64,47 @@ function roomFromChargeNote(note) {
   return match ? match[1] : null;
 }
 
+// Hotel's fixed real-world location (matches the "Cebu City" label the
+// bar shows). A training hotel doesn't move, so this is a constant
+// rather than something read off device geolocation — that would also
+// mean a permission prompt for no real benefit, and wouldn't behave the
+// same way on the web build anyway.
+const CEBU_CITY_COORDS = { latitude: 10.3157, longitude: 123.8854 };
+// Current conditions don't change fast enough to justify polling more
+// often than this.
+const WEATHER_REFRESH_MS = 15 * 60 * 1000;
+
+// Open-Meteo's WMO weathercode → icon + accent color
+// (https://open-meteo.com/en/docs). Not every code is listed
+// individually — variants that read the same at a glance (every
+// rain-shower code, say) share one entry, and anything unlisted falls
+// back to DEFAULT_WEATHER_META rather than showing nothing.
+const WEATHER_CODE_META = {
+  0: { icon: 'sunny-outline', color: '#D9930E', label: 'Clear' },
+  1: { icon: 'partly-sunny-outline', color: '#D9930E', label: 'Mostly clear' },
+  2: { icon: 'partly-sunny-outline', color: '#D9930E', label: 'Partly cloudy' },
+  3: { icon: 'cloud-outline', color: '#8A8F98', label: 'Overcast' },
+  45: { icon: 'cloud-outline', color: '#8A8F98', label: 'Fog' },
+  48: { icon: 'cloud-outline', color: '#8A8F98', label: 'Fog' },
+  51: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Drizzle' },
+  53: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Drizzle' },
+  55: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Drizzle' },
+  61: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Rain' },
+  63: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Rain' },
+  65: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Heavy rain' },
+  80: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Rain showers' },
+  81: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Rain showers' },
+  82: { icon: 'rainy-outline', color: '#2C5EA8', label: 'Heavy showers' },
+  95: { icon: 'thunderstorm-outline', color: '#5B4B8A', label: 'Thunderstorm' },
+  96: { icon: 'thunderstorm-outline', color: '#5B4B8A', label: 'Thunderstorm' },
+  99: { icon: 'thunderstorm-outline', color: '#5B4B8A', label: 'Thunderstorm' },
+};
+const DEFAULT_WEATHER_META = { icon: 'partly-sunny-outline', color: colors.primary, label: 'Weather' };
+
+function weatherMetaFor(code) {
+  return WEATHER_CODE_META[code] || DEFAULT_WEATHER_META;
+}
+
 /**
  * DashboardNavbar — shared top bar for FrontDeskShell.jsx, AdminShell.jsx
  * (and, in principle, any other shell that wants it — see FnbShell.jsx's
@@ -123,6 +164,15 @@ function roomFromChargeNote(note) {
  * entirely rather than showing a row that goes nowhere. Defaults to all
  * three.
  *
+ * Also renders a live clock and current weather (hardcoded to Cebu
+ * City — this is a fixed training hotel, not a device location) in the
+ * bar's right-hand cluster, next to the bell. Self-contained: no new
+ * props, since neither depends on anything a shell would need to
+ * configure. Hidden when !isWide (same breakpoint as the hamburger
+ * button) so the bar doesn't get cramped on a phone-width screen — the
+ * bell stays visible there since it's the one thing staff actually need
+ * to act on.
+ *
  * Props:
  *  - title: string — e.g. "InnVision Front Desk" / "InnVision Admin"
  *  - isWide: boolean — whether to show the hamburger button
@@ -155,6 +205,49 @@ export default function DashboardNavbar({
   // 60 is a reasonable pre-measurement fallback (~spacing.md*2 padding
   // plus the 36px icon), only ever visible for one frame.
   const [barHeight, setBarHeight] = useState(60);
+
+  // ── Live clock + weather ────────────────────────────────────────────
+  // Independent of staffUid/notificationTypes — these two effects don't
+  // touch anything above, they just drive the right-hand info cluster.
+  // Named clockNow rather than just "now" — togglePanel below already
+  // has its own local `now` (the last-seen timestamp), and shadowing it
+  // would make both harder to follow.
+  const [clockNow, setClockNow] = useState(new Date());
+  const [weather, setWeather] = useState(null); // { temp, code } | null while loading/unavailable
+
+  useEffect(() => {
+    const clockInterval = setInterval(() => setClockNow(new Date()), 1000);
+    return () => clearInterval(clockInterval);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadWeather = async () => {
+      try {
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${CEBU_CITY_COORDS.latitude}&longitude=${CEBU_CITY_COORDS.longitude}&current_weather=true`;
+        const res = await fetch(url);
+        const json = await res.json();
+        if (!cancelled && json?.current_weather) {
+          setWeather({ temp: json.current_weather.temperature, code: json.current_weather.weathercode });
+        }
+      } catch (err) {
+        console.error('Failed to load weather:', err);
+        // Leave `weather` as whatever it last was — a stale reading beats
+        // the block disappearing, and a first-load failure just keeps
+        // showing the "—°C" placeholder below instead of throwing.
+      }
+    };
+    loadWeather();
+    const weatherInterval = setInterval(loadWeather, WEATHER_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(weatherInterval);
+    };
+  }, []);
+
+  const dateLine = `Today, ${clockNow.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`;
+  const dayTimeLine = `${clockNow.toLocaleDateString('en-US', { weekday: 'short' })} • ${clockNow.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  const weatherMeta = weatherMetaFor(weather?.code);
 
   const storageKey = `${LAST_SEEN_KEY_PREFIX}${staffUid || 'shared'}`;
 
@@ -299,22 +392,57 @@ export default function DashboardNavbar({
               <View style={styles.menuLine} />
             </TouchableOpacity>
           )}
-          <Text style={styles.title} numberOfLines={1}>{title}</Text>
+          <Text style={styles.title} numberOfLines={1}>
+            {title.startsWith('InnVision') ? (
+              <>Inn<Text style={styles.titleAccent}>Vision</Text>{title.slice('InnVision'.length)}</>
+            ) : (
+              title
+            )}
+          </Text>
         </View>
 
-        <TouchableOpacity
-          style={styles.notificationIconWrap}
-          onPress={togglePanel}
-          accessibilityLabel="View notifications"
-          activeOpacity={0.7}
-        >
-          <Ionicons name="notifications-outline" size={20} color={colors.primary} />
-          {unseenCount > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{unseenCount > 99 ? '99+' : unseenCount}</Text>
-            </View>
+        <View style={styles.right}>
+          <TouchableOpacity
+            style={styles.notificationIconWrap}
+            onPress={togglePanel}
+            accessibilityLabel="View notifications"
+            activeOpacity={0.7}
+          >
+            <Ionicons name="notifications-outline" size={20} color={colors.primary} />
+            {unseenCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{unseenCount > 99 ? '99+' : unseenCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          {/* Hidden under the wide breakpoint, same reasoning as the
+              header comment: keeps the bar from overflowing next to the
+              hamburger button on a phone-width screen. */}
+          {isWide && (
+            <>
+              <View style={styles.divider} />
+
+              <View style={styles.infoBlock}>
+                <Ionicons name="calendar-outline" size={16} color={colors.primary} />
+                <View>
+                  <Text style={styles.infoPrimary}>{dateLine}</Text>
+                  <Text style={styles.infoSecondary}>{dayTimeLine}</Text>
+                </View>
+              </View>
+
+              <View style={styles.divider} />
+
+              <View style={styles.infoBlock}>
+                <Ionicons name={weatherMeta.icon} size={18} color={weatherMeta.color} />
+                <View>
+                  <Text style={styles.infoPrimary}>{weather ? `${Math.round(weather.temp)}°C` : '—°C'}</Text>
+                  <Text style={styles.infoSecondary}>Cebu City</Text>
+                </View>
+              </View>
+            </>
           )}
-        </TouchableOpacity>
+        </View>
       </View>
 
       <Modal visible={panelOpen} transparent animationType="fade" onRequestClose={closePanel}>
@@ -372,11 +500,13 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   left: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexShrink: 1 },
+  right: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
 
   menuButton: { width: 24, height: 18, justifyContent: 'space-between' },
   menuLine: { height: 2, backgroundColor: colors.primary, borderRadius: 1 },
 
   title: { fontSize: 15, fontFamily: fonts.headingBold, color: colors.primary, flexShrink: 1 },
+  titleAccent: { color: '#E1A005' },
 
   notificationIconWrap: {
     width: 36,
@@ -398,6 +528,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 3,
   },
   badgeText: { fontSize: 9, fontFamily: fonts.bodySemiBold, color: colors.white },
+
+  // Clock + weather cluster — divider is a plain 1px rule the height of
+  // the two text lines beside it, not the full bar, so it reads as
+  // separating these blocks rather than spanning the whole header.
+  divider: { width: 1, height: 28, backgroundColor: colors.border },
+  infoBlock: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  infoPrimary: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text },
+  infoSecondary: { fontSize: 10.5, fontFamily: fonts.body, color: colors.textMuted, marginTop: 1 },
 
   // The Modal's own overlay — transparent (a notification dropdown
   // shouldn't dim the whole screen the way a confirm dialog does) and

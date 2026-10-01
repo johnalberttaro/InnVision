@@ -9,6 +9,11 @@ import { Baloo2_500Medium } from '@expo-google-fonts/baloo-2/500Medium';
 import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
 import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium';
 import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
+// Heading weights only needed for the portal (dashboard) font override —
+// see src/utils/portalTheme.js. Guest-facing screens still head with
+// Baloo 2, so these two don't replace anything above.
+import { Inter_700Bold } from '@expo-google-fonts/inter/700Bold';
+import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
 import { supabase } from './src/services/supabase';
 
 import HomeScreen           from './src/screens/home/HomeScreen';
@@ -31,6 +36,7 @@ import LoadingScreen        from './src/screens/LoadingScreen';
 import OrderFoodScreen      from './src/foodservice/OrderFoodScreen';
 import ReportIssueScreen    from './src/screens/reportIssue/ReportIssueScreen';
 import { fonts }            from './src/utils/theme';
+import { fonts as portalFonts } from './src/utils/portalTheme';
 import { ThemeProvider }    from './src/context/ThemeContext';
 
 /**
@@ -152,6 +158,12 @@ export default function App() {
     [fonts.body]:             Inter_400Regular,
     [fonts.bodyMedium]:       Inter_500Medium,
     [fonts.bodySemiBold]:     Inter_600SemiBold,
+    // Portal-only heading weights (see src/utils/portalTheme.js) — the
+    // portal's headingSemiBold/headingMedium reuse the exact same Inter
+    // strings already registered above (Inter_600SemiBold/500Medium),
+    // so only the two heavier weights need loading here.
+    [portalFonts.headingExtraBold]: Inter_800ExtraBold,
+    [portalFonts.headingBold]:      Inter_700Bold,
   });
 
   // DIAGNOSTIC: surfaces exactly what's happening with the loading gate in

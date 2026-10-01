@@ -110,12 +110,14 @@ export default function RoomCleaningStatusScreen() {
     runUpdate(room.roomNumber, ROOM_STATUS.NEEDS_CLEANING_AGAIN);
   };
 
-  // Manual reset for a room that's already Vacant but gets dirtied again
-  // outside the normal checkout flow (e.g. a long-stay guest's room
-  // needs a mid-stay clean).
-  const handleResetFromVacant = (room) => {
-    runUpdate(room.roomNumber, ROOM_STATUS.NEEDS_CLEANING_AGAIN);
-  };
+  // REMOVED: Vacant rooms used to get a "Needs Cleaning Again" button
+  // here (a manual reset for a room that gets dirtied again outside the
+  // normal checkout flow, e.g. a long-stay guest's mid-stay clean).
+  // Taken out per product direction — re-flagging a room for cleaning is
+  // Housekeeping's own call now, made from their dedicated portal
+  // (HousekeepingMyTasksScreen.jsx), not something Front Desk's
+  // read-mostly status view should trigger. A Vacant room here just
+  // reads as done — see the isVacant branch in the render below.
 
   // ── KPI counts + filter buckets ──────────────────────────────────────
   const attentionRooms = useMemo(
@@ -247,12 +249,7 @@ export default function RoomCleaningStatusScreen() {
                     )}
                   </View>
                 ) : isVacant ? (
-                  <TouchableOpacity
-                    style={styles.resetButton}
-                    onPress={() => handleResetFromVacant(room)}
-                  >
-                    <Text style={styles.resetButtonText}>Needs Cleaning Again</Text>
-                  </TouchableOpacity>
+                  <Text style={styles.notInCycleNote}>Ready for guests — no action needed.</Text>
                 ) : (
                   <Text style={styles.notInCycleNote}>
                     {room.status === ROOM_STATUS.OCCUPIED

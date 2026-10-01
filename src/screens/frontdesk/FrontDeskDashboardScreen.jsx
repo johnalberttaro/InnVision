@@ -269,37 +269,47 @@ export default function FrontDeskDashboardScreen({ onNavigate }) {
         <Text style={styles.groupTitle}>Today at a Glance</Text>
         <Text style={styles.groupSubtitle}>What's happening right now</Text>
       </View>
-      <View style={styles.kpiGrid}>
-        <KpiCard
-          icon="log-in-outline"
-          label="Today's Check-ins"
-          value={String(todaysCheckIns)}
-          accent="#1E7B34"
-          tooltip="Guests checked in today."
-          onPress={() => goTo('reservations:checkins')}
-        />
-        <KpiCard
-          icon="log-out-outline"
-          label="Today's Check-outs"
-          value={String(todaysCheckOuts)}
-          accent="#B3261E"
-          tooltip="Guests checked out today."
-          onPress={() => goTo('reservations:checkouts')}
-        />
-        <KpiCard
-          icon="bed-outline"
-          label="Occupancy Rate"
-          accent={colors.primary}
-          tooltip={roomsLoading ? 'Loading room data…' : 'Rooms currently occupied by a guest, out of total rooms on the property. Reserved-but-not-arrived rooms are not counted as occupied.'}
-          onPress={() => goTo('rooms:availability')}
-          customVisual={
-            roomsLoading ? (
-              <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.md }} />
-            ) : (
-              <OccupancyGauge percent={occupancyPercent} occupied={occupiedRooms} total={totalRooms} />
-            )
-          }
-        />
+      <View style={styles.glanceRow}>
+        <View style={styles.kpiGridInline}>
+          <KpiCard
+            icon="log-in-outline"
+            label="Today's Check-ins"
+            value={String(todaysCheckIns)}
+            accent="#1E7B34"
+            tooltip="Guests checked in today."
+            onPress={() => goTo('reservations:checkins')}
+          />
+          <KpiCard
+            icon="log-out-outline"
+            label="Today's Check-outs"
+            value={String(todaysCheckOuts)}
+            accent="#B3261E"
+            tooltip="Guests checked out today."
+            onPress={() => goTo('reservations:checkouts')}
+          />
+          <KpiCard
+            icon="bed-outline"
+            label="Occupancy Rate"
+            accent={colors.primary}
+            tooltip={roomsLoading ? 'Loading room data…' : 'Rooms currently occupied by a guest, out of total rooms on the property. Reserved-but-not-arrived rooms are not counted as occupied.'}
+            onPress={() => goTo('rooms:availability')}
+            customVisual={
+              roomsLoading ? (
+                <ActivityIndicator color={colors.primary} style={{ marginVertical: spacing.md }} />
+              ) : (
+                <OccupancyGauge percent={occupancyPercent} occupied={occupiedRooms} total={totalRooms} />
+              )
+            }
+          />
+        </View>
+
+        {/* Reservations Trend — moved here from its own standalone
+            section further down the page, so it sits on the right side
+            of Today at a Glance instead of below both KPI groups. */}
+        <View style={styles.glanceChartCard}>
+          <Text style={styles.glanceChartTitle}>Reservations Trend</Text>
+          <ReservationsTrendChart days={trendChartDays} />
+        </View>
       </View>
 
       {/* "This Week's Performance" — trend/reporting numbers. Useful
@@ -337,11 +347,6 @@ export default function FrontDeskDashboardScreen({ onNavigate }) {
           tooltip="Sum of confirmed, checked-in, and checked-out bookings. Pending and declined are excluded."
           onPress={() => goTo('billing:records')}
         />
-      </View>
-
-      <Text style={styles.sectionTitle}>Reservations Trend</Text>
-      <View style={styles.chartCard}>
-        <ReservationsTrendChart days={trendChartDays} />
       </View>
 
       <Text style={styles.sectionTitle}>Recent Activity</Text>
@@ -425,15 +430,24 @@ const styles = StyleSheet.create({
   groupSubtitle: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
   kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginBottom: spacing.xxl },
 
-  sectionTitle: { fontSize: 16, fontFamily: fonts.headingBold, color: colors.text, marginBottom: spacing.md },
-  chartCard: {
+  // "Today at a Glance" row — the 3 KPI cards and the Reservations Trend
+  // chart side by side (chart moved here from its own standalone section
+  // below, per request). kpiGridInline is the same row/wrap/gap as
+  // kpiGrid above but WITHOUT its marginBottom, since glanceRow (the
+  // actual outer row) owns the bottom spacing now — kpiGrid itself is
+  // untouched, since "This Week's Performance" below still uses it as-is.
+  glanceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.lg, alignItems: 'flex-start', marginBottom: spacing.xxl },
+  kpiGridInline: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
+  glanceChartCard: {
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.lg,
-    marginBottom: spacing.xxl,
   },
+  glanceChartTitle: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.text, marginBottom: spacing.sm },
+
+  sectionTitle: { fontSize: 16, fontFamily: fonts.headingBold, color: colors.text, marginBottom: spacing.md },
 
   activityCard: { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border },
   emptyText: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, padding: spacing.lg },
