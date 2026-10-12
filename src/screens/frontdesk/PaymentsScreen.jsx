@@ -15,7 +15,7 @@ import {
   View,
   Text,
   TextInput,
-  FlatList,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -138,7 +138,11 @@ export default function PaymentsScreen({ staffUid, staffName }) {
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.containerContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
       <Text style={styles.title}>Payments</Text>
       <Text style={styles.subtitle}>Folios with a balance still due — tap to record a payment</Text>
 
@@ -176,13 +180,11 @@ export default function PaymentsScreen({ staffUid, staffName }) {
           {folios.length === 0 ? 'No outstanding balances — everyone is paid up.' : 'No matches found.'}
         </Text>
       ) : (
-        <FlatList
-          data={filteredFolios}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={{ paddingBottom: spacing.xl }}
-        />
+        <View style={{ paddingBottom: spacing.xl }}>
+          {filteredFolios.map((item) => (
+            <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>
+          ))}
+        </View>
       )}
 
       <RecordPaymentModal
@@ -193,12 +195,13 @@ export default function PaymentsScreen({ staffUid, staffName }) {
         onClose={() => setSelectedFolio(null)}
         onSuccess={handlePaymentSuccess}
       />
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
+  container: { flex: 1, backgroundColor: colors.background },
+  containerContent: { padding: spacing.lg, flexGrow: 1 },
   title: { fontFamily: fonts.headingBold, fontSize: 24, color: colors.primary },
   subtitle: { fontFamily: fonts.body, fontSize: 13, color: colors.textMuted, marginTop: 2, marginBottom: spacing.lg },
   searchInput: {

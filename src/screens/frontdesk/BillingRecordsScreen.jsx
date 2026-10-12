@@ -18,7 +18,7 @@ import {
   View,
   Text,
   TextInput,
-  FlatList,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -192,7 +192,11 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.containerContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
       <View style={styles.headerRow}>
         <View style={styles.headerText}>
           <Text style={styles.title}>Billing Records</Text>
@@ -271,15 +275,13 @@ export default function BillingRecordsScreen({ onSelectRecord }) {
       ) : records.length === 0 ? (
         <Text style={styles.emptyText}>No billing records found.</Text>
       ) : (
-        <FlatList
-          data={pagedRecords}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={{ paddingBottom: spacing.sm }}
-        />
+        <View style={{ paddingBottom: spacing.sm }}>
+          {pagedRecords.map((item) => (
+            <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>
+          ))}
+        </View>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -287,7 +289,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  containerContent: {
     padding: spacing.lg,
+    flexGrow: 1,
   },
   headerRow: {
     flexDirection: 'row',

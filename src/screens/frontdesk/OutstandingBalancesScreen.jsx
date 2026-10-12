@@ -38,7 +38,7 @@ import {
   View,
   Text,
   TextInput,
-  FlatList,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -231,7 +231,11 @@ export default function OutstandingBalancesScreen({ onSelectRecord }) {
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.containerContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
       <View style={styles.headerRow}>
         <View style={styles.headerText}>
           <Text style={styles.title}>Outstanding Balances</Text>
@@ -323,15 +327,13 @@ export default function OutstandingBalancesScreen({ onSelectRecord }) {
             : 'No folios match the current search/filter.'}
         </Text>
       ) : (
-        <FlatList
-          data={pagedRecords}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={{ paddingBottom: spacing.sm }}
-        />
+        <View style={{ paddingBottom: spacing.sm }}>
+          {pagedRecords.map((item) => (
+            <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>
+          ))}
+        </View>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -339,7 +341,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  containerContent: {
     padding: spacing.lg,
+    flexGrow: 1,
   },
   headerRow: {
     flexDirection: 'row',

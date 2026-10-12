@@ -111,6 +111,13 @@ const MENU_SECTIONS = [
   },
 ];
 
+// Pinned just above the profile footer (replaces the old "Logout" menu row —
+// logging out is still one tap away via the power icon next to the name).
+// Only Help & FAQ lives here now.
+const UTILITY_ITEMS = [
+  { key: 'help', icon: 'help-circle-outline', label: 'Help & FAQ' },
+];
+
 /**
  * AdminSidebar — left navigation for the Admin Portal (superadmin role).
  * Structurally identical to FrontDeskSidebar.jsx by design — same
@@ -130,6 +137,7 @@ export default function AdminSidebar({
   onNavigate,
   onLogout,
   adminName = 'Admin',
+  adminPhotoUrl,
   collapsed = false,
   onClose,
 }) {
@@ -145,6 +153,7 @@ export default function AdminSidebar({
       }}
       onLogout={onLogout}
       adminName={adminName}
+      adminPhotoUrl={adminPhotoUrl}
     />
   );
 
@@ -162,7 +171,7 @@ export default function AdminSidebar({
   );
 }
 
-function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
+function SidebarContent({ activeKey, onNavigate, onLogout, adminName, adminPhotoUrl }) {
   const initialExpanded = MENU_SECTIONS.find((section) =>
     section.subItems?.some((sub) => sub.key === activeKey)
   )?.key;
@@ -294,25 +303,51 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName }) {
           );
         })}
 
-        <TouchableOpacity
-          style={styles.menuItem}
-          onPress={() => setConfirmingLogout(true)}
-          activeOpacity={0.75}
-        >
-          <Ionicons name="log-out-outline" size={18} color="rgba(255,255,255,0.85)" style={styles.menuIcon} />
-          <Text style={styles.menuLabel}>Logout</Text>
-        </TouchableOpacity>
       </ScrollView>
+
+      {/* Help & FAQ — sits just above the profile footer */}
+      <View style={styles.utilityWrap}>
+        {UTILITY_ITEMS.map((item) => {
+          const isActive = activeKey === item.key;
+          return (
+            <TouchableOpacity
+              key={item.key}
+              style={[styles.menuItem, isActive && styles.menuItemActive]}
+              onPress={() => onNavigate(item.key)}
+              activeOpacity={0.75}
+            >
+              <Ionicons
+                name={item.icon}
+                size={18}
+                color={isActive ? colors.white : 'rgba(255,255,255,0.85)'}
+                style={styles.menuIcon}
+              />
+              <Text style={[styles.menuLabel, isActive && styles.menuLabelActive]}>{item.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
       {/* Profile footer */}
       <View style={styles.profileFooter}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{adminName.charAt(0).toUpperCase()}</Text>
-        </View>
-        <View style={styles.profileTextWrap}>
-          <Text style={styles.profileName} numberOfLines={1}>{adminName}</Text>
-          <Text style={styles.profileRole} numberOfLines={1}>Administrator</Text>
-        </View>
+        <TouchableOpacity
+          style={styles.profileFooterMain}
+          onPress={() => onNavigate('profile:me')}
+          activeOpacity={0.7}
+          accessibilityLabel="View my profile"
+        >
+          <View style={styles.avatar}>
+            {adminPhotoUrl ? (
+              <Image source={{ uri: adminPhotoUrl }} style={styles.avatarImage} />
+            ) : (
+              <Text style={styles.avatarText}>{adminName.charAt(0).toUpperCase()}</Text>
+            )}
+          </View>
+          <View style={styles.profileTextWrap}>
+            <Text style={styles.profileName} numberOfLines={1}>{adminName}</Text>
+            <Text style={styles.profileRole} numberOfLines={1}>Administrator</Text>
+          </View>
+        </TouchableOpacity>
         <TouchableOpacity onPress={() => setConfirmingLogout(true)} style={styles.quickLogout} accessibilityLabel="Log out">
           <Ionicons name="power-outline" size={16} color={colors.white} />
         </TouchableOpacity>
@@ -502,6 +537,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
+  utilityWrap: {
+    paddingVertical: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
   profileFooter: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -510,7 +550,17 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.1)',
   },
+  profileFooterMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  avatarImage: {
+    width: 36,
+    height: 36,
+  },
   avatar: {
+    overflow: 'hidden',
     width: 36,
     height: 36,
     borderRadius: 18,

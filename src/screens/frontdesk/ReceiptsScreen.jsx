@@ -13,7 +13,7 @@ import {
   View,
   Text,
   TextInput,
-  FlatList,
+  ScrollView,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
@@ -152,7 +152,11 @@ export default function ReceiptsScreen() {
   );
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.containerContent}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
       <View style={styles.headerRow}>
         <View style={styles.headerText}>
           <Text style={styles.title}>Receipts</Text>
@@ -202,13 +206,11 @@ export default function ReceiptsScreen() {
       ) : receipts.length === 0 ? (
         <Text style={styles.emptyText}>No receipts found.</Text>
       ) : (
-        <FlatList
-          data={pagedReceipts}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          contentContainerStyle={{ paddingBottom: spacing.sm }}
-        />
+        <View style={{ paddingBottom: spacing.sm }}>
+          {pagedReceipts.map((item) => (
+            <React.Fragment key={item.id}>{renderItem({ item })}</React.Fragment>
+          ))}
+        </View>
       )}
 
       <ReceiptDetailModal
@@ -216,12 +218,13 @@ export default function ReceiptsScreen() {
         receipt={selectedReceipt}
         onClose={() => setSelectedReceipt(null)}
       />
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background, padding: spacing.lg },
+  container: { flex: 1, backgroundColor: colors.background },
+  containerContent: { padding: spacing.lg, flexGrow: 1 },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

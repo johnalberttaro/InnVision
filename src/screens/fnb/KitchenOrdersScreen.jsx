@@ -250,11 +250,10 @@ function HoverButton({ style, hoverStyle, children, ...props }) {
  *                 (picks a staff member from the F&B roster;
  *                  assigned_to / assigned_to_name get set)
  *   out_for_delivery  →  [Mark Delivered]  →  delivered
- *                 (records HOW it was paid — cash, e-wallet, or charged
- *                  to the room — since payment is decided on delivery,
- *                  not through the app; see OrderFoodScreen.jsx's own
- *                  header comment for why there's no in-app payment
- *                  step at all)
+ *                 (records HOW it was paid — cash or e-wallet — since
+ *                  payment is collected on delivery, not through the
+ *                  app; see OrderFoodScreen.jsx's own header comment
+ *                  for why there's no in-app payment step at all)
  *
  * LAYOUT: a 3-column Kanban board (To Prepare / Preparing / Out for
  * Delivery) — lets kitchen staff see every stage of the workflow at

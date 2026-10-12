@@ -12,6 +12,7 @@ import BillingManagementScreen from './BillingManagementScreen';
 import BillingRecordDetailScreen from './BillingRecordDetailScreen';
 import RecordPaymentModal from './RecordPaymentModal';
 import MyProfileScreen from './MyProfileScreen';
+import StaffHelpScreen from '../../components/shared/StaffHelpScreen';
 import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import DashboardFooter from '../../components/shared/DashboardFooter';
 import { supabase } from '../../services/supabase';
@@ -248,6 +249,9 @@ function renderActiveScreen(
   }
   if (activeKey === 'profile:me') {
     return <MyProfileScreen staffUid={staffUid} />;
+  }
+  if (activeKey === 'help') {
+    return <StaffHelpScreen role="frontdesk" />;
   }
   // Walk-In Check-In and Tape Chart used to be routed here directly as
   // their own top-level screens. They're now tabs INSIDE

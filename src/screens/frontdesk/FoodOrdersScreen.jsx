@@ -319,6 +319,7 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
         </View>
       )}
 
+      <ScrollView style={styles.bodyScroll}>
       <View style={styles.kpiRow}>
         <KpiCard icon="restaurant-outline" label="New Orders" value={String(pendingCount)} accent="#B3792A" />
         <KpiCard icon="arrow-redo-outline" label="Sent to Kitchen" value={String(escalatedCount)} accent="#2C5EA8" />
@@ -339,7 +340,7 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
         ))}
       </ScrollView>
 
-      <ScrollView contentContainerStyle={[styles.list, isWide && styles.listWide]}>
+      <View style={[styles.list, isWide && styles.listWide]}>
         {visibleOrders.length === 0 ? (
           <Text style={styles.emptyText}>No orders in this view.</Text>
         ) : (
@@ -433,6 +434,7 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
             );
           })
         )}
+      </View>
       </ScrollView>
 
       <ConfirmDialog
@@ -456,6 +458,7 @@ export default function FoodOrdersScreen({ staffUid, staffName }) {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+  bodyScroll: { flex: 1 },
   centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, fontStyle: 'italic', padding: spacing.lg },
 

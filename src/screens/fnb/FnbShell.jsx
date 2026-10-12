@@ -6,6 +6,7 @@ import KitchenOrdersScreen from './KitchenOrdersScreen';
 import OrderHistoryScreen from './OrderHistoryScreen';
 import MenuAvailabilityScreen from './MenuAvailabilityScreen';
 import MyProfileScreen from '../frontdesk/MyProfileScreen';
+import StaffHelpScreen from '../../components/shared/StaffHelpScreen';
 import DashboardFooter from '../../components/shared/DashboardFooter';
 import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import { supabase } from '../../services/supabase';
@@ -133,6 +134,8 @@ export default function FnbShell({ onLoggedOut, staffName, staffUid }) {
         <View style={styles.screenContent}>
           {activeKey === 'profile:me' ? (
             <MyProfileScreen staffUid={staffUid} />
+          ) : activeKey === 'help' ? (
+            <StaffHelpScreen role="fnb" />
           ) : activeKey === 'orderhistory' ? (
             <OrderHistoryScreen staffUid={staffUid} staffName={staffName} />
           ) : activeKey === 'menuavailability' ? (

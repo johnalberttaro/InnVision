@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import AdminSidebar from './AdminSidebar';
 import AdminDashboardScreen from './AdmindashboardScreen';
@@ -11,6 +11,9 @@ import OccupancyReportScreen from './OccupancyReportScreen';
 import RevenueReportScreen from './RevenueReportScreen';
 import GuestRatingsScreen from './GuestRatingsScreen';
 import GuestFeedbackScreen from './GuestFeedbackScreen';
+import StaffHelpScreen from '../../components/shared/StaffHelpScreen';
+import MyProfileScreen from '../frontdesk/MyProfileScreen';
+import { supabase } from '../../services/supabase';
 import FrontDeskDashboardScreen from '../frontdesk/FrontDeskDashboardScreen';
 import ReservationsScreen from '../frontdesk/ReservationsScreen';
 import RoomManagementScreen from '../frontdesk/RoomManagementScreen';
@@ -63,6 +66,44 @@ export default function AdminShell({ onLoggedOut, adminName }) {
 
   const staffName = adminName || 'Administrator';
   const staffUid = null;
+
+  // The admin's own auth id, used ONLY for My Profile and the sidebar
+  // avatar. staffUid above stays null on purpose (the admin isn't a
+  // front-desk auth user — see the header comment), so payment
+  // attribution elsewhere is unchanged.
+  const [adminUid, setAdminUid] = useState(null);
+  const [adminPhotoUrl, setAdminPhotoUrl] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    let channel;
+    const init = async () => {
+      const { data: authData } = await supabase.auth.getUser();
+      const uid = authData?.user?.id;
+      if (!uid || cancelled) return;
+      setAdminUid(uid);
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('photo_url')
+        .eq('id', uid)
+        .maybeSingle();
+      if (!cancelled && !error) setAdminPhotoUrl(data?.photo_url || null);
+
+      channel = supabase
+        .channel(`admin-sidebar-avatar-${uid}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${uid}` },
+          (payload) => setAdminPhotoUrl(payload.new?.photo_url || null)
+        )
+        .subscribe();
+    };
+    init();
+    return () => {
+      cancelled = true;
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, []);
 
   const [selectedGuestId, setSelectedGuestId] = useState(null);
   const [profileOrigin, setProfileOrigin] = useState('fd:guests:records');
@@ -121,6 +162,7 @@ export default function AdminShell({ onLoggedOut, adminName }) {
         onNavigate={handleNavigate}
         onLogout={onLoggedOut}
         adminName={adminName}
+        adminPhotoUrl={adminPhotoUrl}
         collapsed={mobileSidebarOpen}
         onClose={() => setMobileSidebarOpen(false)}
       />
@@ -142,6 +184,7 @@ export default function AdminShell({ onLoggedOut, adminName }) {
             onLoggedOut,
             staffName,
             staffUid,
+            adminUid,
             selectedGuestId,
             openGuestProfile,
             closeGuestProfile,
@@ -173,6 +216,12 @@ function renderActiveScreen(props) {
 
   if (activeKey === 'dashboard') {
     return <AdminDashboardScreen onNavigate={props.onNavigate} />;
+  }
+  if (activeKey === 'profile:me') {
+    return <MyProfileScreen staffUid={props.adminUid} />;
+  }
+  if (activeKey === 'help') {
+    return <StaffHelpScreen role="admin" />;
   }
   if (activeKey === 'rooms:types') {
     return <RoomTypesRatesScreen />;

@@ -49,6 +49,13 @@ const MENU_SECTIONS = [
   },
 ];
 
+// Pinned just above the profile footer (replaces the old "Logout" menu row —
+// logging out is still one tap away via the power icon next to the name).
+// Only Help & FAQ lives here now.
+const UTILITY_ITEMS = [
+  { key: 'help', icon: 'help-circle-outline', label: 'Help & FAQ' },
+];
+
 /**
  * FnbSidebar — left navigation for the Kitchen/F&B portal.
  *
@@ -142,17 +149,33 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffPhoto
           );
         })}
 
-        <TouchableOpacity
-          style={[styles.menuItem, hoveredKey === 'logout' && styles.menuItemHovered]}
-          onPress={() => setConfirmingLogout(true)}
-          onMouseEnter={() => setHoveredKey('logout')}
-          onMouseLeave={() => setHoveredKey(null)}
-          activeOpacity={0.75}
-        >
-          <Ionicons name="log-out-outline" size={18} color="rgba(255,255,255,0.85)" style={styles.menuIcon} />
-          <Text style={styles.menuLabel}>Logout</Text>
-        </TouchableOpacity>
       </ScrollView>
+
+      {/* Help & FAQ — sits just above the profile footer */}
+      <View style={styles.utilityWrap}>
+        {UTILITY_ITEMS.map((item) => {
+          const isActive = activeKey === item.key;
+          const isHovered = hoveredKey === item.key;
+          return (
+            <TouchableOpacity
+              key={item.key}
+              style={[styles.menuItem, isActive && styles.menuItemActive, !isActive && isHovered && styles.menuItemHovered]}
+              onPress={() => onNavigate(item.key)}
+              onMouseEnter={() => setHoveredKey(item.key)}
+              onMouseLeave={() => setHoveredKey(null)}
+              activeOpacity={0.75}
+            >
+              <Ionicons
+                name={item.icon}
+                size={18}
+                color={isActive ? colors.white : 'rgba(255,255,255,0.85)'}
+                style={styles.menuIcon}
+              />
+              <Text style={[styles.menuLabel, isActive && styles.menuLabelActive]}>{item.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
       <View style={styles.profileFooter}>
         <TouchableOpacity
@@ -229,6 +252,11 @@ const styles = StyleSheet.create({
   menuLabel: { flex: 1, fontSize: 15, fontFamily: fonts.bodySemiBold, color: 'rgba(255,255,255,0.85)' },
   menuLabelActive: { color: colors.white },
 
+  utilityWrap: {
+    paddingVertical: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
   profileFooter: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.md, paddingVertical: spacing.md,

@@ -89,6 +89,13 @@ const MENU_SECTIONS = [
   },
 ];
 
+// Pinned just above the profile footer (replaces the old "Logout" menu row —
+// logging out is still one tap away via the power icon next to the name).
+// Only Help & FAQ lives here now.
+const UTILITY_ITEMS = [
+  { key: 'help', icon: 'help-circle-outline', label: 'Help & FAQ' },
+];
+
 /**
  * FrontDeskSidebar — left navigation for the Front Desk Staff portal.
  *
@@ -255,15 +262,30 @@ function SidebarContent({ activeKey, onNavigate, onLogout, staffName, staffRole,
           );
         })}
 
-        <TouchableOpacity
-          style={styles.menuItem}
-          onPress={() => setConfirmingLogout(true)}
-          activeOpacity={0.75}
-        >
-          <Ionicons name="log-out-outline" size={18} color="rgba(255,255,255,0.85)" style={styles.menuIcon} />
-          <Text style={styles.menuLabel}>Logout</Text>
-        </TouchableOpacity>
       </ScrollView>
+
+      {/* Help & FAQ — sits just above the profile footer */}
+      <View style={styles.utilityWrap}>
+        {UTILITY_ITEMS.map((item) => {
+          const isActive = activeKey === item.key;
+          return (
+            <TouchableOpacity
+              key={item.key}
+              style={[styles.menuItem, isActive && styles.menuItemActive]}
+              onPress={() => onNavigate(item.key)}
+              activeOpacity={0.75}
+            >
+              <Ionicons
+                name={item.icon}
+                size={18}
+                color={isActive ? colors.white : 'rgba(255,255,255,0.85)'}
+                style={styles.menuIcon}
+              />
+              <Text style={[styles.menuLabel, isActive && styles.menuLabelActive]}>{item.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
       {/* Profile footer — tap the name/avatar area to open your own
           profile (edit your photo/phone); the small power icon stays a
@@ -455,6 +477,11 @@ const styles = StyleSheet.create({
   },
 
   // Profile footer
+  utilityWrap: {
+    paddingVertical: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
   profileFooter: {
     flexDirection: 'row',
     alignItems: 'center',
