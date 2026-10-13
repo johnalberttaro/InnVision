@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import FrontDeskSidebar from './FrontDeskSidebar';
 import FrontDeskDashboardScreen from './FrontDeskDashboardScreen';
 import ReservationsScreen from './ReservationsScreen';
 import RoomManagementScreen from './RoomManagementScreen';
 import HousekeepingManagementScreen from './HousekeepingManagementScreen';
-import FoodOrdersScreen from './FoodOrdersScreen';
 import GuestManagementScreen from './GuestManagementScreen';
 import GuestDetailsScreen from './GuestDetailsScreen';
 import BillingManagementScreen from './BillingManagementScreen';
@@ -23,12 +22,9 @@ const WIDE_BREAKPOINT = 1024;
 // Where DashboardNavbar's notification panel sends you for each event
 // type, in THIS shell's own activeKey scheme (Admin uses a different
 // one — 'fd:reservations:all' etc. — see its own copy of this map in
-// AdminShell.jsx). All three types are available here since Front Desk
-// has a real screen for each of them.
+// AdminShell.jsx).
 const NOTIFICATION_ROUTES = {
   reservation: 'reservations:all',
-  foodorder: 'foodorders',
-  roomcharge: 'billing:transactions',
 };
 
 export default function FrontDeskShell({ onLoggedOut, staffName, staffRole, staffUid }) {
@@ -278,9 +274,6 @@ function renderActiveScreen(
         staffName={staffName}
       />
     );
-  }
-  if (activeKey === 'foodorders') {
-    return <FoodOrdersScreen staffUid={staffUid} staffName={staffName} />;
   }
   // Guest Profiles/Guest Records/Guest Ratings/Inquiries moved into a
   // scrollable tab bar at the top of GuestManagementScreen.jsx itself.

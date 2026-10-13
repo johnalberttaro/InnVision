@@ -20,6 +20,7 @@ import EwalletPaymentScreen from './EwalletPaymentScreen';
 import { useTheme } from '../../context/ThemeContext';
 import { formatDate } from '../../utils/dateHelpers';
 import { formatCurrency } from '../../utils/roomRates';
+import { isDoubleBookingError } from '../../utils/Roomsservice';
 
 const TAX_RATE = 0.17;
 const TWO_COL_BREAKPOINT = 680;
@@ -131,6 +132,11 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   const [eWallet, setEWallet]                 = useState(null);
   const [agreed, setAgreed]                   = useState(false);
   const [errors, setErrors]                   = useState({});
+  // Shown above the action buttons when the save itself fails. Inline
+  // rather than Alert.alert, which does nothing on React Native Web.
+  // roomTaken = the double-booking trigger refused it (someone else got
+  // that room for these dates first), so offer a way back to the rooms.
+  const [submitError, setSubmitError]         = useState(null); // { message, roomTaken } | null
   const [focusedField, setFocusedField]       = useState(null);
   const [confirming, setConfirming]           = useState(false);
   const [showSuccessState, setShowSuccessState] = useState(false);
@@ -282,6 +288,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   // payments that `eWallet` has already been set by handleEwalletConfirm.
   const submitReservation = async () => {
     setConfirming(true);
+    setSubmitError(null);
     try {
       const { data: inserted, error } = await supabase
         .from('reservations')
@@ -329,22 +336,37 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
           // screen (✓ moves it to 'upcoming', ✕ moves it to 'declined').
           status: 'pending',
         })
-        .select('id')
+        .select('id, total_amount')
         .single();
       if (error) throw error;
 
       setReservationId(inserted.id);
+      // The database recomputes the price (sql/secure_guest_bookings.sql),
+      // so confirm with the amount it actually saved.
+      const savedTotal = inserted.total_amount ?? total;
 
       // Guest Records upsert — see upsertGuestRecord() docstring above.
       // Runs after the reservation write succeeds; its own errors are
       // caught internally and never affect the guest-facing flow below.
       await upsertGuestRecord();
 
-      setSuccessMessage(`Thank you, ${firstName}! Your ${roomTypeSummary} room request for ${formatDate(checkIn)} – ${formatDate(checkOut)} has been sent to the hotel for confirmation.\n\nTotal: ${formatCurrency(total)}`);
+      setSuccessMessage(`Thank you, ${firstName}! Your ${roomTypeSummary} room request for ${formatDate(checkIn)} – ${formatDate(checkOut)} has been sent to the hotel for confirmation.\n\nTotal: ${formatCurrency(savedTotal)}`);
       setShowSuccessState(true);
     } catch (err) {
       console.error('Confirm reservation error:', err);
-      Alert.alert('Error', 'Could not submit your reservation. Please try again.');
+      if (isDoubleBookingError(err)) {
+        setSubmitError({
+          message: `Sorry, ${err.message.replace(/\.$/, '')} — another guest booked it just before you. Please choose a different room.`,
+          roomTaken: true,
+        });
+      } else if (err?.code === '23514' || err?.code === '42501') {
+        // Refused by the booking checks in the database (room no longer
+        // available, dates in the past, …) — their messages are written
+        // for guests, so show them as-is.
+        setSubmitError({ message: err.message, roomTaken: /room/i.test(err.message || '') });
+      } else {
+        setSubmitError({ message: 'Could not submit your reservation. Please try again.', roomTaken: false });
+      }
       // Let the guest retry from the form rather than being stuck on a
       // payment-step view that already reported success to them.
       setPaymentStep('form');
@@ -572,6 +594,20 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
             </TouchableOpacity>
             {errors.agreed && <Text style={styles.errorText}>{errors.agreed}</Text>}
 
+            {submitError && (
+              <View style={styles.submitErrorBox}>
+                <Ionicons name="alert-circle" size={18} color={colors.danger} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.submitErrorText}>{submitError.message}</Text>
+                  {submitError.roomTaken && (
+                    <TouchableOpacity onPress={onBackToRooms} activeOpacity={0.8}>
+                      <Text style={styles.submitErrorLink}>Choose another room →</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            )}
+
             {/* Action buttons */}
             <View style={styles.actionRow}>
               <TouchableOpacity style={styles.backBtn} onPress={onBackToRooms} activeOpacity={0.8} disabled={confirming}>
@@ -721,6 +757,9 @@ function getStyles(colors, spacing, radius, fonts) {
     input:            { flex: 1, fontFamily: fonts.body, fontSize: 13, color: colors.text, paddingVertical: 0 },
     textArea:         { minHeight: 60, textAlignVertical: 'top' },
     errorText:        { fontFamily: fonts.body, fontSize: 11, color: colors.danger, marginTop: spacing.xs },
+    submitErrorBox:   { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start', padding: spacing.md, marginTop: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.danger, backgroundColor: colors.dangerBg },
+    submitErrorText:  { fontFamily: fonts.bodyMedium, fontSize: 13, lineHeight: 19, color: colors.danger },
+    submitErrorLink:  { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.primary, marginTop: spacing.xs },
 
     phonePrefix:  { fontFamily: fonts.bodySemiBold, fontSize: 13, color: colors.text, paddingRight: spacing.xs },
     phoneDivider: { width: 1, height: 18, backgroundColor: colors.border },

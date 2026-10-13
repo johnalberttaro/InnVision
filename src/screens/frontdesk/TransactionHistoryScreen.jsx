@@ -1,8 +1,7 @@
 // TransactionHistoryScreen.jsx
 // Admin view of every entry ever written to the `transactions` table:
-// every payment collected, every "Charge to Room" posted, and every
-// manual balance-settled override — the audit trail add_room_charge()
-// (and record_payment()/mark_balance_settled() before it) has been
+// every payment collected and every manual balance-settled override —
+// the audit trail record_payment()/mark_balance_settled() have been
 // writing all along, with no screen to actually read it back until now.
 //
 // Sits behind BillingManagementScreen.jsx's "Transaction History" tab,
@@ -42,20 +41,16 @@
 //    row instead of a hundred-chip wall pushing the actual list
 //    off-screen. Only entries with a real staffUid count as "staff"
 //    here at all — see the comment on staffActivity below for why.
-//  - The search box covers guest name, staff name, and the charge
-//    note (e.g. "F&B Order #35 — Room 101") in one field — already the
+//  - The search box covers guest name, staff name, and the
+//    transaction note in one field — already the
 //    general-purpose way to reach any staff member by name, capped
 //    chips or not.
 //
 // KPIs deliberately don't sum a blended "total amount" across every
-// type — a room charge (money owed, nothing collected) and an actual
-// payment (money in hand) aren't the same kind of number, and a
-// balance-settled override isn't real money at all (see
-// add_room_charge.sql's comment on mark_balance_settled()). So the
-// stats here are Total Transactions, Room Charges Posted (count + ₱ —
-// the one type this screen exists to surface), Staff Active, and Most
-// Recent — nothing that requires quietly deciding which types count
-// as "revenue."
+// type — a balance-settled override isn't real money at all. So the
+// stats here are Total Transactions, Staff Active, and Most Recent —
+// nothing that requires quietly deciding which types count as
+// "revenue."
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -83,7 +78,8 @@ const DATE_RANGE_OPTIONS = [
 ];
 
 // Same labeling convention as ReceiptDetailModal.jsx's
-// PAYMENT_METHOD_LABELS, plus 'room_charge' — with a graceful fallback
+// PAYMENT_METHOD_LABELS, plus 'room_charge' (only on old rows from the
+// removed Food & Beverage module) — with a graceful fallback
 // (underscore->space, title case) for anything not listed, so a type
 // this list doesn't know about (a new payment method, or whatever
 // mark_balance_settled() logs) still reads as a normal label instead
@@ -120,7 +116,6 @@ const CURRENT_PAYMENT_TYPES = [
   'card',
   'cash',
   'online',
-  'room_charge',
 ];
 
 function paymentTypeLabel(type) {
@@ -129,9 +124,8 @@ function paymentTypeLabel(type) {
   return type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Badge colors by type family: amber for a room charge (money owed,
-// not collected — same accent RevenueReportScreen.jsx uses for its
-// F&B Revenue card), blue for an actual payment method, neutral gray
+// Badge colors by type family: amber for a legacy room charge (money
+// owed, not collected), blue for an actual payment method, neutral gray
 // for anything unrecognized (covers a balance-settled override without
 // needing to know its exact payment_type string).
 const TYPE_STYLE = {
@@ -234,8 +228,6 @@ export default function TransactionHistoryScreen() {
   // OutstandingBalancesScreen's KPI row follows). ──────────────────────
   const activeRangeLabel = DATE_RANGE_OPTIONS.find((o) => o.key === dateRangeKey)?.label;
   const totalCount = transactions.length;
-  const roomChargeTxns = useMemo(() => transactions.filter((t) => t.paymentType === 'room_charge'), [transactions]);
-  const roomChargeTotal = useMemo(() => roomChargeTxns.reduce((sum, t) => sum + (t.amount || 0), 0), [roomChargeTxns]);
   // staffUid-gated for the same reason the Staff filter chips are below
   // — a system-attributed row (Online Payment (Auto)) has a staffName
   // but isn't a staff member, and shouldn't inflate this count.
@@ -352,7 +344,7 @@ export default function TransactionHistoryScreen() {
       <View style={styles.headerRow}>
         <View style={styles.headerText}>
           <Text style={styles.title}>Transaction History</Text>
-          <Text style={styles.subtitle}>Every payment, room charge, and balance override, across all staff.</Text>
+          <Text style={styles.subtitle}>Every payment and balance override, across all staff.</Text>
         </View>
         <TextInput
           style={styles.searchInput}
@@ -370,13 +362,6 @@ export default function TransactionHistoryScreen() {
           value={String(totalCount)}
           accent={colors.primary}
           note={activeRangeLabel}
-        />
-        <KpiCard
-          icon="restaurant-outline"
-          label="Room Charges Posted"
-          value={String(roomChargeTxns.length)}
-          accent="#B3792A"
-          note={roomChargeTxns.length > 0 ? `${formatCurrency(roomChargeTotal)} added to rooms` : 'None posted in range'}
         />
         <KpiCard
           icon="people-outline"

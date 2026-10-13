@@ -6,8 +6,7 @@ import { fetchAllReviews, averageRating } from '../../utils/ReviewsService';
 
 /**
  * GuestRatingsScreen — staff-facing viewer for the guest ratings guests
- * submit after checkout (room) and after a food order is delivered
- * (food). Shared between Admin (routed as reports:ratings, under Reports
+ * submit after checkout. Shared between Admin (routed as reports:ratings, under Reports
  * & Analytics) and Front Desk (routed as guests:ratings, under Guest
  * Management) — same file, no admin-only actions in it, so no reason to
  * fork it into two screens. This redesign applies to both places it's
@@ -25,9 +24,8 @@ import { fetchAllReviews, averageRating } from '../../utils/ReviewsService';
  *    component rather than changing KpiCard.jsx itself, so every other
  *    dashboard that uses the shared KpiCard (Revenue Report, Front Desk
  *    dashboard, etc.) is completely unaffected by this redesign.
- *  - Room/Food/Total cards are now tappable (they already carried a
- *    chevron hinting at this before, but never did anything) — tapping
- *    one jumps the type tabs to that category, Total resets to All.
+ *  - Stat cards are display-only headline numbers (no chevron, since
+ *    there is only one review type left to filter to).
  *  - New Rating Overview panel: a real distribution of the currently
  *    visible reviews by star count (1–5), each row clickable to filter
  *    the list to that star rating — same filter a guest's search can
@@ -40,7 +38,7 @@ import { fetchAllReviews, averageRating } from '../../utils/ReviewsService';
  *    positioning an overlay, at the cost of a little visual polish.
  *  - Review cards now lead with the guest's name plus their room number
  *    (parsed from the existing subject_label text — see
- *    parseRoomSubject/parseFoodSubject below — no new data or column
+ *    parseRoomSubject below — no new data or column
  *    needed) instead of the room type as the heading, matching the
  *    mockup's "Name (Room #)" convention.
  *  - The mockup's per-card "···" overflow menu was deliberately left
@@ -55,15 +53,17 @@ import { fetchAllReviews, averageRating } from '../../utils/ReviewsService';
  * totals, not "what's currently visible," so search/type/rating
  * filters never move them.
  *
+ * Food & Beverage was removed from the system (Oct 2026), so only
+ * type === 'room' reviews are loaded; any older food reviews still in
+ * the table are ignored.
+ *
  * VISUAL DESIGN: still intentionally breaking from the portal's usual
- * monochrome palette with real color — teal for room stays, amber for
- * food orders, gold for stars, purple for the "Total" card — now
+ * monochrome palette with real color — teal for room stays, gold for stars, purple for the "Total" card — now
  * additionally used as soft pastel tints (via hexToRgba) for the stat
  * cards' backgrounds and icon circles, matching the mockup's softer
  * look.
  */
 const ROOM_COLOR = '#2E7D96'; // teal-blue
-const FOOD_COLOR = '#D97706'; // amber
 const STAR_COLOR = '#F5B400'; // gold
 const TOTAL_COLOR = '#6B46C1'; // purple
 
@@ -85,13 +85,6 @@ function parseRoomSubject(label) {
   return { typeText: label, roomNumber: null };
 }
 
-// "Order — Room 102" -> '102' (see OrderFoodScreen.jsx's submitFoodReview call)
-function parseFoodRoomNumber(label) {
-  if (!label) return null;
-  const match = label.match(/Room\s+(.+)$/i);
-  return match ? match[1].trim() : null;
-}
-
 const RATING_FILTER_OPTIONS = [
   { key: 'all', label: 'All Ratings' },
   { key: 5, label: '5 Stars' },
@@ -105,7 +98,6 @@ export default function GuestRatingsScreen() {
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [typeFilter, setTypeFilter] = useState('all'); // 'all' | 'room' | 'food'
   const [ratingFilter, setRatingFilter] = useState('all'); // 'all' | 1 | 2 | 3 | 4 | 5
   const [searchTerm, setSearchTerm] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
@@ -113,7 +105,7 @@ export default function GuestRatingsScreen() {
   const load = async () => {
     try {
       const data = await fetchAllReviews();
-      setReviews(data);
+      setReviews((data || []).filter((r) => r.type === 'room'));
       setError('');
     } catch (err) {
       console.error('Failed to load reviews:', err);
@@ -128,16 +120,13 @@ export default function GuestRatingsScreen() {
   }, []);
 
   // Headline stats — always computed from the full, unfiltered set.
-  const roomReviews = useMemo(() => reviews.filter((r) => r.type === 'room'), [reviews]);
-  const foodReviews = useMemo(() => reviews.filter((r) => r.type === 'food'), [reviews]);
-  const roomAvg = averageRating(roomReviews);
-  const foodAvg = averageRating(foodReviews);
+  const roomAvg = averageRating(reviews);
 
-  // Narrowed by type + search, but NOT by ratingFilter — this is what
+  // Narrowed by search, but NOT by ratingFilter — this is what
   // the distribution panel's bars are computed from, so every bar stays
   // visible (and clickable) no matter which one is currently active.
   const distributionSource = useMemo(() => {
-    let list = typeFilter === 'all' ? reviews : reviews.filter((r) => r.type === typeFilter);
+    let list = reviews;
     const term = searchTerm.trim().toLowerCase();
     if (term) {
       list = list.filter((r) => {
@@ -146,7 +135,7 @@ export default function GuestRatingsScreen() {
       });
     }
     return list;
-  }, [reviews, typeFilter, searchTerm]);
+  }, [reviews, searchTerm]);
 
   const ratingCounts = useMemo(() => {
     const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
@@ -179,7 +168,7 @@ export default function GuestRatingsScreen() {
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Guest Ratings</Text>
-          <Text style={styles.subtitle}>View and manage feedback from room stays and food orders.</Text>
+          <Text style={styles.subtitle}>View and manage feedback from guests' room stays.</Text>
         </View>
         <View style={styles.reviewsPill}>
           <Ionicons name="chatbubble-ellipses-outline" size={14} color={colors.text} />
@@ -201,36 +190,20 @@ export default function GuestRatingsScreen() {
           icon="bed-outline"
           label="Room Rating"
           value={roomAvg != null ? `${roomAvg.toFixed(1)} / 5` : '—'}
-          note={`${roomReviews.length} rating${roomReviews.length !== 1 ? 's' : ''}`}
+          note={`${reviews.length} rating${reviews.length !== 1 ? 's' : ''}`}
           tint={ROOM_COLOR}
-          onPress={() => setTypeFilter('room')}
-        />
-        <StatCard
-          icon="restaurant-outline"
-          label="Food Rating"
-          value={foodAvg != null ? `${foodAvg.toFixed(1)} / 5` : '—'}
-          note={`${foodReviews.length} rating${foodReviews.length !== 1 ? 's' : ''}`}
-          tint={FOOD_COLOR}
-          onPress={() => setTypeFilter('food')}
         />
         <StatCard
           icon="chatbubbles-outline"
           label="Total Reviews"
           value={String(reviews.length)}
-          note="Room + Food combined"
+          note="All room stay reviews"
           tint={TOTAL_COLOR}
-          onPress={() => setTypeFilter('all')}
         />
         <RatingDistribution counts={ratingCounts} activeRating={ratingFilter} onSelectRating={setRatingFilter} />
       </View>
 
       <View style={styles.controlsRow}>
-        <View style={styles.typeTabsWrap}>
-          <TypeTab label="All Reviews" icon="apps-outline" active={typeFilter === 'all'} onPress={() => setTypeFilter('all')} />
-          <TypeTab label="Room Stays" icon="bed-outline" active={typeFilter === 'room'} onPress={() => setTypeFilter('room')} />
-          <TypeTab label="Food Orders" icon="restaurant-outline" active={typeFilter === 'food'} onPress={() => setTypeFilter('food')} />
-        </View>
-
         <View style={styles.searchBox}>
           <Ionicons name="search-outline" size={16} color={colors.textMuted} />
           <TextInput
@@ -371,21 +344,6 @@ function RatingDistribution({ counts, activeRating, onSelectRating }) {
 // works — react-native-web fires onHoverIn/onHoverOut on Pressable for a
 // mouse pointer; there's no touch equivalent, so this is simply inert
 // (never fires) on a phone/tablet, no platform check needed.
-function TypeTab({ label, icon, active, onPress }) {
-  const [hovered, setHovered] = useState(false);
-  return (
-    <Pressable
-      onPress={onPress}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
-      style={[styles.typeTab, active && styles.typeTabActive, hovered && !active && styles.typeTabHover]}
-    >
-      <Ionicons name={icon} size={14} color={active ? '#FFFFFF' : colors.text} />
-      <Text style={[styles.typeTabText, active && styles.typeTabTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function initials(name) {
   if (!name) return '?';
   const parts = name.trim().split(/\s+/);
@@ -393,15 +351,14 @@ function initials(name) {
 }
 
 function ReviewCard({ review }) {
-  const isRoom = review.type === 'room';
-  const typeColor = isRoom ? ROOM_COLOR : FOOD_COLOR;
+  const typeColor = ROOM_COLOR;
   const date = review.created_at
     ? new Date(review.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
     : '—';
 
-  const roomInfo = isRoom ? parseRoomSubject(review.subject_label) : null;
-  const roomNumber = isRoom ? roomInfo.roomNumber : parseFoodRoomNumber(review.subject_label);
-  const subline = isRoom ? roomInfo.typeText || 'Room Stay' : roomNumber ? `Room ${roomNumber}` : review.subject_label || '—';
+  const roomInfo = parseRoomSubject(review.subject_label);
+  const roomNumber = roomInfo.roomNumber;
+  const subline = roomInfo.typeText || 'Room Stay';
 
   return (
     <View style={[styles.reviewCard, { borderLeftColor: typeColor }]}>
@@ -421,12 +378,12 @@ function ReviewCard({ review }) {
               {roomNumber ? <Text style={styles.reviewRoomNumber}> ({roomNumber})</Text> : null}
             </Text>
             <View style={[styles.typeBadge, { backgroundColor: typeColor }]}>
-              <Ionicons name={isRoom ? 'bed-outline' : 'restaurant-outline'} size={11} color="#FFFFFF" />
-              <Text style={styles.typeBadgeText}>{isRoom ? 'Room Stay' : 'Food Order'}</Text>
+              <Ionicons name="bed-outline" size={11} color="#FFFFFF" />
+              <Text style={styles.typeBadgeText}>Room Stay</Text>
             </View>
           </View>
           <View style={styles.reviewMetaRow}>
-            <Ionicons name={isRoom ? 'bed-outline' : 'restaurant-outline'} size={11} color={colors.textMuted} />
+            <Ionicons name="bed-outline" size={11} color={colors.textMuted} />
             <Text style={styles.reviewMeta}>{subline} · {date}</Text>
           </View>
         </View>

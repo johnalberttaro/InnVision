@@ -3,16 +3,14 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Modal } from 'rea
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../services/supabase';
-import { formatCurrency } from '../../utils/Roomsservice';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import DateWeatherCluster from './DateWeatherCluster';
 
 const LAST_SEEN_KEY_PREFIX = 'navbar-notifications-last-seen:';
 
-// How many rows to pull per source, and how many to actually show in the
-// panel once all three are merged — kept modest since this is a "what
-// just happened" glance, not a full history (Reservation Management /
-// Food Orders / Billing → Transactions already exist for that).
+// How many rows to pull, and how many to actually show in the panel —
+// kept modest since this is a "what just happened" glance, not a full
+// history (Reservation Management already exists for that).
 const MAX_PER_SOURCE = 15;
 const MAX_TOTAL = 20;
 
@@ -23,23 +21,10 @@ const EXCLUDED_RESERVATION_STATUSES = ['cancelled', 'declined'];
 
 const NOTIF_META = {
   reservation: { icon: 'calendar-outline', color: '#2C5EA8', bg: '#E3ECF8', title: 'New reservation' },
-  foodorder: { icon: 'restaurant-outline', color: '#B3792A', bg: '#F5E9D6', title: 'New food order' },
-  roomcharge: { icon: 'receipt-outline', color: '#1E7B34', bg: '#DFF5E1', title: 'Charged to room' },
-  // Same blue KitchenOrdersScreen.jsx's own STATUS_META.escalated and
-  // FoodOrdersScreen.jsx's "Sent to Kitchen" meta already use for this
-  // exact status — reused here rather than picking a new color, since
-  // it's the same real-world event.
-  foodorder_escalated: { icon: 'flame-outline', color: '#2C5EA8', bg: '#E3ECF8', title: 'New escalated order' },
 };
 // Default set when a shell doesn't pass notificationTypes (Front Desk).
-// Deliberately NOT Object.keys(NOTIF_META) — foodorder_escalated exists
-// only for FnbShell.jsx (see the prop doc below) and must stay opt-in,
-// or Front Desk would get pinged a second time for an escalation it
-// just performed itself.
-const ALL_TYPES = ['reservation', 'foodorder', 'roomcharge'];
+const ALL_TYPES = ['reservation'];
 
-// Same relative-time formatting KitchenOrdersScreen.jsx's order cards
-// use, kept consistent rather than inventing a second version of it.
 function timeAgo(dateString) {
   if (!dateString) return '';
   const diffMs = Date.now() - new Date(dateString).getTime();
@@ -64,33 +49,16 @@ function reservationGuestName(row) {
   return row.guest_email || 'Guest';
 }
 
-// add_room_charge() (see BillingService.js's chargeToRoom()) always
-// writes its transactions.note as "…— Room {number}" — currently only
-// ever called from KitchenOrdersScreen.jsx's Charge to Room action, with
-// a note like "F&B Order #35 — Room 101". Pulls the room number back out
-// of that free-text note since transactions has no room_number column of
-// its own; returns null rather than guessing if the format ever changes.
-function roomFromChargeNote(note) {
-  const match = /Room\s+(\S+)\s*$/.exec(note || '');
-  return match ? match[1] : null;
-}
-
 // Live clock + current weather (hardcoded to Cebu City — see
-// DateWeatherCluster.jsx for why) now lives in its own component,
-// shared with FnbShell.jsx's own top bar rather than duplicated there.
+// DateWeatherCluster.jsx for why) lives in its own component.
 
 /**
- * DashboardNavbar — shared top bar for FrontDeskShell.jsx, AdminShell.jsx
- * (and, in principle, any other shell that wants it — see FnbShell.jsx's
- * own header comment for why it currently opts out instead).
+ * DashboardNavbar — shared top bar for FrontDeskShell.jsx and AdminShell.jsx.
  *
  * Shows the hamburger menu button only when !isWide (same condition each
- * shell already used), the shell's title, and a notification bell
- * covering three event types across the whole hotel: new reservations,
- * new food orders, and F&B Charge-to-Room postings. Each is its own
- * live query + realtime subscription (reservations / food_orders /
- * transactions where payment_type='room_charge'), merged and sorted by
- * however recently each happened, most recent first.
+ * shell already used), the shell's title, and a notification bell for new
+ * reservations across the whole hotel — a live query + realtime
+ * subscription on `reservations`, most recent first.
  *
  * The badge counts events since this staff member last opened the
  * panel — opening it clears the count immediately (the moment of
@@ -106,62 +74,24 @@ function roomFromChargeNote(note) {
  * Tapping a row closes the panel and hands the item's type up to
  * onNotificationNavigate, which each shell maps to its own routes (the
  * two shells use different activeKey schemes — 'reservations:all' vs
- * 'fd:reservations:all', etc. — so that mapping lives in the shells, not
- * here).
+ * 'fd:reservations:all' — so that mapping lives in the shells, not here).
  *
- * The panel renders through React Native's own <Modal>, same as the
- * detail dialogs in TapeChartScreen.jsx/KitchenOrdersScreen.jsx — NOT a
- * manually `position:'absolute'`+zIndex View nested in the normal
- * layout. An earlier version tried that; it visually sat BEHIND the
- * dashboard content below it, because this navbar lives inside
- * FrontDeskShell/AdminShell's own layout tree, and something in that
- * tree (React Native Web routinely does this once Animated/Touchable
- * wrappers and their own positioning get involved) was quietly starting
- * a new stacking context above it — no amount of raising this
- * component's own zIndex can out-rank an ancestor's stacking context
- * from the inside. <Modal> sidesteps the whole question by rendering
- * outside this component's place in the tree entirely, guaranteed on
- * top regardless of what any ancestor does — the same reason the
- * existing dialogs elsewhere in this codebase already use it instead of
- * a plain positioned View. transparent + a custom flex-end/flex-start
- * overlay (rather than the centered dialog look those two screens use)
- * anchors the panel under the bell instead of in the middle of the
- * screen; marginTop uses the navbar's own measured height (barHeight,
- * via onLayout) rather than a guessed pixel offset, so it still lines
- * up if the bar's own padding/font metrics ever change.
+ * The panel renders through React Native's own <Modal> rather than an
+ * absolutely-positioned View, because an ancestor in the shell layout
+ * creates its own stacking context on React Native Web and would draw
+ * the dashboard content on top of it. marginTop uses the navbar's own
+ * measured height (barHeight, via onLayout) so it lines up under the bell.
  *
- * notificationTypes lets a shell narrow which sources it queries/shows
- * at all — Admin has no Food Orders screen (never has; it's not in
- * AdminSidebar.jsx's Front Desk Operations section either), so nothing
- * would be reachable if you tapped a "new food order" row there. Admin
- * passes ['reservation', 'roomcharge'] to leave that source out
- * entirely rather than showing a row that goes nowhere. Defaults to all
- * three (ALL_TYPES) when a shell passes nothing.
- *
- * A fourth type, 'foodorder_escalated', exists only for FnbShell.jsx —
- * deliberately left out of ALL_TYPES/the default, since it fires on
- * food_orders.escalated_at (set by Front Desk's own "Escalate to
- * Kitchen" action in FoodOrdersScreen.jsx), not on order creation.
- * Front Desk's existing 'foodorder' notification already covers "a
- * guest just placed an order, go escalate it"; F&B needs the opposite
- * signal — "an order just became mine to prepare" — a different moment
- * on the same table, so it gets its own type rather than overloading
- * 'foodorder' with two meanings.
- *
- * Also renders a live clock and current weather in the bar's
- * right-hand cluster, next to the bell, via the shared
- * DateWeatherCluster component (components/shared/DateWeatherCluster.jsx
- * — also used by FnbShell.jsx's own top bar, same reasoning there).
- * Hidden when !isWide (same breakpoint as the hamburger button) so the
- * bar doesn't get cramped on a phone-width screen — the bell stays
- * visible there since it's the one thing staff actually need to act on.
+ * Also renders a live clock and current weather in the bar's right-hand
+ * cluster via the shared DateWeatherCluster component. Hidden when
+ * !isWide so the bar doesn't get cramped on a phone-width screen.
  *
  * Props:
  *  - title: string — e.g. "InnVision Front Desk" / "InnVision Admin"
  *  - isWide: boolean — whether to show the hamburger button
  *  - onMenuPress: () => void — opens the mobile sidebar
  *  - staffUid: string|null — for the per-staff "last seen" key
- *  - notificationTypes?: Array<'reservation'|'foodorder'|'roomcharge'>
+ *  - notificationTypes?: Array<'reservation'>
  *  - onNotificationNavigate?: (type) => void — called on row tap
  */
 export default function DashboardNavbar({
@@ -174,21 +104,13 @@ export default function DashboardNavbar({
 }) {
   const types = notificationTypes || ALL_TYPES;
   const wantReservations = types.includes('reservation');
-  const wantFoodOrders = types.includes('foodorder');
-  const wantRoomCharges = types.includes('roomcharge');
-  const wantEscalatedFoodOrders = types.includes('foodorder_escalated');
 
   const [reservationRows, setReservationRows] = useState([]);
-  const [foodOrderRows, setFoodOrderRows] = useState([]);
-  const [roomChargeRows, setRoomChargeRows] = useState([]);
-  const [escalatedFoodOrderRows, setEscalatedFoodOrderRows] = useState([]);
   const [panelOpen, setPanelOpen] = useState(false);
   const [lastSeenAt, setLastSeenAt] = useState(null);
-  // Measured, not guessed (same reasoning as TapeChartScreen.jsx's own
-  // onLayout-based sizing) — used to offset the Modal's panel down to
-  // just below the real bar, whatever its actual rendered height is.
-  // 60 is a reasonable pre-measurement fallback (~spacing.md*2 padding
-  // plus the 36px icon), only ever visible for one frame.
+  // Measured, not guessed — used to offset the Modal's panel down to just
+  // below the real bar. 60 is a pre-measurement fallback, only ever
+  // visible for one frame.
   const [barHeight, setBarHeight] = useState(60);
 
   const storageKey = `${LAST_SEEN_KEY_PREFIX}${staffUid || 'shared'}`;
@@ -220,118 +142,17 @@ export default function DashboardNavbar({
     return () => supabase.removeChannel(channel);
   }, [wantReservations]);
 
-  useEffect(() => {
-    if (!wantFoodOrders) return;
-    const loadFoodOrders = async () => {
-      const { data, error } = await supabase
-        .from('food_orders')
-        .select('id, guest_name, room_number, total_amount, created_at')
-        .order('created_at', { ascending: false })
-        .limit(MAX_PER_SOURCE);
-      if (error) {
-        console.error('Failed to load food order notifications:', error);
-        return;
-      }
-      setFoodOrderRows(data || []);
-    };
-    loadFoodOrders();
-
-    const channel = supabase
-      .channel('navbar-notifications-foodorders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'food_orders' }, loadFoodOrders)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [wantFoodOrders]);
-
-  useEffect(() => {
-    if (!wantEscalatedFoodOrders) return;
-    const loadEscalatedFoodOrders = async () => {
-      // escalated_at IS NOT NULL — "this order escalated at some
-      // point", same as every other source here: a fact that stays
-      // true (and stays in the list) regardless of what the order's
-      // CURRENT status later becomes, exactly like a reservation
-      // notification doesn't disappear once the guest checks in.
-      // Filtering on status = 'escalated' instead would make an order
-      // silently vanish from this list the moment kitchen staff start
-      // preparing it, which would look like the badge count randomly
-      // dropping for no visible reason.
-      const { data, error } = await supabase
-        .from('food_orders')
-        .select('id, guest_name, room_number, total_amount, escalated_at')
-        .not('escalated_at', 'is', null)
-        .order('escalated_at', { ascending: false })
-        .limit(MAX_PER_SOURCE);
-      if (error) {
-        console.error('Failed to load escalated food order notifications:', error);
-        return;
-      }
-      setEscalatedFoodOrderRows(data || []);
-    };
-    loadEscalatedFoodOrders();
-
-    const channel = supabase
-      .channel('navbar-notifications-escalated-foodorders')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'food_orders' }, loadEscalatedFoodOrders)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [wantEscalatedFoodOrders]);
-
-  useEffect(() => {
-    if (!wantRoomCharges) return;
-    const loadRoomCharges = async () => {
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('id, guest_name, amount, note, timestamp')
-        .eq('payment_type', 'room_charge')
-        .order('timestamp', { ascending: false })
-        .limit(MAX_PER_SOURCE);
-      if (error) {
-        console.error('Failed to load room charge notifications:', error);
-        return;
-      }
-      setRoomChargeRows(data || []);
-    };
-    loadRoomCharges();
-
-    const channel = supabase
-      .channel('navbar-notifications-roomcharges')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, loadRoomCharges)
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [wantRoomCharges]);
-
   const items = useMemo(() => {
-    const fromReservations = reservationRows.map((r) => ({
-      key: `reservation-${r.id}`,
-      type: 'reservation',
-      occurredAt: r.created_at,
-      subtitle: `${reservationGuestName(r)}${r.room_type ? ` · ${r.room_type}` : ''}`,
-    }));
-    const fromFoodOrders = foodOrderRows.map((o) => ({
-      key: `foodorder-${o.id}`,
-      type: 'foodorder',
-      occurredAt: o.created_at,
-      subtitle: `${o.guest_name || 'Guest'} · Room ${o.room_number || '—'} · ${formatCurrency(o.total_amount)}`,
-    }));
-    const fromRoomCharges = roomChargeRows.map((t) => {
-      const room = roomFromChargeNote(t.note);
-      return {
-        key: `roomcharge-${t.id}`,
-        type: 'roomcharge',
-        occurredAt: t.timestamp,
-        subtitle: `${t.guest_name || 'Guest'}${room ? ` · Room ${room}` : ''} · ${formatCurrency(t.amount)}`,
-      };
-    });
-    const fromEscalatedFoodOrders = escalatedFoodOrderRows.map((o) => ({
-      key: `foodorder_escalated-${o.id}`,
-      type: 'foodorder_escalated',
-      occurredAt: o.escalated_at,
-      subtitle: `${o.guest_name || 'Guest'} · Room ${o.room_number || '—'} · ${formatCurrency(o.total_amount)}`,
-    }));
-    return [...fromReservations, ...fromFoodOrders, ...fromRoomCharges, ...fromEscalatedFoodOrders]
+    return reservationRows
+      .map((r) => ({
+        key: `reservation-${r.id}`,
+        type: 'reservation',
+        occurredAt: r.created_at,
+        subtitle: `${reservationGuestName(r)}${r.room_type ? ` · ${r.room_type}` : ''}`,
+      }))
       .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
       .slice(0, MAX_TOTAL);
-  }, [reservationRows, foodOrderRows, roomChargeRows, escalatedFoodOrderRows]);
+  }, [reservationRows]);
 
   const unseenCount = useMemo(() => {
     if (!lastSeenAt) return items.length; // never opened the panel on this device — everything's new
@@ -502,8 +323,8 @@ const styles = StyleSheet.create({
 
   // The Modal's own overlay — transparent (a notification dropdown
   // shouldn't dim the whole screen the way a confirm dialog does) and
-  // flex-aligned to the top-right instead of TapeChartScreen.jsx's/
-  // KitchenOrdersScreen.jsx's centered dialog look, so the panel below
+  // flex-aligned to the top-right instead of TapeChartScreen.jsx's
+  // centered dialog look, so the panel below
   // lands under the bell rather than in the middle of the screen. A tap
   // anywhere in this overlay — including a sidebar item, not just blank
   // space, since Modal covers everything — closes the panel; the

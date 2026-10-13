@@ -5,8 +5,8 @@ import { usePref } from '../../utils/staffPreferences';
 
 /**
  * StaffSettingsScreen — the "Settings" page reached from the button just
- * above the profile footer in the Admin, Front Desk and Kitchen/F&B
- * sidebars. One shared screen for all three portals.
+ * above the profile footer in the Admin and Front Desk sidebars. One
+ * shared screen for both portals.
  *
  * Account details and password changes are NOT here — those live on My
  * Profile (tap your name at the bottom of the sidebar). This page only
@@ -14,16 +14,13 @@ import { usePref } from '../../utils/staffPreferences';
  * (see utils/staffPreferences.js):
  *  - Show date & weather in the top bar (all roles)
  *  - Ask before logging out (all roles)
- *  - Sound alert for new kitchen orders (F&B only — the chime only exists
- *    on the Kitchen Orders screen, so it isn't offered elsewhere)
  *
  * Props:
- *  - role: 'admin' | 'frontdesk' | 'fnb'
+ *  - role: 'admin' | 'frontdesk'
  */
 export default function StaffSettingsScreen({ role = 'admin' }) {
   const [showDateWeather, setShowDateWeather] = usePref('showDateWeather', true);
   const [confirmLogout, setConfirmLogout] = usePref('confirmLogout', true);
-  const [soundAlerts, setSoundAlerts] = usePref('soundAlerts', true);
 
   const rows = [
     {
@@ -41,16 +38,6 @@ export default function StaffSettingsScreen({ role = 'admin' }) {
       onChange: setConfirmLogout,
     },
   ];
-
-  if (role === 'fnb') {
-    rows.push({
-      key: 'soundAlerts',
-      label: 'Sound alert for new kitchen orders',
-      description: 'Plays a short chime when Front Desk sends an order to the kitchen. Web only.',
-      value: soundAlerts,
-      onChange: setSoundAlerts,
-    });
-  }
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>

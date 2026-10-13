@@ -81,6 +81,56 @@ export function isAvailable(status) {
   return status === ROOM_STATUS.VACANT;
 }
 
+/* ── Date-range availability (double-booking prevention) ─────────────────
+ * A room's `status` is its LIVE physical state (occupied, being cleaned,
+ * out of service). It says nothing about future bookings, so it must not
+ * be used to decide whether a room can be booked for some date range.
+ * Booking availability comes from overlapping reservations instead, via
+ * the booked_room_numbers() Postgres function (sql/prevent_double_booking.sql).
+ * That function runs as SECURITY DEFINER because RLS only lets a guest read
+ * their own reservations; it returns room numbers only, never guest data.
+ * The same SQL file adds a trigger that rejects any overlapping booking
+ * with SQLSTATE 23P01, so the database stays the final word even if two
+ * guests book the same room at the same moment.
+ */
+
+// Local calendar date (YYYY-MM-DD) — the device's own date, not UTC, so a
+// stay picked as "Nov 10" in the Philippines stays Nov 10.
+export function toLocalDateString(date) {
+  const d = new Date(date);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Room numbers already held by another pending/upcoming/checked-in
+ * reservation for any night in [checkIn, checkOut). Returns a Set.
+ * excludeReservationId lets a screen ignore the booking it is editing.
+ */
+export async function fetchBookedRoomNumbers(checkIn, checkOut, excludeReservationId = null) {
+  const { data, error } = await supabase.rpc('booked_room_numbers', {
+    p_start: toLocalDateString(checkIn),
+    p_end: toLocalDateString(checkOut),
+    p_exclude: excludeReservationId,
+  });
+  if (error) throw error;
+  return new Set((data || []).map((row) => String(typeof row === 'object' ? row.booked_room_numbers : row)));
+}
+
+// True when a write was refused by the double-booking trigger.
+export function isDoubleBookingError(err) {
+  return err?.code === '23P01';
+}
+
+// A room can be offered for a future stay unless it is out of service or
+// already booked for an overlapping night.
+export function isRoomBookable(room, bookedRoomNumbers) {
+  if (room.status === ROOM_STATUS.MAINTENANCE) return false;
+  return !bookedRoomNumbers.has(String(room.roomNumber));
+}
+
 export function formatCurrency(amount) {
   return `₱${(amount ?? 0).toLocaleString()}`;
 }

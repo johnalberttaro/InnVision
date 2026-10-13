@@ -4,21 +4,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../context/ThemeContext';
 
 /**
- * RatingModal — shared star-rating + optional-comment modal used for both
- * post-stay room ratings (MyReservationsScreen.jsx) and post-order food
- * ratings (OrderFoodScreen.jsx). One component so the two rating flows
- * always look and behave identically to the guest, and any future third
- * "rate X" surface can reuse it too instead of building its own modal.
+ * RatingModal — shared star-rating + optional-comment modal, used for
+ * post-stay room ratings (MyReservationsScreen.jsx). Kept generic so any
+ * future "rate X" surface can reuse it instead of building its own modal.
  *
  * Fully controlled by the parent for submission — this component only
  * collects rating+comment and calls onSubmit(rating, comment); the parent
- * owns the actual submitRoomReview/submitFoodReview Supabase call so this
+ * owns the actual submitRoomReview Supabase call so this
  * file has no opinion on *what* is being rated.
  *
  * Props:
  *  - visible, onClose
- *  - subjectTitle: e.g. "Deluxe King — Room 204" or "Order #A1B2C3"
- *  - subjectSubtitle: optional second line, e.g. the stay dates or order date
+ *  - subjectTitle: e.g. "Deluxe King — Room 204"
+ *  - subjectSubtitle: optional second line, e.g. the stay dates
  *  - onSubmit: async (rating, comment) => void — throwing surfaces an error
  */
 export default function RatingModal({ visible, onClose, subjectTitle, subjectSubtitle, onSubmit }) {

@@ -6,22 +6,17 @@ import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 const ROLE_TITLES = {
   admin: 'Administrator',
   frontdesk: 'Front Desk',
-  fnb: 'Kitchen / F&B',
 };
 
 const CATEGORY_ICONS = {
-  'Rooms & Menu': 'bed-outline',
+  Rooms: 'bed-outline',
   'Staff Accounts': 'people-outline',
   Reports: 'bar-chart-outline',
   'Front Desk Operations': 'briefcase-outline',
   Reservations: 'calendar-outline',
   Billing: 'cash-outline',
-  'Food Orders': 'restaurant-outline',
   'Rooms & Housekeeping': 'bed-outline',
   Guests: 'people-outline',
-  Orders: 'receipt-outline',
-  Menu: 'fast-food-outline',
-  Dashboard: 'grid-outline',
   'Your Account': 'person-circle-outline',
 };
 
@@ -47,7 +42,7 @@ const ACCOUNT_ANSWER = {
 const FAQS = {
   admin: [
     {
-      category: 'Rooms & Menu',
+      category: 'Rooms',
       q: 'How do I add a room type or change its rate?',
       steps: [
         'Open Room Management → Room Types & Rates.',
@@ -56,17 +51,11 @@ const FAQS = {
       ],
     },
     {
-      category: 'Rooms & Menu',
-      q: 'How do I add a dish to the food menu?',
-      steps: ['Open Food & Dining → Food Menu.', 'Add the item with its name, price and details.'],
-      tip: 'Kitchen/F&B staff can switch a dish on or off from their own Menu Availability screen when an ingredient runs out.',
-    },
-    {
       category: 'Staff Accounts',
       q: 'How do I create an account for a staff member?',
       steps: [
         'Open the Staff menu.',
-        'Choose the role: Front Desk, F&B, Housekeeping or Maintenance Accounts.',
+        'Choose the role: Front Desk, Housekeeping or Maintenance Accounts.',
         'Create the account and set a default password.',
       ],
       tip: 'The role decides which portal the person sees when they log in. Ask them to change the default password in My Profile after their first login.',
@@ -89,7 +78,7 @@ const FAQS = {
     {
       category: 'Reports',
       q: 'What is the difference between Guest Ratings and Guest Feedback?',
-      a: 'Guest Ratings collects the reviews guests leave for rooms and food orders. You can filter by type or star rating and search by name. Guest Feedback shows the overall "How was your experience?" rating guests submit from the app home screen.',
+      a: 'Guest Ratings collects the reviews guests leave after their stay. You can filter by star rating and search by name. Guest Feedback shows the overall "How was your experience?" rating guests submit from the app home screen.',
       tip: 'Low scores (1 to 2 stars) are counted under "Needs Attention" on the Guest Feedback page.',
     },
     {
@@ -145,21 +134,7 @@ const FAQS = {
     {
       category: 'Billing',
       q: 'Where can I see who still owes money, and past receipts?',
-      a: 'In Billing Management, the Outstanding Balances tab lists unpaid and partially paid folios (you can search and sort). The Receipts tab lists every receipt generated, and Transaction History shows payments, room charges and balance overrides.',
-    },
-    {
-      category: 'Food Orders',
-      q: 'How do I handle a food order from a guest?',
-      steps: [
-        'Open Food Orders. New orders show the guest and room number.',
-        'Tap "Escalate to Kitchen" to send it to the F&B team, or "Cancel" to cancel it.',
-      ],
-      tip: 'For a walk-in order, use the "New Order" button.',
-    },
-    {
-      category: 'Food Orders',
-      q: 'An order says "E-wallet — awaiting confirmation". What do I do?',
-      a: 'After the order is delivered, check that the e-wallet payment actually arrived, then tap "Confirm Payment Received" on that order.',
+      a: 'In Billing Management, the Outstanding Balances tab lists unpaid and partially paid folios (you can search and sort). The Receipts tab lists every receipt generated, and Transaction History shows payments and balance overrides.',
     },
     {
       category: 'Rooms & Housekeeping',
@@ -170,55 +145,6 @@ const FAQS = {
       category: 'Guests',
       q: 'Where do I see guest records and reviews?',
       a: 'Open Guest Management. Guest Profiles and Guest Records hold guest information, and the Guest Ratings tab shows the reviews guests have left.',
-    },
-    ACCOUNT_ANSWER,
-  ],
-
-  fnb: [
-    {
-      category: 'Orders',
-      q: 'A guest placed an order but I don\'t see it in Kitchen Orders. Why?',
-      a: 'Orders go to the Front Desk first. They appear in Kitchen Orders only after the Front Desk escalates them to the kitchen.',
-      tip: 'You also get a chime and a bell notification when one arrives.',
-    },
-    {
-      category: 'Orders',
-      q: 'How do I move an order through the kitchen?',
-      steps: [
-        'Open Kitchen Orders. Orders sit in three columns on the board.',
-        'Tap "Start Preparing" on a To Prepare order.',
-        'When it is ready, tap "Assign Delivery" and pick a staff member from the F&B roster.',
-        'After delivery, tap "Mark Delivered" and record how it was paid.',
-      ],
-    },
-    {
-      category: 'Orders',
-      q: 'How do I record how an order was paid?',
-      a: 'When you tap "Mark Delivered", record how it was paid: cash or e-wallet. Cash is confirmed on the spot. E-wallet payments are confirmed afterwards by the Front Desk.',
-    },
-    {
-      category: 'Orders',
-      q: 'What is "Charge to Room"?',
-      a: 'Instead of taking payment at the door, the order can be added to the guest\'s room bill. It is only available while the guest is still checked in.',
-    },
-    {
-      category: 'Orders',
-      q: 'Where do I find orders that are already done or cancelled?',
-      a: 'Open Order History. It is a read-only list of every order that has been delivered or cancelled.',
-    },
-    {
-      category: 'Menu',
-      q: 'A dish ran out of stock. How do I stop guests from ordering it?',
-      steps: [
-        'Open Menu Availability.',
-        'Switch that dish off. Guests stop seeing it right away.',
-        'Switch it back on when it is available again.',
-      ],
-    },
-    {
-      category: 'Dashboard',
-      q: 'What does the Dashboard show?',
-      a: 'Today\'s orders and revenue, the average time from escalation to delivery, and your top-selling items.',
     },
     ACCOUNT_ANSWER,
   ],
@@ -245,8 +171,8 @@ function Highlight({ text, term, style }) {
 }
 
 /**
- * StaffHelpScreen — the "Help & FAQ" center for the Admin, Front Desk and
- * Kitchen/F&B portals. Each role sees only its own questions (see FAQS).
+ * StaffHelpScreen — the "Help & FAQ" center for the Admin and Front Desk
+ * portals. Each role sees only its own questions (see FAQS).
  *
  * Layout: a dark hero with the search box, topic chips with counts, then
  * the questions grouped by topic. Answers expand in place as either a
@@ -255,7 +181,7 @@ function Highlight({ text, term, style }) {
  * itself so the answer is visible right away.
  *
  * Props:
- *  - role: 'admin' | 'frontdesk' | 'fnb'
+ *  - role: 'admin' | 'frontdesk'
  */
 export default function StaffHelpScreen({ role = 'admin' }) {
   const items = useMemo(

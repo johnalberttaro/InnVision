@@ -40,20 +40,11 @@ const MENU_SECTIONS = [
     ],
   },
   {
-    key: 'food',
-    icon: 'restaurant-outline',
-    label: 'Food & Dining',
-    subItems: [
-      { key: 'food:menu', label: 'Food Menu' },
-    ],
-  },
-  {
     key: 'staff',
     icon: 'people-outline',
     label: 'Staff',
     subItems: [
       { key: 'staff:accounts', label: 'Front Desk Accounts' },
-      { key: 'staff:fnb', label: 'F&B Accounts' },
       { key: 'staff:housekeeping', label: 'Housekeeping Accounts' },
       { key: 'staff:maintenance', label: 'Maintenance Accounts' },
     ],

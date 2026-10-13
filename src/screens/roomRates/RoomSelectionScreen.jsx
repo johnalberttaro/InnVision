@@ -7,7 +7,14 @@ import {
   StyleSheet,
   useWindowDimensions,
 } from 'react-native';
-import { subscribeToRoomTypes, subscribeToRooms, joinRoomsWithTypes, formatCurrency } from '../../utils/Roomsservice';
+import {
+  subscribeToRoomTypes,
+  subscribeToRooms,
+  joinRoomsWithTypes,
+  formatCurrency,
+  fetchBookedRoomNumbers,
+  isRoomBookable,
+} from '../../utils/Roomsservice';
 import { Ionicons } from '@expo/vector-icons';
 import Brandheader from '../../components/shared/Brandheader';
 import Appfooter from '../../components/shared/Appfooter';
@@ -66,8 +73,13 @@ const HOUSE_RULES = [
  *     can review all picks before moving to Review & Pay
  *
  * Availability rules enforced here:
- *   - Only rooms with status "vacant" (room.available) are ever shown as
- *     selectable, when real Firestore room data is loaded.
+ *   - A room is offered when no other pending/upcoming/checked-in
+ *     reservation holds it for any night of THIS stay (fetched from the
+ *     booked_room_numbers() RPC for bookingDetails' dates) and it isn't
+ *     out of service. Its live status (occupied today, being cleaned) is
+ *     NOT used, since that says nothing about the dates being booked.
+ *     The database trigger in sql/prevent_double_booking.sql still has
+ *     the final say if two guests pick the same room at once.
  *   - A physical room already assigned to a DIFFERENT slot is hidden from
  *     the list for the current slot (can't double-book the same room
  *     across slots in one reservation).
@@ -95,6 +107,10 @@ export default function RoomSelectionScreen({ bookingDetails, onEditSearch, onRe
   const [roomTypes, setRoomTypes] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [firestoreReady, setFirestoreReady] = useState(false);
+  // Room numbers already booked for an overlapping night of this stay.
+  // null = still loading (no rooms shown yet, so nothing unavailable
+  // flashes up as selectable).
+  const [bookedRoomNumbers, setBookedRoomNumbers] = useState(null);
 
   const { colors, spacing, radius, fonts } = useTheme();
   const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
@@ -121,23 +137,43 @@ export default function RoomSelectionScreen({ bookingDetails, onEditSearch, onRe
     };
   }, []);
 
+  // Re-fetched whenever the stay dates change, and whenever the rooms
+  // list changes (a realtime room update is a cheap signal that
+  // something at the hotel moved, e.g. a walk-in just checked in).
+  const stayStart = bookingDetails?.checkIn ? new Date(bookingDetails.checkIn).getTime() : null;
+  const stayEnd = bookingDetails?.checkOut ? new Date(bookingDetails.checkOut).getTime() : null;
+  useEffect(() => {
+    if (stayStart == null || stayEnd == null) return;
+    let cancelled = false;
+    fetchBookedRoomNumbers(new Date(stayStart), new Date(stayEnd))
+      .then((set) => { if (!cancelled) setBookedRoomNumbers(set); })
+      .catch((err) => {
+        // Fail open in the UI only: the database trigger still refuses
+        // an overlapping booking at submit time.
+        console.error('Failed to load booked rooms for these dates:', err);
+        if (!cancelled) setBookedRoomNumbers(new Set());
+      });
+    return () => { cancelled = true; };
+  }, [stayStart, stayEnd, rooms]);
+
   const joinedRooms = useMemo(() => joinRoomsWithTypes(rooms, roomTypes), [rooms, roomTypes]);
   const isFirestoreRooms = firestoreReady && joinedRooms.length > 0;
 
-  // Base pool of selectable rooms: only vacant ones when we have real
-  // Firestore data. Fallback categories (no roomNumber) are always
-  // "available" since there's no live status to check.
+  // Base pool of selectable rooms: rooms free for every night of this
+  // stay when we have real room data. Fallback categories (no roomNumber)
+  // are always "available" since there's no real room to check.
   const allRoomOptions = useMemo(() => {
     if (isFirestoreRooms) {
+      if (!bookedRoomNumbers) return []; // still checking dates
       return joinedRooms
-        .filter((room) => room.available)
+        .filter((room) => isRoomBookable(room, bookedRoomNumbers))
         .map((room) => ({
           ...room,
           name: `Room ${room.roomNumber} — ${room.roomTypeName}`,
         }));
     }
     return ROOM_RATES.map((rate) => ({ ...rate, roomNumber: null, available: true }));
-  }, [isFirestoreRooms, joinedRooms]);
+  }, [isFirestoreRooms, joinedRooms, bookedRoomNumbers]);
 
   const totalRoomsNeeded = bookingDetails?.totals?.totalRooms || 1;
 
@@ -287,7 +323,9 @@ export default function RoomSelectionScreen({ bookingDetails, onEditSearch, onRe
 
         {availableForActiveSlot.length === 0 && (
           <Text style={styles.message}>
-            No vacant rooms available for this selection right now.
+            {isFirestoreRooms && !bookedRoomNumbers
+              ? 'Checking availability for your dates…'
+              : 'No rooms are available for these dates. Try different dates.'}
           </Text>
         )}
 

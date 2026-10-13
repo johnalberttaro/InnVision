@@ -82,11 +82,6 @@ const MENU_SECTIONS = [
     icon: 'sparkles-outline',
     label: 'Housekeeping',
   },
-  {
-    key: 'foodorders',
-    icon: 'restaurant-outline',
-    label: 'Food Orders',
-  },
 ];
 
 // Pinned just above the profile footer (replaces the old "Logout" menu row —

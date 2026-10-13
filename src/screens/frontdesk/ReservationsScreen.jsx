@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -15,10 +15,16 @@ import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { formatCurrency } from '../../utils/roomRates';
 import { createBillingRecord, getBillingRecordByReservation } from '../../utils/BillingService';
-import { updateRoomStatus, ROOM_STATUS } from '../../utils/Roomsservice';
+import { updateRoomStatus, ROOM_STATUS, isDoubleBookingError } from '../../utils/Roomsservice';
 import WalkInScreen from './WalkInScreen';
 import TapeChartScreen from './TapeChartScreen';
 import RecordPaymentModal from './RecordPaymentModal';
+import {
+  fetchPendingExtensions,
+  approveStayExtension,
+  declineStayExtension,
+  subscribeToStayExtensions,
+} from '../../utils/StayExtensionService';
 
 // All 8 Reservation Management sidebar items, now tabs at the top of this
 // one screen instead of separate sidebar sub-items/routes. The first 6 are
@@ -31,6 +37,7 @@ const TABS = [
   { key: 'reservations:confirmed', label: 'Confirmed',    icon: 'checkmark-circle-outline' },
   { key: 'reservations:checkins',  label: 'Check-ins',    icon: 'log-in-outline' },
   { key: 'reservations:checkouts', label: 'Check-outs',   icon: 'log-out-outline' },
+  { key: 'reservations:extensions', label: 'Extensions',  icon: 'calendar-number-outline' },
   { key: 'reservations:refunds',   label: 'Refunds',      icon: 'cash-outline' },
   { key: 'reservations:walkin',    label: 'Walk-In',      icon: 'person-add-outline' },
   { key: 'reservations:tapechart', label: 'Tape Chart',   icon: 'grid-outline' },
@@ -84,6 +91,8 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actingId, setActingId] = useState(null);
+  // Guests' pending Extend Stay requests, keyed by reservation id.
+  const [pendingExtensions, setPendingExtensions] = useState({});
   const [toast, setToast] = useState(null);
 
   // Drives the single themed dialog rendered at the bottom of this
@@ -185,6 +194,68 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
 
     return () => supabase.removeChannel(channel);
   }, []);
+
+  // Extend Stay requests from guests (sql/stay_extensions.sql). Shown on
+  // the guest's card on every tab, and gathered under the Extensions tab.
+  const loadPendingExtensions = async () => {
+    try {
+      setPendingExtensions(await fetchPendingExtensions());
+    } catch (err) {
+      console.error('Failed to load stay extension requests:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadPendingExtensions();
+    return subscribeToStayExtensions('stay-extensions-frontdesk', loadPendingExtensions);
+  }, []);
+
+  const handleApproveExtension = (item, ext) => {
+    confirmDialog(
+      'Approve this extension?',
+      `${getGuestName(item)} stays ${ext.extraNights} more night${ext.extraNights === 1 ? '' : 's'}, until ${new Date(ext.newCheckOut).toLocaleDateString()}. ${formatCurrency(ext.amount)} will be added to their folio as a balance to collect.`,
+      'Approve',
+      async () => {
+        setActingId(item.id);
+        try {
+          await approveStayExtension(ext.id, staffName);
+          showToast(`${getGuestName(item)}'s stay extended to ${new Date(ext.newCheckOut).toLocaleDateString()}`);
+          await Promise.all([loadBookings(), loadPendingExtensions()]);
+        } catch (err) {
+          console.error('Failed to approve stay extension:', err);
+          notifyDialog(
+            isDoubleBookingError(err) ? 'Room not available' : 'Could not approve',
+            isDoubleBookingError(err)
+              ? `${err.message} Another booking holds this room on one of the added nights. Decline the request or move the incoming guest first.`
+              : err?.message || 'Please try again.'
+          );
+        } finally {
+          setActingId(null);
+        }
+      }
+    );
+  };
+
+  const handleDeclineExtension = (item, ext) => {
+    confirmDialog(
+      'Decline this extension?',
+      `${getGuestName(item)} will be told the extension isn't available and keeps their current check-out date.`,
+      'Decline',
+      async () => {
+        setActingId(item.id);
+        try {
+          await declineStayExtension(ext.id, null, staffName);
+          showToast(`Extension declined for ${getGuestName(item)}`);
+          await loadPendingExtensions();
+        } catch (err) {
+          console.error('Failed to decline stay extension:', err);
+          notifyDialog('Could not decline', err?.message || 'Please try again.');
+        } finally {
+          setActingId(null);
+        }
+      }
+    );
+  };
 
   const formatDateRange = (checkIn, checkOut) => {
     try {
@@ -359,7 +430,17 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
       await loadBookings();
     } catch (err) {
       console.error(`Failed to update reservation to ${newStatus}:`, err);
-      notifyDialog('Error', 'Could not update this reservation. Please try again.');
+      if (isDoubleBookingError(err)) {
+        // Refused by the double-booking trigger: another active booking
+        // already holds this room for an overlapping night (only possible
+        // for bookings made before sql/prevent_double_booking.sql was run).
+        notifyDialog(
+          'Room not available',
+          `${err.message} Another reservation already holds this room for one of these nights. Decline this booking or ask the guest to change rooms.`
+        );
+      } else {
+        notifyDialog('Error', 'Could not update this reservation. Please try again.');
+      }
     } finally {
       setActingId(null);
     }
@@ -429,15 +510,8 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
   };
 
   // Checks out a guest — but first checks whether they still owe
-  // anything. Checking out never used to touch billing_records at all,
-  // which meant a charge that landed on the folio AFTER it looked
-  // settled (e.g. an F&B order charged to the room post-payment — see
-  // BillingService.js's chargeToRoom() note) could ride along silently:
-  // nothing here would catch it, and once status flips to 'checked-out'
-  // the guest is gone and Charge to Room can never be used again for
-  // this stay. The balance itself is never lost from the data (it just
-  // sits on the folio until someone opens Billing Records), but nothing
-  // used to stop a checkout from happening before anyone noticed it.
+  // anything on their folio, so a balance can't ride along silently
+  // past checkout.
   const handleCheckOut = async (item) => {
     setActingId(item.id); // reuses the existing per-card spinner during this lookup
     let folio = null;
@@ -585,6 +659,8 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
         return b.status === 'upcoming' && isDueTodayOrEarlier(b.checkIn);
       case 'reservations:checkouts':
         return b.status === 'checked-in' && isDueTodayOrEarlier(b.checkOut);
+      case 'reservations:extensions':
+        return b.status === 'checked-in' && !!pendingExtensions[b.id];
       // Deliberately scoped to PENDING refunds only, matching the sidebar
       // label exactly — once staff mark one processed it drops off this
       // list (refund_status becomes 'processed'), same one-purpose-per-tab
@@ -602,6 +678,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     'reservations:checkins': 'No arrivals due or overdue right now.',
     'reservations:checkouts': 'No checkouts due or overdue right now.',
     'reservations:refunds': 'No refunds pending right now.',
+    'reservations:extensions': 'No extension requests right now.',
   };
 
   return (
@@ -615,7 +692,11 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
           {TABS.map((tab) => (
             <ReservationTabButton
               key={tab.key}
-              tab={tab}
+              tab={
+                tab.key === 'reservations:extensions' && Object.keys(pendingExtensions).length > 0
+                  ? { ...tab, label: `${tab.label} (${Object.keys(pendingExtensions).length})` }
+                  : tab
+              }
               active={activeTab === tab.key}
               onPress={() => setActiveTab(tab.key)}
             />
@@ -643,6 +724,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
             const showCheckIn  = activeTab === 'reservations:checkins'  && item.status === 'upcoming';
             const showCheckOut = activeTab === 'reservations:checkouts' && item.status === 'checked-in';
             const showMarkRefunded = activeTab === 'reservations:refunds' && item.refundStatus === 'pending';
+            const extension = item.status === 'checked-in' ? pendingExtensions[item.id] : null;
 
             return (
               <View style={[styles.card, { borderLeftColor: statusStyle.accent }]}>
@@ -786,6 +868,51 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
                       </Text>
                     </View>
                   </>
+                )}
+
+                {!!extension && (
+                  <View style={styles.extensionPanel}>
+                    <View style={styles.extensionHeader}>
+                      <Ionicons name="calendar-number-outline" size={15} color="#2C5EA8" />
+                      <Text style={styles.extensionTitle}>
+                        Extension request: +{extension.extraNights} night{extension.extraNights === 1 ? '' : 's'}
+                      </Text>
+                    </View>
+                    <Text style={styles.extensionText}>
+                      New check-out {new Date(extension.newCheckOut).toLocaleDateString()} · {formatCurrency(extension.amount)} added to folio
+                    </Text>
+                    <Text style={styles.extensionMeta}>
+                      Requested {new Date(extension.requestedAt).toLocaleString()}
+                    </Text>
+                    <View style={[styles.pendingActionsRow, { marginTop: spacing.sm }]}>
+                      <TouchableOpacity
+                        style={[styles.pendingActionBtn, styles.declineBtn]}
+                        onPress={() => handleDeclineExtension(item, extension)}
+                        activeOpacity={0.85}
+                        disabled={isActing}
+                        accessibilityLabel="Decline extension"
+                      >
+                        <Ionicons name="close" size={14} color={colors.danger} />
+                        <Text style={styles.declineBtnText}>Decline</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.pendingActionBtn, styles.confirmBtn]}
+                        onPress={() => handleApproveExtension(item, extension)}
+                        activeOpacity={0.85}
+                        disabled={isActing}
+                        accessibilityLabel="Approve extension"
+                      >
+                        {isActing
+                          ? <ActivityIndicator color={colors.white} size="small" />
+                          : (
+                            <>
+                              <Ionicons name="checkmark" size={14} color={colors.white} />
+                              <Text style={styles.confirmBtnText}>Approve</Text>
+                            </>
+                          )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 )}
 
                 {showCheckIn && (
@@ -1198,6 +1325,18 @@ const styles = StyleSheet.create({
   // same kind of resolving, forward-moving action, so it gets the same
   // semantic color despite being a fresh reservation status (cancelled).
   refundButton: { backgroundColor: '#1E7B34' },
+  extensionPanel: {
+    marginTop: spacing.sm,
+    padding: spacing.sm + 2,
+    borderRadius: radius.md,
+    backgroundColor: '#E3ECF8',
+    borderWidth: 1,
+    borderColor: '#C3D4EE',
+  },
+  extensionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  extensionTitle: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: '#2C5EA8' },
+  extensionText: { fontSize: 12, fontFamily: fonts.body, color: colors.text, marginTop: 4 },
+  extensionMeta: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },
   actionButtonDisabled: { opacity: 0.7 },
   actionButtonContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   actionButtonText: { color: colors.white, fontSize: 13, fontFamily: fonts.headingSemiBold, letterSpacing: 0.3 },

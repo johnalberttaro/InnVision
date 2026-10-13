@@ -12,9 +12,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { updateRoomStatus, ROOM_STATUS } from '../../utils/Roomsservice';
 import { submitRoomReview, fetchReviewedIds } from '../../utils/ReviewsService';
 import RatingModal from '../../components/shared/RatingModal';
+import ExtendStayModal from './ExtendStayModal';
+import {
+  fetchMyLatestExtensions,
+  cancelStayExtension,
+  subscribeToStayExtensions,
+} from '../../utils/StayExtensionService';
 import { useTheme } from '../../context/ThemeContext';
 
 /**
@@ -34,12 +39,11 @@ import { useTheme } from '../../context/ThemeContext';
  *    on each selected_rooms entry — this mismatch meant the "Selected
  *    rate" detail was likely always showing ₱0.00. Now reads the field
  *    that's actually written.
- *  - Room release on cancellation now goes through
- *    Roomsservice.updateRoomStatus() (the shared service every other
- *    room screen uses) instead of a raw Firestore transaction, and sets
- *    ROOM_STATUS.VACANT directly — correct for a pre-check-in
- *    cancellation (no guest ever occupied the room, so no cleaning cycle
- *    is needed, unlike an actual checkout which goes through INSPECT).
+ *  - Cancelling no longer touches rooms.status at all. A booking holds
+ *    a room through the reservation row itself (see
+ *    sql/prevent_double_booking.sql), so setting status 'cancelled' is
+ *    what frees it. The old "release" set the room to VACANT, which could
+ *    wrongly mark a room vacant while another guest was staying in it.
  *  - Adults/Children breakdown removed from the expanded details: the
  *    new reservations schema only stores a single guest_count (total),
  *    not the per-room adults/children split the old `totals` object on
@@ -80,6 +84,11 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
   // rating submitted — hides the "Rate your stay" prompt for those.
   const [reviewedReservationIds, setReviewedReservationIds] = useState(new Set());
   const [ratingTarget, setRatingTarget] = useState(null); // reservation being rated
+  // Extend Stay: latest request per reservation ({ [reservationId]: ext })
+  // and the reservation whose Extend Stay dialog is open.
+  const [extensions, setExtensions] = useState({});
+  const [extendTarget, setExtendTarget] = useState(null);
+  const [withdrawingId, setWithdrawingId] = useState(null);
 
   // Checked-out and cancelled reservations are "done" — they move out of
   // the main list and into the History panel behind the ⋮ menu, so the
@@ -190,9 +199,44 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
       .catch((err) => console.error('Failed to load reviewed reservations:', err));
   }, [currentUser?.id]);
 
+  // Extend Stay requests — loaded with the reservations and kept live, so
+  // the card flips from "waiting for the front desk" to the new check-out
+  // date the moment staff approve (the approval also changes the
+  // reservation row, hence the reservation refetch alongside it).
+  const loadExtensions = useCallback(async () => {
+    if (!currentUser?.id) return;
+    try {
+      setExtensions(await fetchMyLatestExtensions(currentUser.id));
+    } catch (err) {
+      console.error('Failed to load stay extension requests:', err);
+    }
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!currentUser?.id) return undefined;
+    loadExtensions();
+    return subscribeToStayExtensions(`my-stay-extensions-${currentUser.id}`, () => {
+      loadExtensions();
+      fetchReservations();
+    });
+  }, [currentUser?.id, loadExtensions, fetchReservations]);
+
+  const handleWithdrawExtension = async (ext) => {
+    setWithdrawingId(ext.id);
+    try {
+      await cancelStayExtension(ext.id);
+      await loadExtensions();
+    } catch (err) {
+      console.error('Failed to withdraw extension request:', err);
+    } finally {
+      setWithdrawingId(null);
+    }
+  };
+
   const handleRefresh = () => {
     setRefreshing(true);
     fetchReservations();
+    loadExtensions();
   };
 
   // ---------------- Formatting helpers ----------------
@@ -310,12 +354,10 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
   // payment on file yet, so restricting it the same way would just block
   // a guest from cancelling a booking nothing was ever charged for —
   // those stay cancellable anytime up to check-in, same as before.
-  // ⚠️ TEMP FOR TESTING — set to 1 minute so the refund flow can be
-  // exercised quickly (book, wait ~60s, cancel → watch it drop OUT of the
-  // refund-eligible window). MUST be reverted to 24 * 60 * 60 * 1000
-  // before your defense/demo/deploy — as-is, this makes the real 24-hour
-  // grace period claimed by the system only actually last 1 minute.
-  const CANCEL_WINDOW_MS = 1 * 60 * 1000; // 1 minute — REVERT to 24 * 60 * 60 * 1000
+  // 24-hour cancellation/refund window, measured from when the booking
+  // was made (createdAt). For a quick test of the refund flow you can
+  // temporarily set this to 1 * 60 * 1000 (1 minute) — but change it back.
+  const CANCEL_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
   const isOnlinePaid = (r) => (r.paymentMode || '').toLowerCase() === 'online';
   const withinCancelWindow = (r) => {
     if (!r.createdAt) return false;
@@ -344,27 +386,6 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     if (!cancelling) setCancelTarget(null);
   };
 
-  /**
-   * Best-effort release of room inventory, via the same shared
-   * Roomsservice every other room screen uses. Sets rooms straight to
-   * VACANT (not through the INSPECT cleaning cycle) — correct here
-   * because canCancel() only allows cancelling 'pending'/'upcoming'
-   * reservations, meaning the guest never actually occupied the room.
-   */
-  const releaseRoomsInventory = async (selectedRooms = []) => {
-    for (const room of selectedRooms) {
-      if (!room?.roomNumber) continue;
-      try {
-        await updateRoomStatus(String(room.roomNumber), ROOM_STATUS.VACANT);
-      } catch (err) {
-        // Don't let one room's failure block the rest — surface it but
-        // continue, since the reservation-level status update is the
-        // guest-facing source of truth.
-        console.error(`Failed to release room ${room.roomNumber}:`, err);
-      }
-    }
-  };
-
   const confirmCancel = async () => {
     if (!cancelTarget) return;
     setCancelling(true);
@@ -385,7 +406,6 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
         })
         .eq('id', cancelTarget.id);
       if (error) throw error;
-      await releaseRoomsInventory(cancelTarget.selectedRooms);
 
       setCancelTarget(null);
       setSuccessMessage(
@@ -408,6 +428,9 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
   const renderReservationCard = (r, { expandedIdState, setExpandedIdState }) => {
     const meta = statusMeta(r.status);
     const expanded = expandedIdState === r.id;
+    const isCheckedIn = r.status === 'checked-in';
+    const ext = isCheckedIn ? extensions[r.id] : null;
+    const extPending = ext?.status === 'pending';
     return (
       <View key={r.id} style={styles.card}>
         {/* Summary row */}
@@ -484,6 +507,17 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
             </TouchableOpacity>
           )}
 
+          {isCheckedIn && !extPending && (
+            <TouchableOpacity
+              style={styles.rateButton}
+              onPress={() => setExtendTarget(r)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="calendar-outline" size={14} color={colors.onPrimary} />
+              <Text style={styles.rateButtonText}>Extend Stay</Text>
+            </TouchableOpacity>
+          )}
+
           {r.status === 'checked-out' && (
             reviewedReservationIds.has(r.id) ? (
               <View style={styles.ratedBadge}>
@@ -502,6 +536,38 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
             )
           )}
         </View>
+
+        {extPending && (
+          <View style={styles.extensionNote}>
+            <Ionicons name="time-outline" size={16} color={colors.text} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.extensionNoteTitle}>
+                Extension requested: +{ext.extraNights} night{ext.extraNights === 1 ? '' : 's'}
+              </Text>
+              <Text style={styles.extensionNoteText}>
+                New check-out {formatDate(ext.newCheckOut)} · {formatCurrency(ext.amount)} · waiting for the front desk to confirm.
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => handleWithdrawExtension(ext)}
+              disabled={withdrawingId === ext.id}
+              accessibilityLabel="Withdraw extension request"
+            >
+              {withdrawingId === ext.id
+                ? <ActivityIndicator size="small" color={colors.textMuted} />
+                : <Text style={styles.extensionWithdraw}>Withdraw</Text>}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {ext?.status === 'declined' && (
+          <View style={styles.cancelExpiredNote}>
+            <Ionicons name="information-circle-outline" size={13} color={colors.textMuted} />
+            <Text style={styles.cancelExpiredNoteText}>
+              Your last extension request was declined{ext.declineReason ? `: ${ext.declineReason}` : '.'}
+            </Text>
+          </View>
+        )}
 
         {cancelWindowExpired(r) && (
           <View style={styles.cancelExpiredNote}>
@@ -694,6 +760,13 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
           </View>
         </View>
       </Modal>
+
+      <ExtendStayModal
+        visible={!!extendTarget}
+        reservation={extendTarget}
+        onClose={() => setExtendTarget(null)}
+        onSubmitted={() => loadExtensions()}
+      />
 
       <RatingModal
         visible={!!ratingTarget}
@@ -969,6 +1042,34 @@ function getStyles(colors, spacing, radius, fonts) {
       fontSize: 12,
       fontFamily: fonts.bodySemiBold,
       color: colors.onPrimary,
+    },
+    extensionNote: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      marginTop: spacing.sm,
+      padding: spacing.sm + 2,
+      borderRadius: radius.md,
+      backgroundColor: colors.cardAlt,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    extensionNoteTitle: {
+      fontSize: 12,
+      fontFamily: fonts.bodySemiBold,
+      color: colors.text,
+    },
+    extensionNoteText: {
+      fontSize: 11,
+      fontFamily: fonts.body,
+      color: colors.textMuted,
+      lineHeight: 16,
+      marginTop: 2,
+    },
+    extensionWithdraw: {
+      fontSize: 12,
+      fontFamily: fonts.bodySemiBold,
+      color: colors.danger,
     },
     ratedBadge: {
       flexDirection: 'row',

@@ -3,21 +3,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * staffPreferences — tiny on/off preference store for the staff portals
- * (Admin, Front Desk, Kitchen/F&B), backed by AsyncStorage (localStorage on
+ * (Admin, Front Desk), backed by AsyncStorage (localStorage on
  * web), so a choice made on the Settings page survives a reload. Saved per
  * device/browser, not per account.
  *
  * Keys in use:
  *  - 'showDateWeather' (default true)  DashboardNavbar's clock/weather cluster
  *  - 'confirmLogout'   (default true)  confirm dialog on the sidebar's power icon
- *  - 'soundAlerts'     (default true)  KitchenOrdersScreen's new-order chime
  *
  * getPref() is synchronous (reads an in-memory cache); the cache is warmed
  * from storage as soon as this module loads, and every usePref() consumer
  * re-renders when a value changes or finishes loading.
  */
 const PREFIX = 'innvision.pref.';
-const KNOWN_KEYS = ['showDateWeather', 'confirmLogout', 'soundAlerts'];
+const KNOWN_KEYS = ['showDateWeather', 'confirmLogout'];
 
 const cache = {};
 const attempted = {};

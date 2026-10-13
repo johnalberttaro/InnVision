@@ -21,6 +21,8 @@ import {
   updateRoomStatus,
   formatCurrency,
   ROOM_STATUS,
+  fetchBookedRoomNumbers,
+  isDoubleBookingError,
 } from '../../utils/Roomsservice';
 import { createBillingRecord } from '../../utils/BillingService';
 
@@ -48,6 +50,10 @@ const TAX_RATE = 0.17; // matches the guest-facing booking flow (ReviewPayScreen
  *    and room status are unaffected by this; only the "current
  *    reservation" convenience link on the guest's profile won't populate.
  *  - No guest notification is created (there's no auth user to notify).
+ *  - A room is offered only if it is physically vacant right now AND no
+ *    other reservation holds it for any of the nights being booked (e.g.
+ *    an online guest arriving tomorrow). The double-booking trigger in
+ *    sql/prevent_double_booking.sql enforces the same rule on save.
  *
  * Length of stay is collected as a number of nights rather than a
  * calendar date range, since check-in is always "now" for a walk-in —
@@ -58,9 +64,8 @@ const TAX_RATE = 0.17; // matches the guest-facing booking flow (ReviewPayScreen
  * language established by KpiCard/AddRoomTypeScreen elsewhere in the
  * portal. Room selection reuses each room's photo (same `images[0]`
  * RoomManagementScreen's RoomRow shows) so a room reads as a place, not
- * just a number. Guests/Nights use the same +/- stepper control as
- * OrderFoodScreen's cart. Total is pinned to a floating bottom bar
- * (same pattern as OrderFoodScreen's cart bar) so it's always visible
+ * just a number. Guests/Nights use +/- stepper controls. Total is
+ * pinned to a floating bottom bar so it's always visible
  * while scrolling a long room list.
  *
  * Refinements on top of that original pass, all purely presentational —
@@ -122,6 +127,8 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
   const [confirmVisible, setConfirmVisible] = useState(false);
   const [successInfo, setSuccessInfo] = useState(null);
   const [loadError, setLoadError] = useState('');
+  // Rooms held by another reservation for tonight..(tonight + nights).
+  const [bookedForStay, setBookedForStay] = useState(() => new Set());
 
   useEffect(() => {
     let roomsLoaded = false;
@@ -145,10 +152,28 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
     };
   }, []);
 
+  // Refreshed when the length of stay changes, and on any realtime room
+  // update (a cheap signal that something at the hotel just moved).
+  useEffect(() => {
+    let cancelled = false;
+    const start = new Date();
+    const end = new Date(start);
+    end.setDate(end.getDate() + Math.max(nights, 1));
+    fetchBookedRoomNumbers(start, end)
+      .then((set) => { if (!cancelled) setBookedForStay(set); })
+      .catch((err) => {
+        // The database trigger still blocks a clash at save time.
+        console.error('Failed to load booked rooms for walk-in:', err);
+      });
+    return () => { cancelled = true; };
+  }, [nights, rooms]);
+
   const vacantRooms = useMemo(() => {
     const joined = joinRoomsWithTypes(rooms, roomTypes);
-    return joined.filter((r) => r.status === ROOM_STATUS.VACANT);
-  }, [rooms, roomTypes]);
+    return joined.filter(
+      (r) => r.status === ROOM_STATUS.VACANT && !bookedForStay.has(String(r.roomNumber))
+    );
+  }, [rooms, roomTypes, bookedForStay]);
 
   const selectedRooms = useMemo(
     () => vacantRooms.filter((r) => selectedRoomNumbers.includes(r.roomNumber)),
@@ -320,7 +345,11 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
       if (onCheckedIn) onCheckedIn(inserted.id);
     } catch (err) {
       console.error('Walk-in check-in failed:', err);
-      setErrors({ submit: 'Could not complete this check-in. Please try again.' });
+      setErrors({
+        submit: isDoubleBookingError(err)
+          ? `${err.message} It has a reservation for one of these nights — pick another room or fewer nights.`
+          : 'Could not complete this check-in. Please try again.',
+      });
     } finally {
       setSaving(false);
     }
@@ -503,14 +532,14 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
         {/* Room selection */}
         <View style={styles.card}>
           <SectionHeader icon="bed-outline" title="Select Room(s)" />
-          <Text style={styles.sectionHint}>Only currently vacant rooms are shown. Tap to select — you can pick more than one.</Text>
+          <Text style={styles.sectionHint}>Only rooms that are vacant now and not reserved for these nights are shown. Tap to select — you can pick more than one.</Text>
 
           {!!errors.rooms && <Text style={styles.errorText}>{errors.rooms}</Text>}
 
           {vacantRooms.length === 0 ? (
             <View style={styles.emptyWrap}>
               <Ionicons name="bed-outline" size={22} color={colors.disabled} />
-              <Text style={styles.emptyText}>No vacant rooms right now.</Text>
+              <Text style={styles.emptyText}>No rooms are free for this many nights right now.</Text>
             </View>
           ) : (
             <View style={styles.roomGrid}>

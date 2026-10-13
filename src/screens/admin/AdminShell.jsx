@@ -3,9 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'r
 import AdminSidebar from './AdminSidebar';
 import AdminDashboardScreen from './AdmindashboardScreen';
 import RoomTypesRatesScreen from './RoomTypeRatesScreen';
-import FoodMenuScreen from './FoodMenuScreen';
 import FrontDeskAccountsScreen from './FrontDeskAccountScreen';
-import FnbAccountsScreen from './FnbAccountScreen';
 import StaffRoleAccountScreen from './StaffRoleAccountScreen';
 import OccupancyReportScreen from './OccupancyReportScreen';
 import RevenueReportScreen from './RevenueReportScreen';
@@ -31,17 +29,11 @@ const WIDE_BREAKPOINT = 1024;
 
 // Where DashboardNavbar's notification panel sends you for each event
 // type, in Admin's own 'fd:*' activeKey scheme (Front Desk uses a
-// different one — see FrontDeskShell.jsx's own copy of this map). No
-// 'foodorder' entry: Admin has never had a Kitchen/Food Orders screen —
-// it's not in AdminSidebar.jsx's Front Desk Operations section, so
-// there'd be nowhere to send that tap. NOTIFICATION_TYPES below leaves
-// that source out of the panel entirely rather than showing a row with
-// no destination.
+// different one — see FrontDeskShell.jsx's own copy of this map).
 const NOTIFICATION_ROUTES = {
   reservation: 'fd:reservations:all',
-  roomcharge: 'fd:billing:transactions',
 };
-const NOTIFICATION_TYPES = ['reservation', 'roomcharge'];
+const NOTIFICATION_TYPES = ['reservation'];
 
 /**
  * AdminShell — top-level shell for the Admin Portal (superadmin role).
@@ -226,14 +218,8 @@ function renderActiveScreen(props) {
   if (activeKey === 'rooms:types') {
     return <RoomTypesRatesScreen />;
   }
-  if (activeKey === 'food:menu') {
-    return <FoodMenuScreen />;
-  }
   if (activeKey === 'staff:accounts') {
     return <FrontDeskAccountsScreen />;
-  }
-  if (activeKey === 'staff:fnb') {
-    return <FnbAccountsScreen />;
   }
   if (activeKey === 'staff:housekeeping') {
     return <StaffRoleAccountScreen role="housekeeping" roleLabel="Housekeeping" />;

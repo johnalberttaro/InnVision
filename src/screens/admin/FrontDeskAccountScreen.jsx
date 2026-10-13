@@ -439,7 +439,10 @@ export default function FrontDeskAccountsScreen() {
 
     setRemovingStaffId(staff.id);
     try {
-      const { error } = await supabase.from('profiles').update({ active: false }).eq('id', staff.id);
+      // Through set_account_active() (sql/set_account_active.sql), not a
+      // direct profiles update: if RLS blocks a direct update it changes
+      // zero rows WITHOUT an error, and the account silently stays active.
+      const { error } = await supabase.rpc('set_account_active', { p_user_id: staff.id, p_active: false });
       if (error) throw error;
 
       await logStaffAudit(
@@ -453,7 +456,7 @@ export default function FrontDeskAccountsScreen() {
       setPendingStaffRemoval(null);
     } catch (err) {
       console.error('Failed to remove staff account:', err);
-      setStaffError('Could not remove that staff account right now.');
+      setStaffError(err?.message ? `Could not remove that staff account: ${err.message}` : 'Could not remove that staff account right now.');
     } finally {
       setRemovingStaffId(null);
     }

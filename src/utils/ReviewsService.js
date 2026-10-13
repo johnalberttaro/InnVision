@@ -1,15 +1,12 @@
 // ReviewsService.js
 // Shared Supabase read/write helpers for the Guest Ratings feature (post-stay
-// room ratings + post-order food ratings). Backed by the `reviews` table —
-// see sql/reviews_table.sql for the schema, RLS policies, and the two
-// partial unique indexes that stop a guest submitting more than one review
-// per reservation/order.
+// room ratings). Backed by the `reviews` table — see sql/reviews_table.sql
+// for the schema, RLS policies, and the unique index that stops a guest
+// submitting more than one review per reservation.
 //
-// One shared `type: 'room' | 'food'` table rather than two separate tables,
-// since both are the exact same shape (rating + optional comment tied to
-// one guest + one thing they experienced) — the only real difference is
-// which foreign key is populated (reservation_id vs order_id), which the
-// two submit* helpers below handle so call sites never touch that detail.
+// The table still has a `type` column and an `order_id` column left over
+// from the removed Food & Beverage module; every review written now is
+// type: 'room'.
 
 import { supabase } from '../services/supabase';
 
@@ -23,23 +20,6 @@ export async function submitRoomReview({ userId, guestName, reservationId, subje
     user_id: userId,
     guest_name: guestName,
     reservation_id: reservationId,
-    subject_label: subjectLabel,
-    rating,
-    comment: comment?.trim() || null,
-  });
-  if (error) throw error;
-}
-
-/**
- * Submit a food-order rating. Called from OrderFoodScreen.jsx once an
- * order's status is 'delivered'.
- */
-export async function submitFoodReview({ userId, guestName, orderId, subjectLabel, rating, comment }) {
-  const { error } = await supabase.from('reviews').insert({
-    type: 'food',
-    user_id: userId,
-    guest_name: guestName,
-    order_id: orderId,
     subject_label: subjectLabel,
     rating,
     comment: comment?.trim() || null,

@@ -183,8 +183,7 @@ export async function getBillingRecord(folioId) {
 /**
  * Same lookup as getBillingRecord, keyed by reservation instead of folio
  * id — used at checkout time (ReservationsScreen.jsx's handleCheckOut) to
- * catch a balance that reappeared after the room bill was already
- * settled, e.g. an F&B order charged to the room via KitchenOrdersScreen.
+ * catch a balance still owed before the guest leaves.
  * Returns null if this reservation has no folio at all rather than
  * throwing, same as getBillingRecord does for an unknown id.
  */
@@ -269,52 +268,6 @@ export async function recordPayment({
     receiptNumber: data.receiptNumber,
     transactionId: data.transactionId,
     newAmountPaid: data.newAmountPaid,
-    newRemainingBalance: data.newRemainingBalance,
-    newStatus: data.newStatus,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Room Charges (e.g. F&B orders charged to room at delivery)
-// ---------------------------------------------------------------------------
-
-/**
- * Posts a charge directly onto an existing folio — no payment collected,
- * the amount just becomes part of what the guest owes on the room bill.
- * Used by "Charge to Room" at F&B delivery time (KitchenOrdersScreen.jsx).
- *
- * Can legitimately flip a folio's billingStatus back from 'paid' to
- * 'partially_paid' if the room was already settled — add_room_charge()
- * re-derives billingStatus from the numbers every time, the same way
- * record_payment() does, so this isn't a special case in the SQL.
- *
- * Atomic via the add_room_charge() Postgres function. Only callable by
- * F&B or admin staff — enforced inside that function itself, not just by
- * hiding the button in the UI.
- */
-export async function chargeToRoom({
-  folioId,
-  amount,
-  note,
-  processedByUid,
-  processedByName,
-}) {
-  if (amount <= 0) {
-    throw new Error('Charge amount must be greater than zero.');
-  }
-
-  const { data, error } = await supabase.rpc('add_room_charge', {
-    p_folio_id: folioId,
-    p_amount: amount,
-    p_note: note || null,
-    p_processed_by: processedByUid || null,
-    p_processed_by_name: processedByName,
-  });
-  if (error) throw error;
-
-  return {
-    transactionId: data.transactionId,
-    newTotalAmountDue: data.newTotalAmountDue,
     newRemainingBalance: data.newRemainingBalance,
     newStatus: data.newStatus,
   };
@@ -431,27 +384,6 @@ export async function getTransactionsByPaymentMethod(paymentType) {
     .from('transactions')
     .select('*')
     .eq('payment_type', paymentType)
-    .order('timestamp', { ascending: false });
-  if (error) throw error;
-  return (data || []).map(transactionToCamel);
-}
-
-/**
- * Every "Charge to Room" posted against one stay — what
- * BillingRecordDetailScreen.jsx's "Room Charges" card renders so staff
- * (or a guest asking why their balance went up) can see what each charge
- * actually was, not just the aggregate total. add_room_charge() already
- * writes one of these per charge (payment_type: 'room_charge', note like
- * "F&B Order #35 — Room 101") — this just reads that existing trail back
- * for one reservation, the same way getReceiptsForFolio() reads payments
- * back for one folio.
- */
-export async function getRoomChargesForReservation(reservationId) {
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('*')
-    .eq('reservation_id', reservationId)
-    .eq('payment_type', 'room_charge')
     .order('timestamp', { ascending: false });
   if (error) throw error;
   return (data || []).map(transactionToCamel);

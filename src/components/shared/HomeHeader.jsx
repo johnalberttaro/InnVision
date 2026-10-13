@@ -57,9 +57,6 @@ const CONTENT_PADDING_BOTTOM = Platform.select({
  *  - onAboutPress:     () => void
  *  - onContactPress:   () => void
  *  - onFindBooking:    () => void   — navigate to the booking lookup screen
- *  - onOrderFood:      () => void   — navigate to Order Food (wide-screen nav
- *                                     only; mobile still reaches it via the
- *                                     hamburger menu, which already had it)
  *  - isAuthenticated:  boolean
  */
 export default function HomeHeader({
@@ -70,7 +67,6 @@ export default function HomeHeader({
   onAboutPress,
   onContactPress,
   onFindBooking,
-  onOrderFood,
   onReportIssue,
   isAuthenticated,
   onHomePress,
@@ -95,18 +91,12 @@ export default function HomeHeader({
     }
   };
 
-  // Nav items — Order Food and Profile only shown when authenticated,
-  // since ordering food requires a checked-in reservation (same gate
-  // App.jsx already applies before routing to Order Food elsewhere).
+  // Nav items — Report an Issue and Profile only shown when authenticated.
   const navItems = [
     { label: 'About',            onPress: () => onAboutPress && onAboutPress() },
     { label: 'Promos',           onPress: () => {} },
     { label: 'Contact Us',       onPress: () => onContactPress && onContactPress() },
     { label: 'My Reservations',  onPress: () => onFindBooking && onFindBooking() },
-    ...(isAuthenticated
-      ? [{ label: 'Order Food', onPress: () => onOrderFood && onOrderFood() }]
-      : []
-    ),
     ...(isAuthenticated
       ? [{ label: 'Report an Issue', onPress: () => onReportIssue && onReportIssue() }]
       : []

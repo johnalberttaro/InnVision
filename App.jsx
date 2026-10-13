@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, StatusBar, Modal, Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
@@ -29,12 +29,10 @@ import ReservationScreen    from './src/screens/reservation/ReservationScreen';
 import RoomSelectionScreen  from './src/screens/roomRates/RoomSelectionScreen';
 import ReviewPayScreen      from './src/screens/reviewPay/ReviewPayScreen';
 import FrontDeskShell       from './src/screens/frontdesk/FrontDeskShell';
-import FnbShell             from './src/screens/fnb/FnbShell';
 import AdminShell           from './src/screens/admin/AdminShell';
 import HousekeepingShell    from './src/screens/housekeeping/HousekeepingShell';
 import MaintenanceShell     from './src/screens/maintenance/MaintenanceShell';
 import LoadingScreen        from './src/screens/LoadingScreen';
-import OrderFoodScreen      from './src/foodservice/OrderFoodScreen';
 import ReportIssueScreen    from './src/screens/reportIssue/ReportIssueScreen';
 import { fonts }            from './src/utils/theme';
 import { fonts as portalFonts } from './src/utils/portalTheme';
@@ -95,7 +93,7 @@ import { ThemeProvider }    from './src/context/ThemeContext';
  * prompted a full grep audit instead of trusting the comment; that turned
  * up 9 files total (LoginScreen, RegisterScreen, ForgotPasswordScreen,
  * ProfileScreen, HamburgerMenu, RateCard, ReservationScreen,
- * OrderFoodScreen, ReportIssueScreen), not the 6 originally listed here.
+ * OrderFoodScreen [since removed], ReportIssueScreen), not the 6 originally listed here.
  * All 9 now import SafeAreaView from 'react-native-safe-area-context',
  * same as here.
  *
@@ -105,46 +103,21 @@ import { ThemeProvider }    from './src/context/ThemeContext';
  * to 'guest' — no more resolveUserRole() guessing across differently-
  * shaped legacy fields the way the Firestore `guests` docs needed.
  *
- * NOTE ON FOOD SERVICE (Phase 1):
- * OrderFoodScreen.jsx lives at ./src/foodservice/ — NOT under
- * ./src/screens/ like every other guest screen. That's an inconsistency
- * worth cleaning up eventually (moving it under src/screens/foodservice/
- * for consistency with everything else), but for now the import path
- * above matches wherever the file actually is. goToOrderFood() below
- * mirrors goToMyReservations()'s pattern — bounce to login first if
- * nobody's signed in, since the screen itself needs a real user.id to
- * do anything.
+ * NOTE ON FOOD & BEVERAGE (removed Oct 2026):
+ * The client doesn't use F&B, so the guest Order Food screen and the
+ * Kitchen/F&B staff portal were removed. A leftover profiles.role of
+ * 'fnb' is no longer routed to any portal — it falls through to the
+ * guest home screen like an unknown role. Deactivate those accounts
+ * (profiles.active = false) rather than leaving them usable.
  *
  * NOTE ON HOUSEKEEPING / MAINTENANCE (new staff portals):
  * profiles.role now also allows 'housekeeping' and 'maintenance' (added
  * via sql/housekeeping_maintenance_roles.sql — a Postgres enum, so those
  * values had to be added with ALTER TYPE before anything could route to
- * them). Same shape as the frontdesk/fnb routing right above/below:
- * HousekeepingShell/MaintenanceShell take the identical
- * onLoggedOut/staffName/staffUid props FnbShell already does.
+ * them). Same shape as the frontdesk routing right above/below:
+ * HousekeepingShell/MaintenanceShell take onLoggedOut/staffName/staffUid
+ * props.
  */
-// RESOLVED: a DISABLE_LOADING_SCREEN_DIAGNOSTIC flag used to live here,
-// testing whether LoadingScreen.jsx's Animated.loop()+react-native-svg
-// spinner was stalling the JS thread badly enough to block the
-// minLoadTimeElapsed setTimeout below. Proven unrelated — swapping it for
-// trivial text produced the identical stall — so LoadingScreen is safe to
-// use normally.
-//
-// RESOLVED (best-effort — see the note on the loading gate itself further
-// down for the full story): a WRAPPER_TEST_STAGE isolation test used to
-// live here too, the follow-up to BARE_DIAGNOSTIC_MODE. It added
-// SafeAreaProvider/ThemeProvider/SafeAreaView/StatusBar back one at a time
-// and none of them, alone or all together with the real LoadingScreen,
-// reproduced the stall — so it's been removed.
-
-// RESOLVED: MAIN_BYPASS_SAFE_AREA_VIEW / MAIN_BYPASS_SAFE_AREA_PROVIDER
-// used to live here — diagnostic toggles for a background-photo-only /
-// missing-header bug. Both ruled out (the real cause was
-// StyleSheet.absoluteFillObject being removed in RN 0.85+, fixed in
-// HomeScreen.jsx/ImageCarousel.jsx) and removed now that the real fix is
-// confirmed on-device. SafeAreaView/SafeAreaProvider are used directly
-// below, same as everywhere else in the app.
-
 // Supabase's own recovery-email link lands back on this app (wherever
 // getPasswordResetRedirectUrl() in Forgotpasswordscreen.jsx pointed it at)
 // with `type=recovery` somewhere in the URL — in the hash for the classic
@@ -155,6 +128,11 @@ import { ThemeProvider }    from './src/context/ThemeContext';
 // very first supabase.auth.getSession() resolution on load — without it,
 // a recovery session could get routed straight into that user's normal
 // role portal before the PASSWORD_RECOVERY event has had a chance to fire.
+// Shown on the login screen when a deactivated staff account tries to
+// sign in (or still had a saved session when it was deactivated).
+const DEACTIVATED_MESSAGE =
+  'This account has been deactivated. Please contact the administrator if you think this is a mistake.';
+
 const isPasswordRecoveryUrl = () => {
   if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
   const hash = window.location.hash || '';
@@ -163,11 +141,8 @@ const isPasswordRecoveryUrl = () => {
 };
 
 export default function App() {
-  // DIAGNOSTIC: now also capturing `fontError`, the second value useFonts()
-  // returns — the original code only destructured `fontsLoaded`, so if font
-  // loading ever failed, `fontsLoaded` would simply stay false forever with
-  // nobody the wiser. Logged below, and no longer allowed to block the
-  // loading gate forever (see the gate's condition further down).
+  // fontError is captured too, so a failed font load is logged and can't
+  // hold the app on the loading screen forever (see the loading gate below).
   const [fontsLoaded, fontError] = useFonts({
     [fonts.headingExtraBold]: Baloo2_800ExtraBold,
     [fonts.headingBold]:      Baloo2_700Bold,
@@ -184,24 +159,20 @@ export default function App() {
     [portalFonts.headingBold]:      Inter_700Bold,
   });
 
-  // DIAGNOSTIC: surfaces exactly what's happening with the loading gate in
-  // the Metro terminal — remove this whole block once the stuck-loading-
-  // screen issue is confirmed fixed.
   useEffect(() => {
-    console.log('[DIAGNOSTIC] loading gate state:', {
-      fontsLoaded,
-      fontError: fontError ? String(fontError) : null,
-    });
-    if (fontError) {
-      console.error('[DIAGNOSTIC] Font loading failed:', fontError);
-    }
-  }, [fontsLoaded, fontError]);
+    if (fontError) console.error('Font loading failed:', fontError);
+  }, [fontError]);
 
   // ── Supabase auth state ─────────────────────────────────────────────
   const [user, setUser]               = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  // Deactivated accounts (profiles.active = false): set just before we
+  // sign such a user out, so the SIGNED_OUT event that follows lands on
+  // the login screen (with loginNotice explaining why) instead of home.
+  const blockedSignOutRef = useRef(false);
+  const [loginNotice, setLoginNotice] = useState('');
 
-  // Keeps LoadingScreen visible for at least 5 seconds, regardless of how
+  // Keeps LoadingScreen visible for at least 3 seconds, regardless of how
   // fast fonts/auth actually resolve underneath it — without this, the
   // branded loading screen could flash by in well under a second on a
   // fast connection, defeating the point of having one.
@@ -210,14 +181,6 @@ export default function App() {
     const timer = setTimeout(() => setMinLoadTimeElapsed(true), 3000);
     return () => clearTimeout(timer);
   }, []);
-
-  // DIAGNOSTIC: logs every time any of the three loading-gate conditions
-  // changes, so the Metro terminal shows exactly which one(s) are still
-  // true if the app is stuck on LoadingScreen. Remove this block once the
-  // stuck-loading-screen issue is confirmed fixed.
-  useEffect(() => {
-    console.log('[DIAGNOSTIC] gate check — fontsLoaded:', fontsLoaded, 'authLoading:', authLoading, 'minLoadTimeElapsed:', minLoadTimeElapsed);
-  }, [fontsLoaded, authLoading, minLoadTimeElapsed]);
 
   useEffect(() => {
     let mounted = true;
@@ -231,10 +194,20 @@ export default function App() {
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('role')
+          .select('role, active')
           .eq('id', sessionUser.id)
           .single();
         if (error) throw error;
+        // Removed staff ("Remove" in the admin account screens sets
+        // active = false) must not get back in — not on a fresh login,
+        // and not through a session saved on this device either.
+        if (data?.active === false) {
+          blockedSignOutRef.current = true;
+          setLoginNotice(DEACTIVATED_MESSAGE);
+          setScreen('login');
+          await supabase.auth.signOut();
+          return;
+        }
         if (data?.role) role = data.role;
       } catch (roleLookupError) {
         console.warn('Role lookup failed on session restore, defaulting to guest:', roleLookupError);
@@ -242,7 +215,6 @@ export default function App() {
       const nextScreen =
         role === 'admin' ? 'admin'
         : role === 'frontdesk' ? 'frontdesk'
-        : role === 'fnb' ? 'fnb'
         : role === 'housekeeping' ? 'housekeeping'
         : role === 'maintenance' ? 'maintenance'
         : 'home';
@@ -253,13 +225,9 @@ export default function App() {
     // fix for the reload-logs-you-out problem: without this, `user` only
     // ever gets set by handleLogin() at the moment of a fresh sign-in.
     //
-    // DIAGNOSTIC: added .catch() — the original had none. If
-    // getSession() itself rejects (rather than just being slow), the
-    // .then() below would simply never run, authLoading would never
-    // flip to false, and the app would sit on LoadingScreen forever
-    // with no visible error. The catch logs what happened and still
-    // unblocks the gate so a real failure here is visible instead of
-    // an indefinite stall.
+    // The .catch() matters: if getSession() rejects, authLoading would
+    // otherwise never flip to false and the app would sit on the loading
+    // screen forever.
     supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       const sessionUser = data?.session?.user || null;
@@ -279,7 +247,7 @@ export default function App() {
         if (mounted) setAuthLoading(false);
       });
     }).catch((sessionError) => {
-      console.error('[DIAGNOSTIC] supabase.auth.getSession() rejected:', sessionError);
+      console.error('Could not restore session:', sessionError);
       if (mounted) setAuthLoading(false);
     });
 
@@ -303,6 +271,12 @@ export default function App() {
         setScreen('resetPassword');
         return;
       }
+      if (event === 'SIGNED_OUT' && blockedSignOutRef.current) {
+        // Our own sign-out of a deactivated account — stay on login.
+        blockedSignOutRef.current = false;
+        setScreen('login');
+        return;
+      }
       if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
         resolveRoleAndRoute(sessionUser);
       }
@@ -316,8 +290,8 @@ export default function App() {
 
   // ── Screen state ────────────────────────────────────────────────────
   // 'home' | 'login' | 'register' | 'forgotPassword' | 'resetPassword'
-  // | 'profile' | 'about' | 'contact' | 'myReservations' | 'orderFood'
-  // | 'roomRates' | 'reviewPay' | 'frontdesk' | 'fnb' | 'admin'
+  // | 'profile' | 'about' | 'contact' | 'myReservations' | 'reportIssue'
+  // | 'roomRates' | 'reviewPay' | 'frontdesk' | 'admin'
   // | 'housekeeping' | 'maintenance'
   const [screen, setScreen]                   = useState('home');
   const [showReservation, setShowReservation] = useState(false);
@@ -330,7 +304,6 @@ export default function App() {
     const nextScreen =
       role === 'admin' ? 'admin'
       : role === 'frontdesk' ? 'frontdesk'
-      : role === 'fnb' ? 'fnb'
       : role === 'housekeeping' ? 'housekeeping'
       : role === 'maintenance' ? 'maintenance'
       : 'home';
@@ -411,36 +384,13 @@ export default function App() {
   // instead of opening the screen with nothing to show.
   const goToMyReservations = () => setScreen(user ? 'myReservations' : 'login');
 
-  // Order Food (Food Service, Phase 1) is guest-account-only too — the
-  // screen itself queries reservations by user.id, so it's a no-op
-  // without a signed-in user. Same bounce-to-login pattern as My
-  // Reservations, for the same reason.
-  const goToOrderFood = () => setScreen(user ? 'orderFood' : 'login');
-
   // Report an Issue is guest-account-only too, same reasoning/pattern as
-  // Order Food — the screen itself queries reservations by user.id.
+  // My Reservations — the screen itself queries reservations by user.id.
   const goToReportIssue = () => setScreen(user ? 'reportIssue' : 'login');
 
   // ── Loading gate ────────────────────────────────────────────────────
-  // DIAGNOSTIC: changed `!fontsLoaded` to `(!fontsLoaded && !fontError)` —
-  // previously, a failed font load left fontsLoaded false forever with no
-  // way out, hanging here permanently. Now a font error still gets logged
-  // above, but no longer blocks the app from proceeding.
-  //
-  // RESOLVED (best-effort): this used to stall indefinitely with the full
-  // wrapper stack present below — that's why BARE_DIAGNOSTIC_MODE existed
-  // as a workaround. A staged isolation test (WRAPPER_TEST_STAGE, since
-  // removed) added SafeAreaProvider/ThemeProvider/SafeAreaView/StatusBar
-  // back one at a time and NONE of them stalled individually — including
-  // this exact tree, full stack + the real LoadingScreen component below.
-  // So the stall isn't deterministically tied to any one component here;
-  // it was most likely an intermittent timing/race issue (e.g. between the
-  // 3-second minLoadTimeElapsed timer, font loading, and
-  // supabase.auth.getSession(), all resolving concurrently on mount) rather
-  // than a real bug in this tree. The two DIAGNOSTIC console.log blocks
-  // above are left in place on purpose — they're free (terminal-only
-  // logging, invisible to users) and are the fastest way to see what's
-  // happening if this symptom ever comes back.
+  // Waits for fonts (or a font error — a failed load never blocks the app),
+  // the session check, and the minimum splash time.
   if ((!fontsLoaded && !fontError) || authLoading || !minLoadTimeElapsed) {
     return (
       <SafeAreaProvider>
@@ -469,7 +419,6 @@ export default function App() {
               onAboutPress={() => setScreen('about')}
               onContactPress={() => setScreen('contact')}
               onFindBooking={goToMyReservations}
-              onOrderFood={goToOrderFood}
               onReportIssue={goToReportIssue}
               isAuthenticated={!!user}
               user={user}
@@ -496,15 +445,6 @@ export default function App() {
             />
           )}
 
-          {/* ── Kitchen / F&B ─────────────────────────────────────── */}
-          {screen === 'fnb' && (
-            <FnbShell
-              onLoggedOut={handleLogout}
-              staffName={user?.user_metadata?.display_name || user?.email || 'F&B Staff'}
-              staffUid={user?.id}
-            />
-          )}
-
           {/* ── Housekeeping ──────────────────────────────────────── */}
           {screen === 'housekeeping' && (
             <HousekeepingShell
@@ -526,6 +466,8 @@ export default function App() {
           {/* ── Auth ──────────────────────────────────────────────── */}
           {screen === 'login' && (
             <LoginScreen
+              notice={loginNotice}
+              onNoticeShown={() => setLoginNotice('')}
               onLogin={handleLogin}
               onForgotPress={() => setScreen('forgotPassword')}
               onRegisterPress={() => setScreen('register')}
@@ -555,7 +497,6 @@ export default function App() {
             <ProfileScreen
               user={user}
               onBookNow={openReservation}
-              onOrderFood={goToOrderFood}
               onLogout={handleLogout}
               onBackPress={() => setScreen('home')}
             />
@@ -579,14 +520,6 @@ export default function App() {
           {screen === 'myReservations' && (
             <MyReservationsScreen
               onBack={() => setScreen('home')}
-            />
-          )}
-
-          {/* ── Order Food (Food Service, Phase 1) ───────────────────── */}
-          {screen === 'orderFood' && (
-            <OrderFoodScreen
-              user={user}
-              onBackPress={() => setScreen('home')}
             />
           )}
 

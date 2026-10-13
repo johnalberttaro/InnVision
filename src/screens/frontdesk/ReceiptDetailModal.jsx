@@ -30,23 +30,6 @@
 // "print" primitive without adding expo-print, so Print instead opens
 // the OS share sheet via React Native's built-in Share API with a
 // plain-text version of the receipt.
-//
-// ROOM CHARGES: mirrors the "Room Charges" card added to
-// BillingRecordDetailScreen.jsx — the same room/F&B charge
-// transactions (getRoomChargesForReservation) are itemized here too,
-// in the in-app modal, the printed/PDF HTML, and the native share
-// text, so a receipt doesn't just show a total with nothing indicating
-// what part of it was food or service charged to the room. This is
-// folio-level context, not per-payment attribution: a payment is an
-// amount against the folio's running balance with no link to specific
-// charges, so the list below is "what's been charged to this room,"
-// shown alongside (not broken out from) what this particular receipt
-// paid. It IS filtered on one thing: only charges posted at or before
-// THIS receipt's paymentDate are shown, so reopening an old,
-// already-issued receipt never grows a new line for something charged
-// to the room afterward — a receipt has to stay a fixed record of a
-// moment, not a live view of the folio (that live view is the "Room
-// Charges" card on BillingRecordDetailScreen.jsx).
 
 import React, { useEffect, useState } from 'react';
 import {
@@ -63,7 +46,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
-import { getBillingRecord, getRoomChargesForReservation } from '../../utils/BillingService';
+import { getBillingRecord } from '../../utils/BillingService';
 
 const LOGO_SOURCE = require('../../../assets/logo.png');
 
@@ -139,7 +122,7 @@ function resolveLogoUri() {
 // path — on-brand (logo, palette, dashed dividers, PAID stamp) so the
 // printed/PDF result actually looks like it came from InnVision instead
 // of a generic browser print-out.
-function buildReceiptHtml(receipt, folio, logoUri, roomCharges) {
+function buildReceiptHtml(receipt, folio, logoUri) {
   const renderRow = (label, value) => `
       <div class="row">
         <span class="label">${escapeHtml(label)}</span>
@@ -158,18 +141,6 @@ function buildReceiptHtml(receipt, folio, logoUri, roomCharges) {
     rows.push(['Stay Dates', `${formatDate(folio.checkInDate)} – ${formatDate(folio.checkOutDate)}`]);
   }
   const rowsHtml = rows.map(([label, value]) => renderRow(label, value)).join('');
-
-  // Itemized room/F&B charges — see the header comment. Its own small
-  // labeled group, kept with the folio/stay rows above rather than the
-  // payment rows below (Payment Method/Processed By/Remaining Balance
-  // describe *this* payment; Room Charges describes the folio) — and
-  // only built when there are any, so a stay with none prints no empty
-  // section.
-  const roomChargesHtml = roomCharges?.length
-    ? `<div class="section-label">Room Charges</div>${roomCharges
-        .map((c) => renderRow(c.note || 'Room charge', formatCurrency(c.amount)))
-        .join('')}`
-    : '';
 
   const paymentRowsHtml = [
     ['Payment Method', paymentMethodLabel(receipt.paymentMethod)],
@@ -303,7 +274,6 @@ function buildReceiptHtml(receipt, folio, logoUri, roomCharges) {
 
     <div class="dashed"></div>
     ${rowsHtml}
-    ${roomChargesHtml}
     ${paymentRowsHtml}
     <div class="dashed"></div>
 
@@ -323,7 +293,7 @@ function buildReceiptHtml(receipt, folio, logoUri, roomCharges) {
 
 // Plain-text version for the native share-sheet fallback (no logo/CSS
 // there, but keeps the same receipt-like shape and section ordering).
-function buildReceiptText(receipt, folio, roomCharges) {
+function buildReceiptText(receipt, folio) {
   const divider = '– – – – – – – – – – – – – – – –';
   const lines = [
     'InnVision Training Hotel',
@@ -338,15 +308,6 @@ function buildReceiptText(receipt, folio, roomCharges) {
   if (folio?.roomNumbers?.length) lines.push(`Room(s): ${folio.roomNumbers.join(', ')}`);
   if (folio?.checkInDate || folio?.checkOutDate) {
     lines.push(`Stay Dates: ${formatDate(folio.checkInDate)} – ${formatDate(folio.checkOutDate)}`);
-  }
-  // Itemized room/F&B charges — see the header comment. Grouped with
-  // the folio/stay lines above, same ordering as the print HTML and
-  // the in-app modal.
-  if (roomCharges?.length) {
-    lines.push('Room Charges:');
-    roomCharges.forEach((c) => {
-      lines.push(`  ${c.note || 'Room charge'}: ${formatCurrency(c.amount)}`);
-    });
   }
   lines.push(`Payment Method: ${paymentMethodLabel(receipt.paymentMethod)}`);
   lines.push(`Processed By: ${receipt.processedByName || '—'}`);
@@ -371,7 +332,6 @@ export default function ReceiptDetailModal({ visible, receipt, onClose }) {
   const styles = getStyles(colors, spacing, radius, fonts);
 
   const [folio, setFolio] = useState(null);
-  const [roomCharges, setRoomCharges] = useState([]);
   const [folioLoading, setFolioLoading] = useState(false);
   const [printError, setPrintError] = useState(null);
 
@@ -380,7 +340,6 @@ export default function ReceiptDetailModal({ visible, receipt, onClose }) {
   // additive: if this fails, the receipt still shows everything it has.
   useEffect(() => {
     setFolio(null);
-    setRoomCharges([]);
     setPrintError(null);
     if (!visible || !receipt?.folioId) return;
 
@@ -390,32 +349,6 @@ export default function ReceiptDetailModal({ visible, receipt, onClose }) {
       .then((data) => {
         if (cancelled) return;
         setFolio(data);
-        // Sequenced after the folio fetch resolves (needs its
-        // reservationRef) — same source and shape as the "Room
-        // Charges" card on BillingRecordDetailScreen.jsx. Purely
-        // additive: a failure here still leaves the rest of the
-        // receipt intact.
-        if (data?.reservationRef) {
-          getRoomChargesForReservation(data.reservationRef)
-            .then((charges) => {
-              if (cancelled) return;
-              // A receipt is a fixed record of a moment, not a live
-              // view of the folio — only keep charges posted at or
-              // before THIS receipt's paymentDate, so reopening an
-              // old receipt never shows a charge that was added to
-              // the room after that payment was already made and
-              // receipted (e.g. an e-wallet payment that zeroed the
-              // balance, followed days later by a room-service order
-              // that shouldn't retroactively show up on it).
-              const cutoff = new Date(receipt.paymentDate).getTime();
-              setRoomCharges(
-                isNaN(cutoff)
-                  ? charges
-                  : charges.filter((c) => new Date(c.timestamp).getTime() <= cutoff)
-              );
-            })
-            .catch((err) => console.error('Failed to load room charges for receipt:', err));
-        }
       })
       .catch((err) => console.error('Failed to load folio for receipt:', err))
       .finally(() => { if (!cancelled) setFolioLoading(false); });
@@ -428,7 +361,7 @@ export default function ReceiptDetailModal({ visible, receipt, onClose }) {
   const handlePrint = async () => {
     setPrintError(null);
     if (Platform.OS === 'web') {
-      const html = buildReceiptHtml(receipt, folio, resolveLogoUri(), roomCharges);
+      const html = buildReceiptHtml(receipt, folio, resolveLogoUri());
       const printWindow = window.open('', '_blank', 'width=520,height=720');
       if (!printWindow) {
         setPrintError('Please allow pop-ups for this site to print the receipt.');
@@ -444,7 +377,7 @@ export default function ReceiptDetailModal({ visible, receipt, onClose }) {
       try {
         await Share.share({
           title: `Receipt ${receipt.receiptNumber || ''}`,
-          message: buildReceiptText(receipt, folio, roomCharges),
+          message: buildReceiptText(receipt, folio),
         });
       } catch (err) {
         console.error('Failed to share/print receipt:', err);
@@ -496,14 +429,6 @@ export default function ReceiptDetailModal({ visible, receipt, onClose }) {
                 <ActivityIndicator size="small" color={colors.textMuted} />
                 <Text style={styles.folioLoadingText}>Loading stay details…</Text>
               </View>
-            )}
-            {!!roomCharges.length && (
-              <>
-                <Text style={styles.sectionLabel}>Room Charges</Text>
-                {roomCharges.map((c) => (
-                  <DetailRow key={c.id} label={c.note || 'Room charge'} value={formatCurrency(c.amount)} styles={styles} />
-                ))}
-              </>
             )}
             <DetailRow label="Payment Method" value={paymentMethodLabel(receipt.paymentMethod)} styles={styles} />
             <DetailRow label="Processed By" value={receipt.processedByName || '—'} styles={styles} />

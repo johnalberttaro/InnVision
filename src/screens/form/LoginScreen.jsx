@@ -14,7 +14,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 
-export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, onBack }) {
+// Kept in sync with App.jsx's DEACTIVATED_MESSAGE.
+const DEACTIVATED_MESSAGE =
+  'This account has been deactivated. Please contact the administrator if you think this is a mistake.';
+
+export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, onBack, notice, onNoticeShown }) {
   const [email, setEmail]               = useState('');
   const [password, setPassword]         = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -22,6 +26,16 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
   const [passFocused, setPassFocused]   = useState(false);
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState('');
+
+  // A message handed over by App.jsx (e.g. a deactivated account that
+  // still had a saved session) — shown once, like any other login error.
+  useEffect(() => {
+    if (notice) {
+      setError(notice);
+      onNoticeShown && onNoticeShown();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notice]);
 
   // Lets the Email field's Return key hand focus straight to Password
   // (see onSubmitEditing below) instead of just dismissing the keyboard.
@@ -69,10 +83,18 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
       try {
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('role')
+          .select('role, active')
           .eq('id', user.id)
           .single();
         if (profileError) throw profileError;
+        // Deactivated staff ("Remove" in the admin account screens):
+        // don't let them in, and say why. App.jsx's auth listener sees
+        // the same SIGNED_IN, does the actual sign-out, and keeps this
+        // screen showing — only one place signs out, so the two can't race.
+        if (profile?.active === false) {
+          setError(DEACTIVATED_MESSAGE);
+          return;
+        }
         if (profile?.role) role = profile.role;
       } catch (roleLookupError) {
         // If the role lookup itself fails (e.g. offline), fail safe to

@@ -19,7 +19,7 @@ const EMPTY_FORM = { firstName: '', lastName: '', email: '', password: '', confi
 const WIDE_BREAKPOINT = 1000;
 
 // Local accent for this screen's redesign only — same values as
-// FrontDeskAccountScreen.jsx/FnbAccountScreen.jsx (kept file-local in
+// FrontDeskAccountScreen.jsx (kept file-local in
 // both, see FrontDeskAccountScreen.jsx's doc comment for why) so all of
 // the admin portal's staff-account screens read as one visual language.
 const BLUE = '#2F6FED';
@@ -61,7 +61,7 @@ function formatDateLabel(value) {
 
 // A small, reusable single-select list in a modal — used below for both
 // the account-status Filter and the per-page picker. Same component as
-// FrontDeskAccountScreen.jsx/FnbAccountScreen.jsx define locally; kept as
+// FrontDeskAccountScreen.jsx defines locally; kept as
 // its own copy here too rather than a shared import, matching how this
 // screen has always duplicated (not imported) its siblings' patterns.
 function SimpleOptionsModal({ visible, onClose, title, options, selectedValue, onSelect }) {
@@ -110,8 +110,7 @@ function SimpleOptionsModal({ visible, onClose, title, options, selectedValue, o
  * pattern — create + list only, no Edit, no Reset Password, no search,
  * no pagination, no password-strength meter — with its own doc comment
  * saying those could be "added later... if these roles need the same
- * polish." They're added now, ported the same way FnbAccountScreen.jsx
- * got them: icon badges, the same scoped blue/amber local accent, a
+ * polish." They're added now, ported from FrontDeskAccountScreen.jsx: icon badges, the same scoped blue/amber local accent, a
  * Filter (Active/All) control with client-side pagination, color-coded
  * Edit/Reset/Remove row actions, and the enhanced Reset Password modal
  * (recipient card, live match indicator, info tip box). Everything
@@ -123,7 +122,7 @@ function SimpleOptionsModal({ visible, onClose, title, options, selectedValue, o
  * The old per-row Remove confirmation used the generic shared
  * ConfirmDialog component (still used elsewhere for simple yes/no
  * prompts like logout); it's now the same inline icon-badge Modal
- * FrontDeskAccountScreen.jsx/FnbAccountScreen.jsx use, so all three
+ * FrontDeskAccountScreen.jsx uses, so both
  * staff-account screens look identical for the actions they share.
  *
  * Same core mechanism as those two screens throughout: secondarySupabase
@@ -157,7 +156,7 @@ export default function StaffRoleAccountScreen({ role, roleLabel }) {
 
   // Success banner auto-dismisses after 3s rather than sitting on screen
   // until the admin's next action replaces or manually clears it —
-  // matches FrontDeskAccountScreen.jsx/FnbAccountScreen.jsx.
+  // matches FrontDeskAccountScreen.jsx.
   useEffect(() => {
     if (!createSuccess) return;
     const timer = setTimeout(() => setCreateSuccess(''), 3000);
@@ -288,8 +287,8 @@ export default function StaffRoleAccountScreen({ role, roleLabel }) {
   const fieldError = (field) => (touched[field] ? errors[field] : undefined);
   const setField = (field, value) => setForm((prev) => ({ ...prev, [field]: value }));
 
-  // Same audit table + shape FrontDeskAccountScreen.jsx's/
-  // FnbAccountScreen.jsx's local logStaffAudit() writes to, so every
+  // Same audit table + shape FrontDeskAccountScreen.jsx's local
+  // logStaffAudit() writes to, so every
   // staff account action across every role lands in one unified trail.
   // `details` defaults to `role: ${role}` (as before) but can be
   // overridden — Reset Password passes its own note, same as the other
@@ -395,7 +394,10 @@ export default function StaffRoleAccountScreen({ role, roleLabel }) {
 
     setRemovingId(acc.id);
     try {
-      const { error } = await supabase.from('profiles').update({ active: false }).eq('id', acc.id);
+      // Through set_account_active() (sql/set_account_active.sql), not a
+      // direct profiles update: if RLS blocks a direct update it changes
+      // zero rows WITHOUT an error, and the account silently stays active.
+      const { error } = await supabase.rpc('set_account_active', { p_user_id: acc.id, p_active: false });
       if (error) throw error;
 
       await logStaffAudit(
@@ -409,7 +411,7 @@ export default function StaffRoleAccountScreen({ role, roleLabel }) {
       setPendingRemoval(null);
     } catch (err) {
       console.error('Failed to remove account:', err);
-      setCreateError('Could not remove that account right now.');
+      setCreateError(err?.message ? `Could not remove that account: ${err.message}` : 'Could not remove that account right now.');
     } finally {
       setRemovingId(null);
     }
