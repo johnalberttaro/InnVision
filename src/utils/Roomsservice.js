@@ -173,6 +173,31 @@ function roomToCamel(r) {
   };
 }
 
+// Display order for rooms (Room List and the guest room cards): Room 1, Room 2, Room 3, Conference Room, Accreditation
+// Room, Banquet Hall. Matched loosely by name (case/spacing/spelling
+// variants such as "Acrredition"). Any other room type comes after these,
+// A–Z; rooms of the same type keep their internal-number order.
+const ROOM_LIST_ORDER = [
+  /^room\s*0*1$/i,
+  /^room\s*0*2$/i,
+  /^room\s*0*3$/i,
+  /^conference/i,
+  /^ac+r+ed+i/i,
+  /^banquet/i,
+];
+function roomListRank(room) {
+  const name = String(room.roomTypeName || '').trim();
+  const i = ROOM_LIST_ORDER.findIndex((re) => re.test(name));
+  return i === -1 ? ROOM_LIST_ORDER.length : i;
+}
+export function compareRoomsForList(a, b) {
+  const byRank = roomListRank(a) - roomListRank(b);
+  if (byRank !== 0) return byRank;
+  const byName = String(a.roomTypeName || '').localeCompare(String(b.roomTypeName || ''));
+  if (byName !== 0) return byName;
+  return String(a.roomNumber).localeCompare(String(b.roomNumber), undefined, { numeric: true });
+}
+
 /* ── Join helper — unchanged, pure JS, no DB calls ───────────────────── */
 
 export function joinRoomsWithTypes(rooms, roomTypes) {
@@ -232,11 +257,20 @@ export function subscribeToRoomTypes(onData, onError) {
   return () => supabase.removeChannel(channel);
 }
 
+// Every open subscribeToRooms() list registers its loader here so a change
+// made from this device (add / edit / remove) shows immediately, even if the
+// project's realtime feed for the rooms table is off or slow.
+const activeRoomLoaders = new Set();
+export function reloadRooms() {
+  activeRoomLoaders.forEach((load) => { try { load(); } catch (e) { /* ignore */ } });
+}
+
 export function subscribeToRooms(onData, onError) {
   const load = async () => {
     const { data, error } = await supabase
       .from('rooms')
       .select('*')
+      .is('deleted_at', null) // removed rooms (sql/room_edit_remove.sql) stay hidden
       .order('room_number');
     if (error) {
       console.error('Failed to load rooms:', error);
@@ -246,13 +280,17 @@ export function subscribeToRooms(onData, onError) {
     onData((data || []).map(roomToCamel));
   };
   load();
+  activeRoomLoaders.add(load);
 
   const channel = supabase
     .channel('rooms-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, load)
     .subscribe();
 
-  return () => supabase.removeChannel(channel);
+  return () => {
+    activeRoomLoaders.delete(load);
+    supabase.removeChannel(channel);
+  };
 }
 
 /* ── Mutations ────────────────────────────────────────────────────────── */
@@ -380,6 +418,7 @@ export async function deleteRoomType(roomTypeId) {
     .from('rooms')
     .select('id')
     .eq('room_type_id', roomTypeId)
+    .is('deleted_at', null) // removed rooms don't block deleting their type
     .limit(1);
   if (checkError) throw checkError;
 
@@ -479,7 +518,60 @@ const SEED_ROOMS_BY_TYPE_NAME = [
 // prior guest/cleaning history to account for; front desk can change
 // that afterward from Room Status if it actually needs inspecting first
 // (e.g. a newly renovated room).
+//
+// If this room number belongs to a room that was removed earlier, that room
+// is brought back (with the type/floor chosen now) instead of adding a
+// second row with the same number.
+//
+// roomNumber is optional: the Add Room screen no longer asks for one, so a
+// number is assigned automatically (see nextRoomNumber). Staff never see
+// it, but bookings, the tape chart and housekeeping still use it.
 export async function createRoom({ roomNumber, roomTypeId, floor, status }) {
+  if (!roomNumber) {
+    // Two admins adding at the same moment could pick the same number —
+    // retry with the next one if the database refuses the duplicate.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const autoNumber = await nextRoomNumber();
+      const { error } = await supabase.from('rooms').insert({
+        room_number: autoNumber,
+        room_type_id: roomTypeId,
+        floor: floor || null,
+        status: status || ROOM_STATUS.VACANT,
+      });
+      if (!error) {
+        reloadRooms();
+        await logRoomTypeAudit(roomTypeId, await roomTypeName(roomTypeId), 'updated', `Room added (internal no. ${autoNumber})`);
+        return autoNumber;
+      }
+      if (error.code !== '23505') throw error;
+    }
+    throw new Error('Could not add the room right now. Please try again.');
+  }
+
+  const { data: removed, error: lookupError } = await supabase
+    .from('rooms')
+    .select('room_number')
+    .eq('room_number', roomNumber)
+    .not('deleted_at', 'is', null)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+  if (removed) {
+    const { error: restoreError } = await supabase
+      .from('rooms')
+      .update({
+        deleted_at: null,
+        room_type_id: roomTypeId,
+        floor: floor || null,
+        status: status || ROOM_STATUS.VACANT,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('room_number', roomNumber);
+    if (restoreError) throw restoreError;
+    reloadRooms();
+    await logRoomTypeAudit(roomTypeId, await roomTypeName(roomTypeId), 'updated', `Room ${roomNumber} added back`);
+    return;
+  }
+
   const { error } = await supabase.from('rooms').insert({
     room_number: roomNumber,
     room_type_id: roomTypeId,
@@ -487,6 +579,65 @@ export async function createRoom({ roomNumber, roomTypeId, floor, status }) {
     status: status || ROOM_STATUS.VACANT,
   });
   if (error) throw error;
+  reloadRooms();
+}
+
+// Next free internal room number: one above the highest numeric number in
+// use — including removed rooms, so a removed room's number (still shown on
+// its old bookings and receipts) is never handed to a new room. Starts at
+// 101 when there are no rooms yet.
+async function nextRoomNumber() {
+  const { data, error } = await supabase.from('rooms').select('room_number');
+  if (error) throw error;
+  const max = (data || []).reduce((m, r) => {
+    const n = /^\d+$/.test(String(r.room_number)) ? Number(r.room_number) : 0;
+    return n > m ? n : m;
+  }, 100);
+  return String(max + 1);
+}
+
+async function roomTypeName(roomTypeId) {
+  try {
+    const { data } = await supabase.from('room_types').select('name').eq('id', roomTypeId).maybeSingle();
+    return data?.name || 'Unknown room type';
+  } catch {
+    return 'Unknown room type';
+  }
+}
+
+// Admin only (checked again in the database). Changes a room's number,
+// type and/or floor; current and future bookings follow a new number —
+// see sql/room_edit_remove.sql. Errors carry a guest-readable message.
+export async function editRoom(room, { roomNumber, roomTypeId, floor }) {
+  const { error } = await supabase.rpc('edit_room', {
+    p_room_number: String(room.roomNumber),
+    p_new_number: roomNumber,
+    p_room_type_id: String(roomTypeId),
+    p_floor: floor || null,
+  });
+  if (error) throw error;
+  reloadRooms();
+
+  const changes = [];
+  if (String(roomNumber).trim() !== String(room.roomNumber)) changes.push(`number ${room.roomNumber} → ${String(roomNumber).trim()}`);
+  if (String(roomTypeId) !== String(room.roomTypeId)) changes.push('room type');
+  if ((floor || '') !== (room.floor || '')) changes.push('floor');
+  await logRoomTypeAudit(
+    roomTypeId,
+    await roomTypeName(roomTypeId),
+    'updated',
+    `Room ${room.roomNumber} (${room.roomTypeName || 'room'}) edited${changes.length ? `: ${changes.join(', ')}` : ''}`
+  );
+}
+
+// Admin only. Hides the room (it is not erased, so past bookings and
+// receipts keep its number). Refused while the room is occupied or has a
+// pending / upcoming / checked-in booking — the error message says which.
+export async function removeRoom(room) {
+  const { error } = await supabase.rpc('remove_room', { p_room_number: String(room.roomNumber) });
+  if (error) throw error;
+  reloadRooms();
+  await logRoomTypeAudit(room.roomTypeId, room.roomTypeName || (await roomTypeName(room.roomTypeId)), 'updated', `Room ${room.roomNumber} removed`);
 }
 
 export async function seedInitialRooms() {

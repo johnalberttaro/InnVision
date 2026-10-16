@@ -454,7 +454,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
             <View key={room.roomNumber ?? room.id ?? i} style={styles.roomSummaryRow}>
               <Text style={styles.roomSummaryLabel}>ROOM {i + 1} ✓</Text>
               <Text style={styles.roomSummaryValue} numberOfLines={1}>
-                {room.name || `${room.roomTypeName} (Room ${room.roomNumber})`}
+                {room.name || room.roomTypeName}
               </Text>
             </View>
           ))}
@@ -676,7 +676,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
               {selectedRooms.map((room, i) => (
                 <View key={room.roomNumber ?? room.id ?? i} style={[i > 0 && styles.rateLineDivider]}>
                   <Text style={styles.rateBoxLabel}>
-                    ▪ {room.name || `${room.roomTypeName} (Room ${room.roomNumber})`}
+                    ▪ {room.name || room.roomTypeName}
                   </Text>
                   <Text style={styles.rateBoxPrice}>
                     {formatCurrency(room.price)} × {nights} night{nights !== 1 ? 's' : ''}

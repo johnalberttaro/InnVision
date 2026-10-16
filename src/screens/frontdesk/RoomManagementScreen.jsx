@@ -7,6 +7,9 @@ import {
   joinRoomsWithTypes,
   updateRoomStatus,
   createRoom,
+  compareRoomsForList,
+  editRoom,
+  removeRoom,
   createRoomType,
   updateRoomType,
   deleteRoomType,
@@ -73,7 +76,9 @@ const confirmAction = (title, message, confirmLabel, onConfirm) => {
   }
 };
 
-export default function RoomManagementScreen({ onLogout, section = 'types' }) {
+// canManageRooms: Admin portal only — shows Edit / Remove on each room in
+// the Room List (the database checks the admin role again).
+export default function RoomManagementScreen({ onLogout, section = 'types', canManageRooms = false }) {
   const [roomTypes, setRoomTypes] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [loadingTypes, setLoadingTypes] = useState(true);
@@ -150,15 +155,6 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
     }
   };
 
-  const handleSeedWithConfirm = () => {
-    confirmAction(
-      'Reseed room data?',
-      'This overwrites the Twin, King, and Single Room room types, and rooms 101–108, with whatever is currently defined in Roomsservice.js. Any manual edits made directly in the Supabase table editor will be lost.',
-      'Reseed',
-      handleSeed
-    );
-  };
-
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -174,16 +170,9 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
           </View>
         </View>
         <View style={styles.headerButtons}>
-          <TouchableOpacity
-            onPress={handleSeedWithConfirm}
-            style={styles.reseedButton}
-            disabled={seeding}
-          >
-            {seeding
-              ? <ActivityIndicator color={colors.primary} size="small" />
-              : <Text style={styles.reseedText}>↻ Reseed Data (Dev)</Text>
-            }
-          </TouchableOpacity>
+          {/* "Reseed Data (Dev)" removed: it re-inserted the sample room
+              types and rooms 101–108 on top of real data. The one-time
+              "Seed Sample Rooms" button on the empty screen remains. */}
           {/* Only meaningful on the Room List tab — Room Types/Availability/
               Status/Maintenance don't create rooms directly. */}
           {activeTab === 'list' && (
@@ -259,6 +248,7 @@ export default function RoomManagementScreen({ onLogout, section = 'types' }) {
               onCloseModal={() => setAddRoomOpen(false)}
               updatingRoomNumber={updatingRoomNumber}
               onStatusChange={handleStatusChange}
+              canManageRooms={canManageRooms}
             />
           )}
           {activeTab === 'availability' && (
@@ -674,8 +664,41 @@ function RoomTypeModal({ visible, editingType, onClose }) {
   );
 }
 
-function RoomListSection({ rooms, roomTypes, modalOpen, onCloseModal, updatingRoomNumber, onStatusChange }) {
+function RoomListSection({ rooms, roomTypes, modalOpen, onCloseModal, updatingRoomNumber, onStatusChange, canManageRooms }) {
   const [search, setSearch] = useState('');
+  const [editingRoom, setEditingRoom] = useState(null);
+  const [removingRoomNumber, setRemovingRoomNumber] = useState(null);
+
+  const handleRemove = (room) => {
+    confirmAction(
+      `Remove ${room.roomTypeName}?`,
+      `${room.roomTypeName} will no longer appear in the Room List or be offered for booking. ` +
+        'Past bookings and receipts are kept.',
+      'Remove',
+      async () => {
+        setRemovingRoomNumber(room.roomNumber);
+        try {
+          await removeRoom(room);
+          notifyUser(`${room.roomTypeName} removed`, 'It no longer appears in the Room List and can no longer be booked.');
+        } catch (err) {
+          // Usually an expected refusal (room in use) — warn, don't raise a red error overlay.
+          console.warn('Room not removed:', err?.message || err);
+          notifyUser(`Could not remove ${room.roomTypeName}`, err?.message || 'Please try again.');
+        } finally {
+          setRemovingRoomNumber(null);
+        }
+      }
+    );
+  };
+
+  // Only passed down in the Admin portal.
+  const manageProps = (room) => (canManageRooms
+    ? {
+        onEdit: () => setEditingRoom(room),
+        onRemove: () => handleRemove(room),
+        isRemoving: removingRoomNumber === room.roomNumber,
+      }
+    : {});
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [viewMode, setViewMode] = useState('list');
@@ -694,16 +717,18 @@ function RoomListSection({ rooms, roomTypes, modalOpen, onCloseModal, updatingRo
 
   const filteredRooms = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rooms.filter((room) => {
-      if (typeFilter !== 'all' && room.roomTypeId !== typeFilter) return false;
-      if (statusFilter !== 'all' && room.status !== statusFilter) return false;
-      if (!q) return true;
-      const haystack = [room.roomNumber, room.roomTypeName, statusMeta(room.status).label]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(q);
-    });
+    return rooms
+      .filter((room) => {
+        if (typeFilter !== 'all' && room.roomTypeId !== typeFilter) return false;
+        if (statusFilter !== 'all' && room.status !== statusFilter) return false;
+        if (!q) return true;
+        const haystack = [room.roomNumber, room.roomTypeName, statusMeta(room.status).label]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(q);
+      })
+      .sort(compareRoomsForList);
   }, [rooms, search, typeFilter, statusFilter]);
 
   return (
@@ -715,7 +740,7 @@ function RoomListSection({ rooms, roomTypes, modalOpen, onCloseModal, updatingRo
             style={styles.searchInput}
             value={search}
             onChangeText={setSearch}
-            placeholder="Search by room number, type, or status..."
+            placeholder="Search by room type or status..."
             placeholderTextColor={colors.textMuted}
           />
         </View>
@@ -747,6 +772,8 @@ function RoomListSection({ rooms, roomTypes, modalOpen, onCloseModal, updatingRo
             showStatus
             isUpdating={updatingRoomNumber === room.roomNumber}
             onStatusChange={(status) => onStatusChange(room, status)}
+            hideNumber
+            {...manageProps(room)}
           />
         ))
       ) : (
@@ -757,12 +784,20 @@ function RoomListSection({ rooms, roomTypes, modalOpen, onCloseModal, updatingRo
               room={room}
               isUpdating={updatingRoomNumber === room.roomNumber}
               onStatusChange={(status) => onStatusChange(room, status)}
+              {...manageProps(room)}
             />
           ))}
         </View>
       )}
 
-      <AddRoomModal visible={modalOpen} onClose={onCloseModal} roomTypes={roomTypes} existingRooms={rooms} />
+      <AddRoomModal visible={modalOpen} onClose={onCloseModal} roomTypes={roomTypes} />
+      {canManageRooms && (
+        <EditRoomModal
+          room={editingRoom}
+          onClose={() => setEditingRoom(null)}
+          roomTypes={roomTypes}
+        />
+      )}
     </View>
   );
 }
@@ -798,15 +833,15 @@ function FilterDropdown({ label, value, options, onChange }) {
   );
 }
 
-function AddRoomModal({ visible, onClose, roomTypes, existingRooms }) {
-  const [roomNumber, setRoomNumber] = useState('');
+// Rooms are added by type only — no room number to type in. A number is
+// assigned automatically behind the scenes (Roomsservice.createRoom).
+function AddRoomModal({ visible, onClose, roomTypes }) {
   const [roomTypeId, setRoomTypeId] = useState(roomTypes[0]?.id || null);
   const [floor, setFloor] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const close = () => {
-    setRoomNumber('');
     setRoomTypeId(roomTypes[0]?.id || null);
     setFloor('');
     setError('');
@@ -814,29 +849,16 @@ function AddRoomModal({ visible, onClose, roomTypes, existingRooms }) {
   };
 
   const handleSubmit = async () => {
-    const trimmed = roomNumber.trim();
-    if (!trimmed) { setError('Room number is required.'); return; }
     if (!roomTypeId) { setError('Please select a room type.'); return; }
-    if (existingRooms.some((r) => r.roomNumber === trimmed)) {
-      setError(`Room ${trimmed} already exists.`);
-      return;
-    }
 
     setSaving(true);
     setError('');
     try {
-      await createRoom({ roomNumber: trimmed, roomTypeId, floor: floor.trim() });
+      await createRoom({ roomTypeId, floor: floor.trim() });
       close();
     } catch (err) {
       console.error('Failed to create room:', err);
-      // Postgres unique_violation on room_number, in case the client-side
-      // duplicate check above raced with another admin adding the same
-      // room number at the same time.
-      setError(
-        err?.code === '23505'
-          ? `Room ${trimmed} already exists.`
-          : 'Could not add this room. Please try again.'
-      );
+      setError(err?.message || 'Could not add this room. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -847,16 +869,6 @@ function AddRoomModal({ visible, onClose, roomTypes, existingRooms }) {
       <View style={styles.dialogOverlay}>
         <View style={styles.dialogCard}>
           <Text style={styles.dialogTitle}>Add Room</Text>
-
-          <Text style={styles.dialogFieldLabel}>Room Number</Text>
-          <TextInput
-            style={styles.dialogInput}
-            value={roomNumber}
-            onChangeText={setRoomNumber}
-            placeholder="e.g. 109"
-            placeholderTextColor={colors.disabled}
-            keyboardType={Platform.OS === 'web' ? 'default' : 'number-pad'}
-          />
 
           <Text style={styles.dialogFieldLabel}>Room Type</Text>
           <View style={styles.dialogChipRow}>
@@ -894,6 +906,90 @@ function AddRoomModal({ visible, onClose, roomTypes, existingRooms }) {
               {saving
                 ? <ActivityIndicator color={colors.white} size="small" />
                 : <Text style={styles.dialogSubmitText}>Add Room</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// Admin only. Room type and floor. (Room numbers are internal now and
+// aren't shown or edited; edit_room still supports renumbering if ever
+// needed — sql/room_edit_remove.sql.)
+function EditRoomModal({ room, onClose, roomTypes }) {
+  const [roomTypeId, setRoomTypeId] = useState(null);
+  const [floor, setFloor] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!room) return;
+    setRoomTypeId(room.roomTypeId ?? null);
+    setFloor(room.floor || '');
+    setError('');
+  }, [room]);
+
+  const close = () => {
+    if (saving) return;
+    onClose();
+  };
+
+  const handleSubmit = async () => {
+    if (!roomTypeId) { setError('Please select a room type.'); return; }
+
+    setSaving(true);
+    setError('');
+    try {
+      await editRoom(room, { roomNumber: String(room.roomNumber), roomTypeId, floor: floor.trim() });
+      onClose();
+    } catch (err) {
+      console.error('Failed to edit room:', err);
+      setError(err?.message || 'Could not save this room. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal visible={!!room} transparent animationType="fade" onRequestClose={close}>
+      <View style={styles.dialogOverlay}>
+        <View style={styles.dialogCard}>
+          <Text style={styles.dialogTitle}>Edit {room?.roomTypeName}</Text>
+
+          <Text style={styles.dialogFieldLabel}>Room Type</Text>
+          <View style={styles.dialogChipRow}>
+            {roomTypes.map((rt) => (
+              <TouchableOpacity
+                key={rt.id}
+                style={[styles.dialogChip, roomTypeId === rt.id && styles.dialogChipActive]}
+                onPress={() => setRoomTypeId(rt.id)}
+              >
+                <Text style={[styles.dialogChipText, roomTypeId === rt.id && styles.dialogChipTextActive]}>{rt.name}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={styles.dialogFieldLabel}>Floor (optional)</Text>
+          <TextInput
+            style={styles.dialogInput}
+            value={floor}
+            onChangeText={setFloor}
+            placeholder="e.g. Ground Floor"
+            placeholderTextColor={colors.disabled}
+          />
+
+          {!!error && <Text style={styles.dialogError}>{error}</Text>}
+
+          <View style={styles.dialogActions}>
+            <TouchableOpacity style={styles.dialogCancelBtn} onPress={close} disabled={saving}>
+              <Text style={styles.dialogCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dialogSubmitBtn} onPress={handleSubmit} disabled={saving}>
+              {saving
+                ? <ActivityIndicator color={colors.white} size="small" />
+                : <Text style={styles.dialogSubmitText}>Save Changes</Text>
               }
             </TouchableOpacity>
           </View>
@@ -1472,7 +1568,8 @@ function SectionIntro({ description }) {
   );
 }
 
-function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, chipOptions, isUpdating, onStatusChange }) {
+// hideNumber: the Room List shows rooms by name only (no number badge).
+function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, chipOptions, isUpdating, onStatusChange, onEdit, onRemove, isRemoving, hideNumber }) {
   const meta = statusMeta(room.status);
   // The ⋮ menu (read-only rows only) reveals the same quick-edit chips an
   // `editable` row shows permanently — no new backend call, just a second
@@ -1507,9 +1604,11 @@ function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, chipOption
         </View>
       )}
 
-      <View style={styles.roomNumberChip}>
-        <Text style={styles.roomNumberChipText}>{room.roomNumber}</Text>
-      </View>
+      {!hideNumber && (
+        <View style={styles.roomNumberChip}>
+          <Text style={styles.roomNumberChipText}>{room.roomNumber}</Text>
+        </View>
+      )}
 
       <View style={styles.rowTitleBlock}>
         <Text style={styles.rowTitle} numberOfLines={1}>{room.roomTypeName}</Text>
@@ -1543,6 +1642,36 @@ function RoomRow({ room, showStatus, editable, onlyMaintenanceToggle, chipOption
         <View style={styles.chipRow}>
           <StatusChips options={quickEditChips} currentStatus={room.status} isUpdating={isUpdating} onStatusChange={onStatusChange} />
         </View>
+      )}
+
+      {canQuickEdit && quickEdit && (onEdit || onRemove) && (
+        <RoomManageActions onEdit={onEdit} onRemove={onRemove} isRemoving={isRemoving} />
+      )}
+    </View>
+  );
+}
+
+// Edit / Remove for one room (Admin portal only), shown in the ⋮ panel.
+function RoomManageActions({ onEdit, onRemove, isRemoving }) {
+  return (
+    <View style={styles.manageRow}>
+      {onEdit && (
+        <TouchableOpacity style={styles.typeEditBtn} onPress={onEdit} activeOpacity={0.8} disabled={isRemoving}>
+          <Ionicons name="create-outline" size={13} color={TYPE_BLUE} />
+          <Text style={styles.typeEditBtnText}>Edit room</Text>
+        </TouchableOpacity>
+      )}
+      {onRemove && (
+        <TouchableOpacity style={styles.typeDeleteBtn} onPress={onRemove} activeOpacity={0.8} disabled={isRemoving}>
+          {isRemoving ? (
+            <ActivityIndicator size="small" color={colors.danger} />
+          ) : (
+            <>
+              <Ionicons name="trash-outline" size={13} color={colors.danger} />
+              <Text style={styles.typeDeleteBtnText}>Remove room</Text>
+            </>
+          )}
+        </TouchableOpacity>
       )}
     </View>
   );
@@ -1602,7 +1731,7 @@ function KebabButton({ onPress, active }) {
 // pattern, laid out as a vertical card instead of a horizontal line. Only
 // used by RoomListSection's view toggle, so it only needs the read-only
 // (showStatus) case, not `editable`/`onlyMaintenanceToggle`.
-function RoomGridCard({ room, isUpdating, onStatusChange }) {
+function RoomGridCard({ room, isUpdating, onStatusChange, onEdit, onRemove, isRemoving }) {
   const meta = statusMeta(room.status);
   const [quickEdit, setQuickEdit] = useState(false);
   const firstImage = room.images && room.images.length > 0 ? room.images[0] : null;
@@ -1622,13 +1751,9 @@ function RoomGridCard({ room, isUpdating, onStatusChange }) {
 
       <View style={styles.gridBody}>
         <View style={styles.gridTitleRow}>
-          <View style={styles.roomNumberChip}>
-            <Text style={styles.roomNumberChipText}>{room.roomNumber}</Text>
-          </View>
+          <Text style={[styles.rowTitle, styles.gridTitleText, { flex: 1, marginTop: 0 }]} numberOfLines={1}>{room.roomTypeName}</Text>
           <KebabButton active={quickEdit} onPress={() => setQuickEdit((v) => !v)} />
         </View>
-
-        <Text style={[styles.rowTitle, styles.gridTitleText]} numberOfLines={1}>{room.roomTypeName}</Text>
         {room.floor ? <Text style={styles.rowFloor}>{room.floor}</Text> : null}
 
         <View style={[styles.statusPill, styles.gridStatusPill, { backgroundColor: meta.bg }]}>
@@ -1647,6 +1772,9 @@ function RoomGridCard({ room, isUpdating, onStatusChange }) {
           <View style={[styles.chipRow, styles.gridChipRowFix]}>
             <StatusChips options={ADMIN_STATUS_KEYS} currentStatus={room.status} isUpdating={isUpdating} onStatusChange={onStatusChange} />
           </View>
+        )}
+        {quickEdit && (onEdit || onRemove) && (
+          <RoomManageActions onEdit={onEdit} onRemove={onRemove} isRemoving={isRemoving} />
         )}
       </View>
     </View>
@@ -2099,6 +2227,10 @@ const styles = StyleSheet.create({
   kebabBtnActive: { backgroundColor: colors.primaryTint },
 
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, flexBasis: '100%', marginTop: spacing.sm },
+  manageRow: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, flexBasis: '100%',
+    marginTop: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border,
+  },
   statusChip: {
     borderWidth: 1,
     borderRadius: 999,

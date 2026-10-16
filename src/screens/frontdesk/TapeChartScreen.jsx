@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,11 @@ import {
   StyleSheet,
   ActivityIndicator,
   Modal,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { subscribeToRoomTypes, subscribeToRooms, joinRoomsWithTypes, ROOM_STATUS, statusMeta, formatCurrency } from '../../utils/Roomsservice';
+import { subscribeToRoomTypes, subscribeToRooms, joinRoomsWithTypes, ROOM_STATUS, statusMeta, formatCurrency, compareRoomsForList } from '../../utils/Roomsservice';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
 const WINDOW_DAYS = 14;
@@ -22,7 +23,10 @@ const OCC_COL_WIDTH = 44;
 // above these, the chart falls back to scrolling rather than shrinking
 // further into something unreadable. On an actual 1920×1080 desktop
 // with a realistic room count, this floor is not expected to be hit.
-const MIN_DAY_WIDTH = 62;
+// Narrowest a date column may get before the chart scrolls sideways instead
+// (keeps guest names on the bars readable on tablets / small laptops).
+const MIN_DAY_WIDTH = 76;
+const IS_WEB = Platform.OS === 'web';
 const MIN_ROW_HEIGHT = 38;
 
 // Reservation-level statuses (not the same as rooms.status — see this
@@ -148,6 +152,41 @@ function getRoomNumbers(res) {
  * unavoidable again, which is the honest outcome rather than shrinking
  * text past the point of being readable.
  */
+// The grid's scroll area. Web: ONE element that scrolls both ways, so the
+// sticky date row (top) and room columns (left) both stay pinned and the
+// horizontal scrollbar sits at the bottom of the screen. Native: the usual
+// vertical + horizontal ScrollViews.
+function GridScroller({ scrollRef, contentWidth, onWidth, onNativeScroll, children }) {
+  if (IS_WEB) {
+    return (
+      <View
+        ref={scrollRef}
+        style={styles.gridScrollWeb}
+        onLayout={(e) => onWidth(e.nativeEvent.layout.width)}
+      >
+        {children}
+      </View>
+    );
+  }
+  return (
+    <ScrollView style={styles.gridOuterScroll} onLayout={(e) => onWidth(e.nativeEvent.layout.width)}>
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        style={styles.gridInnerScroll}
+        contentContainerStyle={{ minWidth: contentWidth }}
+        scrollEventThrottle={32}
+        onScroll={(e) => {
+          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          onNativeScroll(contentOffset.x, Math.max(0, contentSize.width - layoutMeasurement.width));
+        }}
+      >
+        {children}
+      </ScrollView>
+    </ScrollView>
+  );
+}
+
 export default function TapeChartScreen() {
   const [rooms, setRooms] = useState([]);
   const [roomTypes, setRoomTypes] = useState([]);
@@ -173,6 +212,13 @@ export default function TapeChartScreen() {
   const [gridAreaWidth, setGridAreaWidth] = useState(0);      // available width for the grid, measured
   const [screenHeight, setScreenHeight] = useState(0);        // THIS component's own allotted height, measured
 
+  // Small screens: the grid scrolls (one scroll area, both directions on
+  // web, so the date row and room column both stay pinned). scrollX/maxX
+  // drive the "‹ Earlier / Later ›" buttons.
+  const gridScrollRef = useRef(null);
+  const [scrollX, setScrollX] = useState(0);
+  const [maxScrollX, setMaxScrollX] = useState(0);
+
   useEffect(() => {
     const unsubTypes = subscribeToRoomTypes(setRoomTypes);
     const unsubRooms = subscribeToRooms((data) => {
@@ -195,8 +241,7 @@ export default function TapeChartScreen() {
       // Only simple, single-condition filters here (.lt/.gt) — status
       // exclusion happens client-side below rather than as a .in()/.or()
       // filter, which is a known PostgREST parsing trap when combined
-      // with other conditions (see KitchenOrdersScreen.jsx's own notes
-      // on this from earlier in the project).
+      // with other conditions.
       const { data, error } = await supabase
         .from('reservations')
         .select('*')
@@ -290,9 +335,9 @@ export default function TapeChartScreen() {
     // differently-labeled floor) would jump to the very top of the
     // list, well out of numeric order, even though every room number
     // itself was sorting correctly within its own floor group.
-    return [...joined].sort((a, b) =>
-      (a.roomNumber || '').localeCompare(b.roomNumber || '', undefined, { numeric: true })
-    );
+    // Same order as the Room List and the guest room cards: Room 1, Room 2,
+    // Room 3, Conference Room, Accreditation Room, Banquet Hall, then others.
+    return [...joined].sort(compareRoomsForList);
   }, [rooms, roomTypes]);
 
   const occupancyByRoom = useMemo(() => {
@@ -399,6 +444,38 @@ export default function TapeChartScreen() {
 
   const loading = loadingRooms || loadingReservations;
   const gridWidth = WINDOW_DAYS * dayWidth;
+  const contentWidth = ROOM_COL_WIDTH + STATUS_COL_WIDTH + OCC_COL_WIDTH + gridWidth;
+  const overflowsX = gridAreaWidth > 0 && contentWidth > gridAreaWidth + 1;
+
+  // Web: follow the grid's own scroll position (for the arrow buttons).
+  useEffect(() => {
+    if (!IS_WEB) return undefined;
+    const node = gridScrollRef.current;
+    if (!node || typeof node.addEventListener !== 'function') return undefined;
+    const update = () => {
+      setScrollX(node.scrollLeft);
+      setMaxScrollX(Math.max(0, node.scrollWidth - node.clientWidth));
+    };
+    update();
+    node.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    return () => {
+      node.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+    };
+  }, [contentWidth, gridAreaWidth, filteredRooms.length]);
+
+  const scrollDays = (direction) => {
+    const node = gridScrollRef.current;
+    const step = dayWidth * 3 * direction;
+    if (IS_WEB && node && typeof node.scrollBy === 'function') {
+      node.scrollBy({ left: step, behavior: 'smooth' });
+    } else if (node && typeof node.scrollTo === 'function') {
+      const next = Math.max(0, Math.min(maxScrollX, scrollX + step));
+      node.scrollTo({ x: next, animated: true });
+      setScrollX(next);
+    }
+  };
 
   return (
     <View style={styles.screen} onLayout={(e) => setScreenHeight(e.nativeEvent.layout.height)}>
@@ -489,6 +566,34 @@ export default function TapeChartScreen() {
           ))}
         </ScrollView>
       </View>
+
+      {/* ── Shown only when the 14 days don't fit (tablet / small laptop) ── */}
+      {overflowsX && !loading && filteredRooms.length > 0 && (
+        <View style={styles.scrollHintRow}>
+          <Ionicons name="swap-horizontal" size={14} color={colors.textMuted} />
+          <Text style={styles.scrollHintText}>
+            Some dates are off-screen — swipe or scroll sideways, or use the arrows.
+          </Text>
+          <TouchableOpacity
+            style={[styles.scrollBtn, scrollX <= 1 && styles.scrollBtnDisabled]}
+            onPress={() => scrollDays(-1)}
+            disabled={scrollX <= 1}
+            accessibilityLabel="Scroll to earlier dates"
+          >
+            <Ionicons name="chevron-back" size={14} color={colors.primary} />
+            <Text style={styles.scrollBtnText}>Earlier</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.scrollBtn, scrollX >= maxScrollX - 1 && styles.scrollBtnDisabled]}
+            onPress={() => scrollDays(1)}
+            disabled={scrollX >= maxScrollX - 1}
+            accessibilityLabel="Scroll to later dates"
+          >
+            <Text style={styles.scrollBtnText}>Later</Text>
+            <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+          </TouchableOpacity>
+        </View>
+      )}
       </View>
 
       {loading ? (
@@ -504,9 +609,13 @@ export default function TapeChartScreen() {
           <Text style={styles.emptyText}>No rooms match the current filters.</Text>
         </View>
       ) : (
-        <ScrollView style={styles.gridOuterScroll} onLayout={(e) => setGridAreaWidth(e.nativeEvent.layout.width)}>
-          <ScrollView horizontal style={styles.gridInnerScroll} contentContainerStyle={{ minWidth: ROOM_COL_WIDTH + STATUS_COL_WIDTH + OCC_COL_WIDTH + gridWidth }}>
-            <View>
+        <GridScroller
+          scrollRef={gridScrollRef}
+          contentWidth={contentWidth}
+          onWidth={setGridAreaWidth}
+          onNativeScroll={(x, max) => { setScrollX(x); setMaxScrollX(max); }}
+        >
+            <View style={{ width: contentWidth }}>
               {/* ── Date header row (sticky top) ─────────────────────── */}
               <View style={styles.dateHeaderRow} onLayout={(e) => setDateHeaderHeight(e.nativeEvent.layout.height)}>
                 <View style={styles.roomColHeaderCell}>
@@ -540,8 +649,8 @@ export default function TapeChartScreen() {
                 return (
                   <View key={room.roomNumber} style={[styles.roomRow, { height: rowHeight }]}>
                     <View style={[styles.roomLabelCell, isMaintenance && styles.roomLabelCellMaintenance]}>
-                      <Text style={styles.roomNumberText}>Room {room.roomNumber}</Text>
-                      <Text style={styles.roomTypeText} numberOfLines={1}>{room.roomTypeName}</Text>
+                      {/* Rooms are shown by name only — no internal room number. */}
+                      <Text style={styles.roomNumberText} numberOfLines={2}>{room.roomTypeName}</Text>
                     </View>
 
                     <View style={styles.statusCell}>
@@ -619,8 +728,7 @@ export default function TapeChartScreen() {
                 );
               })}
             </View>
-          </ScrollView>
-        </ScrollView>
+        </GridScroller>
       )}
 
       {/* ── Reservation detail modal ──────────────────────────────────── */}
@@ -644,7 +752,10 @@ export default function TapeChartScreen() {
 
                 <View style={styles.modalRow}>
                   <Text style={styles.modalRowLabel}>Room</Text>
-                  <Text style={styles.modalRowValue}>{selectedBar.roomNumber} · {selectedBar.reservation.roomType}</Text>
+                  <Text style={styles.modalRowValue}>
+                    {sortedRooms.find((r) => String(r.roomNumber) === String(selectedBar.roomNumber))?.roomTypeName
+                      || selectedBar.reservation.roomType}
+                  </Text>
                 </View>
                 <View style={styles.modalRow}>
                   <Text style={styles.modalRowLabel}>Dates</Text>
@@ -730,6 +841,23 @@ const styles = StyleSheet.create({
 
   gridOuterScroll: { flex: 1 },
   gridInnerScroll: { flex: 1 },
+  // Web only (see GridScroller): scrolls both ways; minWidth/minHeight 0
+  // stop it from stretching to its content inside the portal's flex layout.
+  gridScrollWeb: { flex: 1, minWidth: 0, minHeight: 0, overflowX: 'auto', overflowY: 'auto' },
+
+  scrollHintRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap',
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.xs,
+    backgroundColor: colors.white, borderTopWidth: 1, borderTopColor: colors.border,
+  },
+  scrollHintText: { flex: 1, minWidth: 160, fontSize: 11, fontFamily: fonts.body, color: colors.textMuted },
+  scrollBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 2,
+    borderWidth: 1, borderColor: colors.border, borderRadius: 999,
+    paddingVertical: 4, paddingHorizontal: spacing.sm, backgroundColor: colors.white,
+  },
+  scrollBtnDisabled: { opacity: 0.35 },
+  scrollBtnText: { fontSize: 11, fontFamily: fonts.bodySemiBold, color: colors.primary },
 
   dateHeaderRow: {
     flexDirection: 'row',

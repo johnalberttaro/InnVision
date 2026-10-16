@@ -253,7 +253,7 @@ function renderActiveScreen(props) {
   }
   if (activeKey.startsWith('fd:rooms:')) {
     const section = activeKey.split(':')[2];
-    return <RoomManagementScreen onLogout={props.onLoggedOut} section={section} />;
+    return <RoomManagementScreen onLogout={props.onLoggedOut} section={section} canManageRooms />;
   }
   // Housekeeping Schedule/Room Cleaning Status/Maintenance Requests moved
   // into a scrollable tab bar at the top of HousekeepingManagementScreen.jsx

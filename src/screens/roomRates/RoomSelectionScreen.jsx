@@ -14,6 +14,7 @@ import {
   formatCurrency,
   fetchBookedRoomNumbers,
   isRoomBookable,
+  compareRoomsForList,
 } from '../../utils/Roomsservice';
 import { Ionicons } from '@expo/vector-icons';
 import Brandheader from '../../components/shared/Brandheader';
@@ -167,9 +168,11 @@ export default function RoomSelectionScreen({ bookingDetails, onEditSearch, onRe
       if (!bookedRoomNumbers) return []; // still checking dates
       return joinedRooms
         .filter((room) => isRoomBookable(room, bookedRoomNumbers))
+        .sort(compareRoomsForList) // same order as the Room List
         .map((room) => ({
           ...room,
-          name: `Room ${room.roomNumber} — ${room.roomTypeName}`,
+          // Guests see the room by name only (no internal room number).
+          name: room.roomTypeName,
         }));
     }
     return ROOM_RATES.map((rate) => ({ ...rate, roomNumber: null, available: true }));
