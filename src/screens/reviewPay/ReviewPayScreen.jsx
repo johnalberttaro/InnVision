@@ -130,6 +130,8 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   const [specialRequests, setSpecialRequests] = useState('');
   const [paymentMode, setPaymentMode]         = useState('hotel');
   const [eWallet, setEWallet]                 = useState(null);
+  // Set after a simulated e-wallet payment — shown on the confirmation.
+  const [simulatedPayment, setSimulatedPayment] = useState(null);
   const [agreed, setAgreed]                   = useState(false);
   const [errors, setErrors]                   = useState({});
   // Shown above the action buttons when the save itself fails. Inline
@@ -212,6 +214,10 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
             <Text style={styles.successTitle}>Reservation Submitted</Text>
             <Text style={styles.successMessage}>{successMessage}</Text>
 
+            {simulatedPayment && (
+              <SimulatedPaymentReceipt payment={simulatedPayment} styles={styles} />
+            )}
+
             {reservationId && (
               <View style={styles.resIdBadge}>
                 <Ionicons name="document-text-outline" size={13} color={colors.primary} />
@@ -286,7 +292,12 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   // (Pay at Hotel) or after EwalletPaymentScreen's onConfirmPayment fires
   // (Pay Online). Assumes validate() has already passed, and for online
   // payments that `eWallet` has already been set by handleEwalletConfirm.
-  const submitReservation = async () => {
+  //
+  // walletId is passed in directly for e-wallet payments: setEWallet() in
+  // handleEwalletConfirm doesn't update `eWallet` inside this same call
+  // (React state updates apply on the next render), which used to save
+  // every e-wallet booking as unpaid with no wallet recorded.
+  const submitReservation = async (walletId = eWallet) => {
     setConfirming(true);
     setSubmitError(null);
     try {
@@ -326,17 +337,17 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
           payment_mode: paymentMode,
           // 'paid' only when the mock e-wallet step actually completed;
           // read by BillingService at check-in to auto-settle the folio.
-          payment_status: paymentMode === 'online' && eWallet ? 'paid' : 'unpaid',
+          payment_status: paymentMode === 'online' && walletId ? 'paid' : 'unpaid',
           // Mock only — no real gateway is wired in. Recorded purely for
           // reference/display and to pick the right paymentMethod on the
           // auto-generated receipt at check-in.
-          ewallet_provider: paymentMode === 'online' ? eWallet : null,
+          ewallet_provider: paymentMode === 'online' ? walletId : null,
 
           // 'pending' → awaits admin approval on the Pending Reservations
           // screen (✓ moves it to 'upcoming', ✕ moves it to 'declined').
           status: 'pending',
         })
-        .select('id, total_amount')
+        .select('id, total_amount, created_at')
         .single();
       if (error) throw error;
 
@@ -349,6 +360,19 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
       // Runs after the reservation write succeeds; its own errors are
       // caught internally and never affect the guest-facing flow below.
       await upsertGuestRecord();
+
+      // Simulated e-wallet payment: keep what the confirmation shows. The
+      // booking's created_at is the payment time the 24-hour refund window
+      // (My Reservations) is measured from.
+      if (paymentMode === 'online' && walletId) {
+        setSimulatedPayment({
+          walletId,
+          paidAt: inserted.created_at || new Date().toISOString(),
+          amount: savedTotal,
+        });
+      } else {
+        setSimulatedPayment(null);
+      }
 
       setSuccessMessage(`Thank you, ${firstName}! Your ${roomTypeSummary} room request for ${formatDate(checkIn)} – ${formatDate(checkOut)} has been sent to the hotel for confirmation.\n\nTotal: ${formatCurrency(savedTotal)}`);
       setShowSuccessState(true);
@@ -398,7 +422,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   // mock processing delay finishes.
   const handleEwalletConfirm = (walletId) => {
     setEWallet(walletId);
-    submitReservation();
+    submitReservation(walletId);
   };
 
   const handleEwalletCancel = () => {
@@ -706,6 +730,51 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   );
 }
 
+const EWALLET_LABELS = { gcash: 'GCash', maya: 'Maya', gotyme: 'GoTyme', maribank: 'Maribank' };
+
+function formatDateTime(value) {
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+// Shown on the confirmation after a simulated e-wallet payment — clearly
+// labelled so it can never be mistaken for a real payment receipt.
+function SimulatedPaymentReceipt({ payment, styles }) {
+  const paidAt = new Date(payment.paidAt);
+  const refundUntil = new Date(paidAt.getTime() + 24 * 60 * 60 * 1000);
+  return (
+    <View style={styles.simReceipt}>
+      <View style={styles.simStamp}>
+        <Text style={styles.simStampText}>SIMULATED PAYMENT</Text>
+      </View>
+      <Text style={styles.simReceiptSub}>Demo transaction — no real money was transferred or charged.</Text>
+
+      <View style={styles.simReceiptRows}>
+        <SimRow styles={styles} label="E-wallet (demo)" value={EWALLET_LABELS[payment.walletId] || payment.walletId} />
+        <SimRow styles={styles} label="Amount (simulated)" value={formatCurrency(payment.amount)} />
+        <SimRow styles={styles} label="Payment time" value={formatDateTime(paidAt)} />
+        <SimRow styles={styles} label="Refund requests until" value={formatDateTime(refundUntil)} last />
+      </View>
+
+      <Text style={styles.simReceiptNote}>
+        To request a (simulated) refund, cancel from My Reservations before the time above. Requests are reviewed by the front desk.
+      </Text>
+    </View>
+  );
+}
+
+function SimRow({ label, value, styles, last }) {
+  return (
+    <View style={[styles.simRow, last && { borderBottomWidth: 0 }]}>
+      <Text style={styles.simRowLabel}>{label}</Text>
+      <Text style={styles.simRowValue}>{value}</Text>
+    </View>
+  );
+}
+
 function SummaryRow({ label, value, styles }) {
   return (
     <View style={styles.summaryRow}>
@@ -800,6 +869,28 @@ function getStyles(colors, spacing, radius, fonts) {
 
     resIdBadge: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginTop: spacing.md, backgroundColor: colors.primaryTint, borderRadius: radius.sm, padding: spacing.sm },
     resIdText:  { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.primary },
+
+    // Simulated-payment confirmation block
+    simReceipt: {
+      width: '100%', borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.border,
+      borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.md, alignItems: 'center',
+      backgroundColor: colors.cardAlt,
+    },
+    simStamp: {
+      borderWidth: 2, borderColor: colors.primary, borderRadius: 6,
+      paddingHorizontal: spacing.md, paddingVertical: 4, transform: [{ rotate: '-3deg' }],
+      backgroundColor: colors.primaryTint,
+    },
+    simStampText: { fontFamily: fonts.headingBold, fontSize: 13, letterSpacing: 2, color: colors.primary },
+    simReceiptSub: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.text, textAlign: 'center', marginTop: spacing.sm },
+    simReceiptRows: { width: '100%', marginTop: spacing.sm },
+    simRow: {
+      flexDirection: 'row', justifyContent: 'space-between', gap: spacing.md, paddingVertical: 6,
+      borderBottomWidth: 0.5, borderBottomColor: colors.border,
+    },
+    simRowLabel: { fontFamily: fonts.body, fontSize: 12, color: colors.textMuted },
+    simRowValue: { fontFamily: fonts.bodySemiBold, fontSize: 12, color: colors.text, textAlign: 'right', flexShrink: 1 },
+    simReceiptNote: { fontFamily: fonts.body, fontSize: 11, color: colors.textMuted, textAlign: 'center', marginTop: spacing.sm, lineHeight: 16 },
 
     successOverlay: {
       flex: 1,

@@ -22,7 +22,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { getAllReceipts, searchReceipts } from '../../utils/BillingService';
-import ReceiptDetailModal from './ReceiptDetailModal';
+import ReceiptDetailModal, { isSimulatedReceipt } from './ReceiptDetailModal';
 import Pagination from '../../components/shared/Pagination';
 import KpiCard from '../../components/dashboard/KpiCard';
 
@@ -138,7 +138,7 @@ export default function ReceiptsScreen() {
         <Text style={styles.receiptNumber}>{item.receiptNumber}</Text>
         <Text style={styles.guestName}>{item.guestName}</Text>
         <Text style={styles.subInfo}>
-          {formatDate(item.paymentDate)} • {paymentMethodLabel(item.paymentMethod)}
+          {formatDate(item.paymentDate)} • {paymentMethodLabel(item.paymentMethod)}{isSimulatedReceipt(item) ? ' • SIMULATED PAYMENT' : ''}
         </Text>
       </View>
       <View style={styles.rowSide}>

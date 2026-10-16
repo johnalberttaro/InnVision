@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { colors, spacing, fonts } from '../../utils/theme';
+import GuestNotificationBell from './GuestNotificationBell';
 
 const WIDE_SCREEN_BREAKPOINT = 768;
 
@@ -177,6 +178,13 @@ export default function HomeHeader({
                   );
                 })}
               </View>
+            )}
+
+            {/* Notification bell — signed-in guests only. Booking deadline
+                reminders + Front Desk booking updates; "View in My
+                Reservations" reuses the same navigation as the nav link. */}
+            {isAuthenticated && (
+              <GuestNotificationBell onViewBooking={(id) => onFindBooking && onFindBooking(id)} />
             )}
 
             {/* CTA button */}

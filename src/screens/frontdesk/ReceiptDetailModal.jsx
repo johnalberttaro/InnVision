@@ -97,6 +97,15 @@ function formatDate(value, withTime = false) {
     : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+// Receipts auto-created for a guest's online (e-wallet) booking come from
+// the app's SIMULATED payment step — no real money moved — so they are
+// labelled as such everywhere a receipt is shown or printed.
+// (BillingService.createBillingRecord tags them 'Online Payment (Auto)'.)
+export const SIMULATED_PAYMENT_PROCESSOR = 'Online Payment (Auto)';
+export function isSimulatedReceipt(receipt) {
+  return receipt?.processedByName === SIMULATED_PAYMENT_PROCESSOR;
+}
+
 function escapeHtml(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;')
@@ -123,6 +132,7 @@ function resolveLogoUri() {
 // printed/PDF result actually looks like it came from InnVision instead
 // of a generic browser print-out.
 function buildReceiptHtml(receipt, folio, logoUri) {
+  const simulated = isSimulatedReceipt(receipt);
   const renderRow = (label, value) => `
       <div class="row">
         <span class="label">${escapeHtml(label)}</span>
@@ -200,6 +210,9 @@ function buildReceiptHtml(receipt, folio, logoUri) {
     margin: 14px 0 4px;
   }
 
+  .stamp.sim { border-color: #2C5EA8; color: #2C5EA8; transform: rotate(-3deg); }
+  .sim-note { font-size: 11px; font-weight: 600; color: #2C5EA8; margin-top: 6px; }
+
   .dashed {
     border-top: 1.5px dashed ${PRINT_COLORS.border};
     margin: 18px 0 6px;
@@ -269,7 +282,9 @@ function buildReceiptHtml(receipt, folio, logoUri) {
       ${logoUri ? `<img class="logo" src="${logoUri}" alt="InnVision" />` : ''}
       <div class="hotel-name">InnVision Training Hotel</div>
       <div class="hotel-sub">Consolatrix College of Toledo City, Inc.</div>
-      <div class="stamp">✓ PAID</div>
+      ${simulated
+        ? '<div class="stamp sim">SIMULATED PAYMENT</div><div class="sim-note">DEMO TRANSACTION — no real money was transferred or charged.</div>'
+        : '<div class="stamp">✓ PAID</div>'}
     </div>
 
     <div class="dashed"></div>
@@ -298,7 +313,9 @@ function buildReceiptText(receipt, folio) {
   const lines = [
     'InnVision Training Hotel',
     'Consolatrix College of Toledo City, Inc.',
-    '✓ PAID',
+    ...(isSimulatedReceipt(receipt)
+      ? ['SIMULATED PAYMENT', 'DEMO TRANSACTION — no real money was transferred or charged.']
+      : ['✓ PAID']),
     divider,
     `Receipt No.: ${receipt.receiptNumber || '—'}`,
     `Date: ${formatDate(receipt.paymentDate, true)}`,
@@ -398,10 +415,20 @@ export default function ReceiptDetailModal({ visible, receipt, onClose }) {
             <Image source={LOGO_SOURCE} style={styles.logoImage} resizeMode="contain" />
             <Text style={styles.hotelName}>InnVision Training Hotel</Text>
             <Text style={styles.hotelSub}>Consolatrix College of Toledo City, Inc.</Text>
-            <View style={styles.paidStamp}>
-              <Ionicons name="checkmark" size={13} color="#1E7B34" />
-              <Text style={styles.paidStampText}>PAID</Text>
-            </View>
+            {isSimulatedReceipt(receipt) ? (
+              <>
+                <View style={[styles.paidStamp, styles.simStamp]}>
+                  <Ionicons name="flask-outline" size={13} color="#2C5EA8" />
+                  <Text style={[styles.paidStampText, styles.simStampText]}>SIMULATED PAYMENT</Text>
+                </View>
+                <Text style={styles.simNote}>DEMO TRANSACTION — no real money was transferred or charged.</Text>
+              </>
+            ) : (
+              <View style={styles.paidStamp}>
+                <Ionicons name="checkmark" size={13} color="#1E7B34" />
+                <Text style={styles.paidStampText}>PAID</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.receiptMetaRow}>
@@ -510,6 +537,9 @@ function getStyles(colors, spacing, radius, fonts) {
       marginTop: spacing.sm, transform: [{ rotate: '-6deg' }],
     },
     paidStampText: { fontFamily: fonts.headingBold, fontSize: 12, color: '#1E7B34', letterSpacing: 1.5 },
+    simStamp: { borderColor: '#2C5EA8', transform: [{ rotate: '-3deg' }] },
+    simStampText: { color: '#2C5EA8' },
+    simNote: { fontFamily: fonts.bodySemiBold, fontSize: 11, color: '#2C5EA8', textAlign: 'center', marginTop: spacing.sm },
 
     receiptMetaRow: {
       flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',

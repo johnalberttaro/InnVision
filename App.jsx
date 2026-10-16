@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, StatusBar, Modal, Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
@@ -297,6 +297,9 @@ export default function App() {
   const [showReservation, setShowReservation] = useState(false);
   const [bookingDetails, setBookingDetails]   = useState(null);
   const [selectedRooms, setSelectedRooms]     = useState(null);
+  // Set when a notification's "View in My Reservations" is tapped, so that
+  // screen opens at that booking; cleared once it has scrolled there.
+  const [focusReservationId, setFocusReservationId] = useState(null);
 
   // ── Auth handlers ───────────────────────────────────────────────────
   const handleLogin = (supabaseUser, role) => {
@@ -382,7 +385,12 @@ export default function App() {
   // My Reservations is guest-account-only (it reads the signed-in user's
   // id to pull their bookings) — bounce unauthenticated taps to login
   // instead of opening the screen with nothing to show.
-  const goToMyReservations = () => setScreen(user ? 'myReservations' : 'login');
+  // reservationId is passed by the notification bell (string); nav links
+  // call this with no argument and just open the list.
+  const goToMyReservations = (reservationId) => {
+    setFocusReservationId(typeof reservationId === 'string' ? reservationId : null);
+    setScreen(user ? 'myReservations' : 'login');
+  };
 
   // Report an Issue is guest-account-only too, same reasoning/pattern as
   // My Reservations — the screen itself queries reservations by user.id.
@@ -499,6 +507,7 @@ export default function App() {
               onBookNow={openReservation}
               onLogout={handleLogout}
               onBackPress={() => setScreen('home')}
+              onViewBooking={goToMyReservations}
             />
           )}
 
@@ -520,6 +529,8 @@ export default function App() {
           {screen === 'myReservations' && (
             <MyReservationsScreen
               onBack={() => setScreen('home')}
+              focusReservationId={focusReservationId}
+              onFocusHandled={() => setFocusReservationId(null)}
             />
           )}
 

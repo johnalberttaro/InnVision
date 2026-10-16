@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import { supabase } from '../../services/supabase';
 import { submitRoomReview, fetchReviewedIds } from '../../utils/ReviewsService';
 import RatingModal from '../../components/shared/RatingModal';
 import ExtendStayModal from './ExtendStayModal';
+import GuestNotificationBell from '../../components/shared/GuestNotificationBell';
 import {
   fetchMyLatestExtensions,
   cancelStayExtension,
@@ -64,7 +65,11 @@ import { useTheme } from '../../context/ThemeContext';
  *  - onBack: () => void
  *  - onViewReservation?: (reservation) => void   // optional deep-link out
  */
-export default function MyReservationsScreen({ onBack, onViewReservation }) {
+// focusReservationId: open the screen AT this booking (from a notification
+// tap) — it's expanded, scrolled into view and briefly highlighted, in the
+// main list or in Reservation History. onFocusHandled() lets the parent
+// clear it so a later visit opens normally.
+export default function MyReservationsScreen({ onBack, onViewReservation, focusReservationId, onFocusHandled }) {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
 
@@ -78,6 +83,15 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
   const [expandedId, setExpandedId]     = useState(null);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [historyExpandedId, setHistoryExpandedId] = useState(null);
+  const [hasLoaded, setHasLoaded] = useState(false); // first successful fetch done
+
+  // ── Jump to a booking (notification → "View in My Reservations") ──
+  const [localFocusId, setLocalFocusId] = useState(null); // from the bell on THIS screen
+  const [highlightId, setHighlightId]   = useState(null);
+  const mainScrollRef    = useRef(null);
+  const historyScrollRef = useRef(null);
+  const cardOffsetsRef   = useRef({});   // `${list}:${id}` -> y inside the list
+  const listPadOffsetRef = useRef({ main: 0, history: 0 });
   const [menuVisible, setMenuVisible] = useState(false);
 
   // Which of this guest's checked-out reservations already have a room
@@ -102,6 +116,44 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     () => reservations.filter((r) => HISTORY_STATUSES.includes((r.status || '').toLowerCase())),
     [reservations]
   );
+
+  // Jump to the booking a notification is about: expand it, scroll it into
+  // view and highlight it for a few seconds. Works for the main list and for
+  // Reservation History (cancelled / checked-out bookings). Timers live in a
+  // ref, not the effect cleanup, because clearing the focus id re-runs this
+  // effect and would otherwise cancel the scroll before it happens.
+  const focusTimersRef = useRef([]);
+  useEffect(() => () => focusTimersRef.current.forEach(clearTimeout), []);
+  const focusId = localFocusId || focusReservationId || null;
+  useEffect(() => {
+    if (!focusId || !hasLoaded) return;
+    const inMain = activeReservations.some((r) => r.id === focusId);
+    const inHistory = !inMain && historyReservations.some((r) => r.id === focusId);
+    setLocalFocusId(null);
+    onFocusHandled && onFocusHandled();
+    if (!inMain && !inHistory) return; // not one of this guest's bookings
+
+    const list = inMain ? 'main' : 'history';
+    if (inMain) {
+      setHistoryVisible(false);
+      setExpandedId(focusId);
+    } else {
+      setHistoryVisible(true);
+      setHistoryExpandedId(focusId);
+    }
+    setHighlightId(focusId);
+    focusTimersRef.current.push(
+      setTimeout(() => {
+        const y = cardOffsetsRef.current[`${list}:${focusId}`];
+        const scroller = (list === 'main' ? mainScrollRef : historyScrollRef).current;
+        if (y != null && scroller) {
+          scroller.scrollTo({ y: Math.max(0, (listPadOffsetRef.current[list] || 0) + y - 12), animated: true });
+        }
+      }, 450),
+      setTimeout(() => setHighlightId((h) => (h === focusId ? null : h)), 4500)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, hasLoaded, activeReservations, historyReservations]);
 
   // Cancellation flow state
   const [cancelTarget, setCancelTarget] = useState(null); // reservation being confirmed
@@ -176,6 +228,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
 
       const docs = (data || []).map(reservationToCamel);
       setReservations(docs);
+      setHasLoaded(true);
     } catch (err) {
       console.error('Failed to load reservations:', err);
       setError('Something went wrong while loading your reservations.');
@@ -324,7 +377,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
     const mode = (r.paymentMode || '').toLowerCase();
     if (mode === 'online') {
       const provider = (r.eWalletProvider || '').toLowerCase();
-      return EWALLET_LABELS[provider] || (r.eWalletProvider ? r.eWalletProvider : 'E-wallet');
+      return `${EWALLET_LABELS[provider] || (r.eWalletProvider ? r.eWalletProvider : 'E-wallet')} (simulated)`;
     }
     if (mode === 'cash') return 'Cash on arrival';
     if (mode === 'hotel') return 'Pay at Hotel';
@@ -425,14 +478,18 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
 
   // ---------------- Card renderer (shared by main list + history modal) --
 
-  const renderReservationCard = (r, { expandedIdState, setExpandedIdState }) => {
+  const renderReservationCard = (r, { expandedIdState, setExpandedIdState, listKey = 'main' }) => {
     const meta = statusMeta(r.status);
     const expanded = expandedIdState === r.id;
     const isCheckedIn = r.status === 'checked-in';
     const ext = isCheckedIn ? extensions[r.id] : null;
     const extPending = ext?.status === 'pending';
     return (
-      <View key={r.id} style={styles.card}>
+      <View
+        key={r.id}
+        style={[styles.card, highlightId === r.id && styles.cardHighlighted]}
+        onLayout={(e) => { cardOffsetsRef.current[`${listKey}:${r.id}`] = e.nativeEvent.layout.y; }}
+      >
         {/* Summary row */}
         <View style={styles.resHeader}>
           <Text style={styles.resId}>{referenceNumber(r.id)}</Text>
@@ -589,13 +646,20 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
           <Ionicons name="arrow-back" size={22} color={colors.white} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Reservations</Text>
-        <TouchableOpacity
-          onPress={() => setMenuVisible((v) => !v)}
-          style={styles.backButton}
-          accessibilityLabel="More options"
-        >
-          <Ionicons name="ellipsis-vertical" size={20} color={colors.white} />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <GuestNotificationBell
+            iconColor={colors.white}
+            badgeBorderColor={colors.heroBackground}
+            onViewBooking={(id) => id && setLocalFocusId(id)}
+          />
+          <TouchableOpacity
+            onPress={() => setMenuVisible((v) => !v)}
+            style={styles.backButton}
+            accessibilityLabel="More options"
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color={colors.white} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Dropdown menu */}
@@ -621,6 +685,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
       </Modal>
 
       <ScrollView
+        ref={mainScrollRef}
         style={styles.scroll}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -628,7 +693,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
         }
       >
         <View style={isWide && styles.wideContainer}>
-          <View style={styles.contentPad}>
+          <View style={styles.contentPad} onLayout={(e) => { listPadOffsetRef.current.main = e.nativeEvent.layout.y; }}>
 
             {loading ? (
               <View style={styles.centerBlock}>
@@ -649,7 +714,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
               </View>
             ) : (
               activeReservations.map((r) =>
-                renderReservationCard(r, { expandedIdState: expandedId, setExpandedIdState: setExpandedId })
+                renderReservationCard(r, { expandedIdState: expandedId, setExpandedIdState: setExpandedId, listKey: 'main' })
               )
             )}
           </View>
@@ -675,9 +740,9 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
             <Text style={styles.headerTitle}>Reservation History</Text>
             <View style={styles.headerSpacer} />
           </View>
-          <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+          <ScrollView ref={historyScrollRef} style={styles.scroll} showsVerticalScrollIndicator={false}>
             <View style={isWide && styles.wideContainer}>
-              <View style={styles.contentPad}>
+              <View style={styles.contentPad} onLayout={(e) => { listPadOffsetRef.current.history = e.nativeEvent.layout.y; }}>
                 {historyReservations.length === 0 ? (
                   <View style={styles.messageCard}>
                     <Ionicons name="time-outline" size={22} color={colors.textMuted} />
@@ -687,7 +752,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation }) {
                   </View>
                 ) : (
                   historyReservations.map((r) =>
-                    renderReservationCard(r, { expandedIdState: historyExpandedId, setExpandedIdState: setHistoryExpandedId })
+                    renderReservationCard(r, { expandedIdState: historyExpandedId, setExpandedIdState: setHistoryExpandedId, listKey: 'history' })
                   )
                 )}
               </View>
@@ -1070,6 +1135,16 @@ function getStyles(colors, spacing, radius, fonts) {
       fontSize: 12,
       fontFamily: fonts.bodySemiBold,
       color: colors.danger,
+    },
+    cardHighlighted: {
+      borderWidth: 2,
+      borderColor: colors.primary,
+      backgroundColor: colors.cardAlt,
+    },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
     },
     ratedBadge: {
       flexDirection: 'row',

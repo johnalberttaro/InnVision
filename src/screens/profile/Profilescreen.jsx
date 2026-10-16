@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { supabase } from '../../services/supabase';
 import { useTheme } from '../../context/ThemeContext';
 import { formatDate } from '../../utils/dateHelpers';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
+import GuestNotificationBell from '../../components/shared/GuestNotificationBell';
 
 /**
  * ProfileScreen — Guest profile dashboard for InnVision.
@@ -88,8 +89,10 @@ import ConfirmDialog from '../../components/shared/ConfirmDialog';
  *  - onBookNow:  () => void
  *  - onLogout:   () => void
  *  - onBackPress:() => void
+ *  - onViewBooking: (reservationId) => void — from the notification bell;
+ *                opens My Reservations at that booking
  */
-export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }) {
+export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress, onViewBooking }) {
   const { width } = useWindowDimensions();
   const isWide    = width >= 768;
   const { colors, spacing, radius, fonts, isDark, setDarkMode } = useTheme();
@@ -497,11 +500,18 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress }
         contentContainerStyle={[styles.content, isWide && styles.contentWide]}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Back button ─────────────────────────────────────── */}
-        <TouchableOpacity style={styles.backBtn} onPress={onBackPress} activeOpacity={0.7}>
-          <Ionicons name="arrow-back-outline" size={18} color={colors.primary} />
-          <Text style={styles.backBtnText}>Back to Home</Text>
-        </TouchableOpacity>
+        {/* ── Back button + notifications ─────────────────────── */}
+        <View style={styles.topBar}>
+          <TouchableOpacity style={styles.backBtn} onPress={onBackPress} activeOpacity={0.7}>
+            <Ionicons name="arrow-back-outline" size={18} color={colors.primary} />
+            <Text style={styles.backBtnText}>Back to Home</Text>
+          </TouchableOpacity>
+          <GuestNotificationBell
+            iconColor={colors.primary}
+            badgeBorderColor={colors.background}
+            onViewBooking={onViewBooking}
+          />
+        </View>
 
         {/* ── Profile Header ──────────────────────────────────── */}
         <View style={styles.card}>
@@ -948,7 +958,8 @@ function getStyles(colors, spacing, radius, fonts) {
     content: { padding: spacing.lg, paddingBottom: spacing.xxl },
     contentWide: { paddingHorizontal: spacing.xxl * 2, maxWidth: 800, alignSelf: 'center', width: '100%' },
 
-    backBtn:     { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.md },
+    topBar:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.md },
+    backBtn:     { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
     backBtnText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.primary },
 
     card: { backgroundColor: colors.card, borderRadius: radius.lg, borderWidth: 0.5, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.lg },
