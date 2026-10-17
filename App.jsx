@@ -15,6 +15,7 @@ import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
 import { Inter_700Bold } from '@expo-google-fonts/inter/700Bold';
 import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
 import { supabase } from './src/services/supabase';
+import { fetchAccountRole, screenForRole, LOOKUP_FAILED_MESSAGE } from './src/utils/accountRole';
 
 import HomeScreen           from './src/screens/home/HomeScreen';
 import LoginScreen          from './src/screens/form/LoginScreen';
@@ -190,35 +191,31 @@ export default function App() {
         setScreen('home');
         return;
       }
-      let role = 'guest';
+      let account;
       try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('role, active')
-          .eq('id', sessionUser.id)
-          .single();
-        if (error) throw error;
-        // Removed staff ("Remove" in the admin account screens sets
-        // active = false) must not get back in — not on a fresh login,
-        // and not through a session saved on this device either.
-        if (data?.active === false) {
-          blockedSignOutRef.current = true;
-          setLoginNotice(DEACTIVATED_MESSAGE);
-          setScreen('login');
-          await supabase.auth.signOut();
-          return;
-        }
-        if (data?.role) role = data.role;
+        // Retried a few times (see utils/accountRole.js).
+        account = await fetchAccountRole(sessionUser.id);
       } catch (roleLookupError) {
-        console.warn('Role lookup failed on session restore, defaulting to guest:', roleLookupError);
+        // Never guess "guest" here — that put staff on the guest pages.
+        // Sign out and ask them to log in again instead.
+        console.warn('Role lookup failed — sending back to login:', roleLookupError?.message || roleLookupError);
+        blockedSignOutRef.current = true;
+        setLoginNotice(LOOKUP_FAILED_MESSAGE);
+        setScreen('login');
+        await supabase.auth.signOut();
+        return;
       }
-      const nextScreen =
-        role === 'admin' ? 'admin'
-        : role === 'frontdesk' ? 'frontdesk'
-        : role === 'housekeeping' ? 'housekeeping'
-        : role === 'maintenance' ? 'maintenance'
-        : 'home';
-      setScreen(nextScreen);
+      // Removed staff ("Remove" in the admin account screens sets
+      // active = false) must not get back in — not on a fresh login,
+      // and not through a session saved on this device either.
+      if (!account.active) {
+        blockedSignOutRef.current = true;
+        setLoginNotice(DEACTIVATED_MESSAGE);
+        setScreen('login');
+        await supabase.auth.signOut();
+        return;
+      }
+      setScreen(screenForRole(account.role));
     };
 
     // Checks for an existing session ONCE on startup — this is the actual
@@ -304,13 +301,7 @@ export default function App() {
   // ── Auth handlers ───────────────────────────────────────────────────
   const handleLogin = (supabaseUser, role) => {
     setUser(supabaseUser);
-    const nextScreen =
-      role === 'admin' ? 'admin'
-      : role === 'frontdesk' ? 'frontdesk'
-      : role === 'housekeeping' ? 'housekeeping'
-      : role === 'maintenance' ? 'maintenance'
-      : 'home';
-    setScreen(nextScreen);
+    setScreen(screenForRole(role));
   };
 
   const handleRegister = async () => {

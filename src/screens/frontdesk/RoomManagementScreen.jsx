@@ -1000,8 +1000,11 @@ function EditRoomModal({ room, onClose, roomTypes }) {
 }
 
 function AvailabilitySection({ rooms, updatingRoomNumber, onStatusChange }) {
-  const available = rooms.filter((r) => r.available);
-  const unavailable = rooms.filter((r) => !r.available);
+  // Same order as the Room List (Room 1, Room 2, Room 3, Conference Room,
+  // Accreditation Room, Banquet Hall), shown by name only.
+  const ordered = [...rooms].sort(compareRoomsForList);
+  const available = ordered.filter((r) => r.available);
+  const unavailable = ordered.filter((r) => !r.available);
 
   return (
     <View>
@@ -1027,6 +1030,7 @@ function AvailabilitySection({ rooms, updatingRoomNumber, onStatusChange }) {
             key={room.roomNumber}
             room={room}
             showStatus
+            hideNumber
             isUpdating={updatingRoomNumber === room.roomNumber}
             onStatusChange={(status) => onStatusChange(room, status)}
           />
@@ -1042,6 +1046,7 @@ function AvailabilitySection({ rooms, updatingRoomNumber, onStatusChange }) {
             key={room.roomNumber}
             room={room}
             showStatus
+            hideNumber
             isUpdating={updatingRoomNumber === room.roomNumber}
             onStatusChange={(status) => onStatusChange(room, status)}
           />
@@ -1082,7 +1087,7 @@ const STATUS_BUTTON_LABELS = {
   [ROOM_STATUS.MAINTENANCE]: 'Out of Service',
 };
 const STATUS_SORT_OPTIONS = [
-  { value: 'roomNumber', label: 'Room Number' },
+  { value: 'roomNumber', label: 'Room Order' },
   { value: 'status', label: 'Status' },
   { value: 'floor', label: 'Floor' },
 ];
@@ -1129,7 +1134,7 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
       if (statusFilter !== 'all' && room.status !== statusFilter) return false;
       if (floorFilter !== 'all' && room.floor !== floorFilter) return false;
       if (!q) return true;
-      const haystack = [room.roomNumber, room.roomTypeName].filter(Boolean).join(' ').toLowerCase();
+      const haystack = [room.roomTypeName, room.floor].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(q);
     });
     if (sortBy === 'status') {
@@ -1137,9 +1142,7 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
     } else if (sortBy === 'floor') {
       list = [...list].sort((a, b) => (a.floor || '').localeCompare(b.floor || ''));
     } else {
-      list = [...list].sort((a, b) =>
-        String(a.roomNumber).localeCompare(String(b.roomNumber), undefined, { numeric: true })
-      );
+      list = [...list].sort(compareRoomsForList);
     }
     return list;
   }, [rooms, search, statusFilter, floorFilter, sortBy]);
@@ -1174,13 +1177,13 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
             style={styles.searchInput}
             value={search}
             onChangeText={setSearch}
-            placeholder="Search by room number or room type..."
+            placeholder="Search by room name or floor..."
             placeholderTextColor={colors.textMuted}
           />
         </View>
         <FilterDropdown label="All Statuses" value={statusFilter} options={statusFilterOptions} onChange={setStatusFilter} />
         <FilterDropdown label="All Floors" value={floorFilter} options={floorOptions} onChange={setFloorFilter} />
-        <FilterDropdown label="Room Number" value={sortBy} options={STATUS_SORT_OPTIONS} onChange={setSortBy} />
+        <FilterDropdown label="Room Order" value={sortBy} options={STATUS_SORT_OPTIONS} onChange={setSortBy} />
       </View>
 
       {filteredRooms.length === 0 ? (
@@ -1229,7 +1232,7 @@ function RoomStatusCard({ room, width, isUpdating, onStatusChange }) {
           </View>
         )}
         <View style={styles.statusCardTitleBlock}>
-          <Text style={styles.statusCardTitle} numberOfLines={1}>Room {room.roomNumber} · {room.roomTypeName}</Text>
+          <Text style={styles.statusCardTitle} numberOfLines={1}>{room.roomTypeName}</Text>
           {room.floor ? <Text style={styles.statusCardFloor} numberOfLines={1}>{room.floor}</Text> : null}
         </View>
         <View style={[styles.statusPill, styles.statusCardBadge, { backgroundColor: meta.bg }]}>
@@ -1303,8 +1306,10 @@ function StatusControlButton({ statusKey, active, onPress }) {
 }
 
 function MaintenanceSection({ rooms, updatingRoomNumber, onStatusChange }) {
-  const maintenanceRooms = rooms.filter((r) => r.status === ROOM_STATUS.MAINTENANCE);
-  const otherRooms = rooms.filter((r) => r.status !== ROOM_STATUS.MAINTENANCE);
+  // Same order as the Room List, shown by name only.
+  const ordered = useMemo(() => [...rooms].sort(compareRoomsForList), [rooms]);
+  const maintenanceRooms = ordered.filter((r) => r.status === ROOM_STATUS.MAINTENANCE);
+  const otherRooms = ordered.filter((r) => r.status !== ROOM_STATUS.MAINTENANCE);
 
   const [search, setSearch] = useState('');
   const [floorFilter, setFloorFilter] = useState('all');
@@ -1325,7 +1330,7 @@ function MaintenanceSection({ rooms, updatingRoomNumber, onStatusChange }) {
     return otherRooms.filter((room) => {
       if (floorFilter !== 'all' && room.floor !== floorFilter) return false;
       if (!q) return true;
-      const haystack = [room.roomNumber, room.roomTypeName].filter(Boolean).join(' ').toLowerCase();
+      const haystack = [room.roomTypeName, room.floor].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(q);
     });
   }, [otherRooms, search, floorFilter]);
@@ -1359,7 +1364,7 @@ function MaintenanceSection({ rooms, updatingRoomNumber, onStatusChange }) {
             style={styles.searchInput}
             value={search}
             onChangeText={setSearch}
-            placeholder="Search by room number or room type..."
+            placeholder="Search by room name or floor..."
             placeholderTextColor={colors.textMuted}
           />
         </View>
@@ -1407,7 +1412,7 @@ function MaintenanceCard({ room, isUpdating, onRepair }) {
           <Ionicons name="construct-outline" size={16} color={meta.color} />
         </View>
         <View style={styles.statusCardTitleBlock}>
-          <Text style={styles.statusCardTitle} numberOfLines={1}>Room {room.roomNumber} · {room.roomTypeName}</Text>
+          <Text style={styles.statusCardTitle} numberOfLines={1}>{room.roomTypeName}</Text>
           {room.floor ? <Text style={styles.statusCardFloor} numberOfLines={1}>{room.floor}</Text> : null}
         </View>
         <View style={[styles.statusPill, styles.statusCardBadge, { backgroundColor: meta.bg }]}>
@@ -1463,7 +1468,7 @@ function MaintenanceRoomCard({ room, width, onFlag }) {
           </View>
         )}
         <View style={styles.statusCardTitleBlock}>
-          <Text style={styles.statusCardTitle} numberOfLines={1}>Room {room.roomNumber} · {room.roomTypeName}</Text>
+          <Text style={styles.statusCardTitle} numberOfLines={1}>{room.roomTypeName}</Text>
           {room.floor ? <Text style={styles.statusCardFloor} numberOfLines={1}>{room.floor}</Text> : null}
         </View>
       </View>
@@ -1531,7 +1536,7 @@ function FlagMaintenanceModal({ visible, room, onClose, onConfirm }) {
     <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
       <View style={styles.dialogOverlay}>
         <View style={styles.dialogCard}>
-          <Text style={styles.dialogTitle}>Flag Room {room?.roomNumber} as Out of Service</Text>
+          <Text style={styles.dialogTitle}>Flag {room?.roomTypeName || 'Room'} as Out of Service</Text>
 
           <Text style={styles.dialogFieldLabel}>Reason (optional)</Text>
           <TextInput

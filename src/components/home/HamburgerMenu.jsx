@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, StyleSheet, Image } from 'react-native';
 // RESOLVED: SafeAreaView moved to 'react-native-safe-area-context' — see
 // the same fix's full explanation in LoginScreen.jsx. Still correctly
@@ -22,9 +22,8 @@ const logo = require('../../../assets/logo.png');
  *  - onAboutPress:    () => void  — navigate to AboutScreen
  *  - onContactPress:  () => void  — navigate to ContactUsScreen
  *  - onFindBooking:   () => void  — navigate to BookingLookupScreen
- *  - onOrderFood:     () => void  — navigate to OrderFoodScreen (only shown when authenticated)
  *  - onLogout:        () => void  — sign out (only shown when authenticated)
- *  - isAuthenticated: boolean     — show Profile/Order Food/Sign Out items only when logged in
+ *  - isAuthenticated: boolean     — show Report an Issue/Profile/Sign Out items only when logged in
  */
 export default function HamburgerMenu({
   visible,
@@ -33,7 +32,6 @@ export default function HamburgerMenu({
   onAboutPress,
   onContactPress,
   onFindBooking,
-  onOrderFood,
   onReportIssue,
   onLogout,
   isAuthenticated,
@@ -49,7 +47,7 @@ export default function HamburgerMenu({
         onAboutPress && onAboutPress();
       },
     },
-    { label: 'Promos',     icon: 'pricetag-outline', onPress: onClose },
+    
     {
       label: 'Contact Us',
       icon: 'call-outline',
@@ -68,14 +66,6 @@ export default function HamburgerMenu({
     },
     ...(isAuthenticated
       ? [
-          {
-            label: 'Order Food',
-            icon: 'restaurant-outline',
-            onPress: () => {
-              onClose();
-              onOrderFood && onOrderFood();
-            },
-          },
           {
             label: 'Report an Issue',
             icon: 'build-outline',

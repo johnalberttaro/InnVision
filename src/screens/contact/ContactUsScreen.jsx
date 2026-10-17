@@ -8,32 +8,28 @@ import {
   StyleSheet,
   ActivityIndicator,
   Linking,
+  Platform,
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
 import { useTheme } from '../../context/ThemeContext';
+import Appfooter from '../../components/shared/Appfooter';
+import GuestPageTop, { HeroButton } from '../../components/shared/GuestPageTop';
 
 /**
- * ContactUsScreen — hotel info, inquiry form, map placeholder, social
- * links, and FAQ. Saves inquiries to Supabase's `contact_messages` table.
+ * ContactUsScreen — how to reach the hotel, an inquiry form, FAQ and
+ * directions. Inquiries are saved to Supabase's `contact_messages` table.
  *
- * MIGRATED TO SUPABASE. Per an earlier decision, only a logged-in user
- * can submit an inquiry (matches the contact_messages_insert_own RLS
- * policy, which requires an authenticated session and auth.uid() =
- * user_id) — this screen didn't previously receive a `user` prop, so it
- * now fetches the current user itself via supabase.auth.getUser() (same
- * self-contained pattern as MyReservationsScreen.jsx) rather than
- * requiring an App.jsx change. If nobody's logged in, the form shows a
- * "please log in" message instead of submitting.
+ * REDESIGNED (Oct 2026) to match the Home page: dark top + hero (shared
+ * GuestPageTop) with Email / Directions buttons, contact cards, the form
+ * beside the FAQ on wide screens, then the shared footer (new here).
+ * The phone number was removed (same as the footer); the contact e-mail is
+ * hmdepartment@gmail.com.
  *
- * MIGRATED TO CENTRALIZED THEME (useTheme()). Previously this screen only
- * followed the device's OS-level dark mode via useColorScheme(), with a
- * hand-rolled palette that swapped just a few neutral tokens — it never
- * responded to the app's own in-app dark mode toggle (ThemeContext),
- * unlike every other migrated screen. Now it renders from
- * useTheme().colors like the rest of the app, so it flips correctly
- * with the in-app toggle and stays in sync across devices.
+ * Form behaviour is unchanged: only a signed-in guest can send (matches the
+ * contact_messages_insert_own RLS policy — auth.uid() = user_id); the
+ * screen reads the current user itself via supabase.auth.getUser().
  *
  * Props:
  *  - onBack: () => void
@@ -42,41 +38,47 @@ import { useTheme } from '../../context/ThemeContext';
 const HOTEL_INFO = {
   name: 'InnVision Training Hotel',
   address: 'Consolatrix College of Toledo City, Inc., Toledo City, Cebu, Philippines',
-  phone: '0970 175 6831',
-  email: 'info@innvision.edu.ph',
-  hours: 'Front Desk: Open 24/7  •  Office: Mon–Fri, 8:00 AM – 5:00 PM',
-};
-
-const SOCIAL_LINKS = {
-  facebook:  'https://facebook.com/innvision',
-  instagram: 'https://instagram.com/innvision',
-  email:     `mailto:${HOTEL_INFO.email}`,
+  email: 'hmdepartment@gmail.com',
+  hoursFrontDesk: 'Front desk: open 24 hours',
+  hoursOffice: 'Office: Monday to Friday, 8:00 AM – 5:00 PM',
 };
 
 const FAQS = [
   {
     q: 'Do I need an account to book a room?',
-    a: 'Yes. To book a room in InnVision, guests must create a registered account. This ensures secure payments, proper tracking of reservations, and access to receipts and booking history.',
+    a: 'Yes. Sign in or create an account to book. Your account keeps your reservations, receipts and booking history in one place.',
   },
   {
     q: 'How can I check my reservation status?',
-    a: 'Use the "My Reservations" feature on the home page and search by the phone number you booked with, or your reservation reference.',
+    a: 'Sign in and open My Reservations. Each booking shows its status, and you get notifications when the front desk confirms it.',
   },
   {
     q: 'What payment methods are accepted?',
-    a: 'We currently accept GCash, Maya, Maribank, and GoTyme, alongside pay-at-hotel options.',
+    a: 'Pay at the hotel, or pay online with GCash, Maya, Maribank or GoTyme. Online payments in this system are simulated for demonstration.',
   },
   {
-    q: 'Can I cancel or modify my reservation?',
-    a: 'Yes. Guests with a registered account can log in to the InnVision portal to cancel or modify their reservation directly. If you booked through the front desk or need assistance, please contact our staff using the phone number or email provided.',
+    q: 'Can I cancel or change my reservation?',
+    a: 'Yes. Sign in and open My Reservations to cancel or request a longer stay. For anything else, send us a message or email us.',
   },
 ];
 
+const GOLD = '#C9A14A';
+const GOLD_LIGHT = '#F0D58E';
+const F = {
+  display: 'Inter_800ExtraBold',
+  bold: 'Inter_700Bold',
+  semi: 'Inter_600SemiBold',
+  medium: 'Inter_500Medium',
+  body: 'Inter_400Regular',
+};
+const web = (style) => (Platform.OS === 'web' ? style : null);
+
 export default function ContactUsScreen({ onBack }) {
   const { width } = useWindowDimensions();
-  const isWide = width >= 768;
-  const { colors, spacing, radius, fonts } = useTheme();
-  const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
+  const isWide = width >= 960;
+  const isTablet = width >= 640;
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => getStyles(colors, { isWide, isTablet, isDark }), [colors, isWide, isTablet, isDark]);
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail]       = useState('');
@@ -88,7 +90,7 @@ export default function ContactUsScreen({ onBack }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState(null); // 'success' | 'error' | 'signed-out' | null
 
-  const [openFaq, setOpenFaq] = useState(null);
+  const [openFaq, setOpenFaq] = useState(0);
 
   const [currentUser, setCurrentUser] = useState(null);
   useEffect(() => {
@@ -97,14 +99,14 @@ export default function ContactUsScreen({ onBack }) {
 
   const validate = () => {
     const next = {};
-    if (!fullName.trim()) next.fullName = 'Please enter your full name.';
+    if (!fullName.trim()) next.fullName = 'Enter your full name.';
     if (!email.trim()) {
-      next.email = 'Please enter your email.';
+      next.email = 'Enter your email.';
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      next.email = 'Please enter a valid email address.';
+      next.email = 'Enter a valid email address.';
     }
-    if (!subject.trim()) next.subject = 'Please enter a subject.';
-    if (!message.trim()) next.message = 'Please enter your message.';
+    if (!subject.trim()) next.subject = 'Enter a subject.';
+    if (!message.trim()) next.message = 'Enter your message.';
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -148,316 +150,212 @@ export default function ContactUsScreen({ onBack }) {
 
   const handleGetDirections = () => {
     const destination = encodeURIComponent(HOTEL_INFO.address);
-    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${destination}`);
+    Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${destination}`).catch(() => {});
   };
-
-  const handleCall = () => Linking.openURL(`tel:${HOTEL_INFO.phone.replace(/\s+/g, '')}`);
-  const handleEmail = () => Linking.openURL(`mailto:${HOTEL_INFO.email}`);
+  const handleEmail = () => Linking.openURL(`mailto:${HOTEL_INFO.email}`).catch(() => {});
 
   return (
     <View style={styles.screen}>
-      {/* Header */}
-      <View style={[styles.header, isWide && styles.headerWide]}>
-        <TouchableOpacity onPress={onBack} style={styles.backButton} accessibilityLabel="Go back">
-          <Ionicons name="arrow-back" size={22} color={colors.white} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Contact Us</Text>
-        <View style={styles.headerSpacer} />
-      </View>
+      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <GuestPageTop
+          title="Contact Us"
+          onBack={onBack}
+          headline="Questions about a stay or an event? We're here to help."
+          lead="Reach the Hospitality Management Department about bookings, the Conference Room, the Banquet Hall, or the training hotel itself."
+        >
+          <HeroButton label="Email us" icon="mail-outline" onPress={handleEmail} />
+          <HeroButton label="Get directions" icon="navigate-outline" onPress={handleGetDirections} variant="ghost" />
+        </GuestPageTop>
 
-      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={isWide && styles.wideContainer}>
-          <View style={styles.contentPad}>
+        {/* ── Ways to reach us ───────────────────────────────────── */}
+        <View style={styles.section}>
+          <View style={[styles.inner, styles.infoGrid]}>
+            <InfoCard
+              styles={styles}
+              icon="mail-outline"
+              title="Email"
+              value={HOTEL_INFO.email}
+              hint="We reply on office days."
+              onPress={handleEmail}
+            />
+            <InfoCard
+              styles={styles}
+              icon="location-outline"
+              title="Address"
+              value={HOTEL_INFO.address}
+              hint="Open in Maps"
+              onPress={handleGetDirections}
+            />
+            <InfoCard
+              styles={styles}
+              icon="time-outline"
+              title="Hours"
+              value={HOTEL_INFO.hoursFrontDesk}
+              hint={HOTEL_INFO.hoursOffice}
+            />
+          </View>
+        </View>
 
-            {/* ── Hotel Info (brand block + icon-chip details) ────── */}
-            <View style={styles.card}>
-              <View style={styles.brandBlock}>
-                <View style={styles.logoBadge}>
-                  <Ionicons name="business-outline" size={24} color={colors.onPrimary} />
-                </View>
-                <Text style={styles.brandName}>{HOTEL_INFO.name}</Text>
-                <Text style={styles.brandTagline}>We're here to help, anytime you need us</Text>
-              </View>
-
-              <View style={styles.brandDivider} />
-
-              <View style={[styles.infoGrid, isWide && styles.infoGridWide]}>
-                <View style={[styles.infoChip, isWide && styles.infoChipWide]}>
-                  <View style={styles.infoIconWrap}>
-                    <Ionicons name="location-outline" size={16} color={colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.infoLabel}>Address</Text>
-                    <Text style={styles.infoValue}>{HOTEL_INFO.address}</Text>
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.infoChip, isWide && styles.infoChipWide]}
-                  onPress={handleCall}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.infoIconWrap}>
-                    <Ionicons name="call-outline" size={16} color={colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.infoLabel}>Contact Number</Text>
-                    <Text style={[styles.infoValue, styles.infoLink]}>{HOTEL_INFO.phone}</Text>
-                  </View>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.infoChip, isWide && styles.infoChipWide]}
-                  onPress={handleEmail}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.infoIconWrap}>
-                    <Ionicons name="mail-outline" size={16} color={colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.infoLabel}>Email Address</Text>
-                    <Text style={[styles.infoValue, styles.infoLink]}>{HOTEL_INFO.email}</Text>
-                  </View>
-                </TouchableOpacity>
-
-                <View style={[styles.infoChip, isWide && styles.infoChipWide]}>
-                  <View style={styles.infoIconWrap}>
-                    <Ionicons name="time-outline" size={16} color={colors.primary} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.infoLabel}>Operating Hours</Text>
-                    <Text style={styles.infoValue}>{HOTEL_INFO.hours}</Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-
-            {/* ── Contact Form ───────────────────────────────────── */}
-            <View style={styles.card}>
-              <View style={styles.cardTitleRow}>
-                <Ionicons name="chatbox-ellipses-outline" size={18} color={colors.primary} />
-                <Text style={styles.cardTitle}>Send Us a Message</Text>
-              </View>
+        {/* ── Form + FAQ ─────────────────────────────────────────── */}
+        <View style={[styles.section, styles.sectionTint]}>
+          <View style={[styles.inner, styles.twoCol]}>
+            {/* Form */}
+            <View style={[styles.card, styles.formCard]}>
+              <Text style={styles.cardTitle} accessibilityRole="header">Send us a message</Text>
+              <Text style={styles.cardLead}>Sign in first so we can link your message to your account.</Text>
 
               {submitStatus === 'success' && (
-                <View style={styles.successBanner}>
-                  <Ionicons name="checkmark-circle" size={18} color="#1E7B34" />
-                  <Text style={styles.successBannerText}>
-                    Thanks! Your message has been sent — we'll get back to you soon.
-                  </Text>
-                </View>
+                <Banner styles={styles} tone="success" icon="checkmark-circle"
+                  text="Message sent. We'll get back to you by email." />
               )}
               {submitStatus === 'signed-out' && (
-                <View style={styles.errorBanner}>
-                  <Ionicons name="log-in-outline" size={18} color={colors.danger} />
-                  <Text style={styles.errorBannerText}>
-                    Please log in to your account before sending an inquiry.
-                  </Text>
-                </View>
+                <Banner styles={styles} tone="error" icon="log-in-outline"
+                  text="Sign in to your account, then send your message." />
               )}
               {submitStatus === 'error' && (
-                <View style={styles.errorBanner}>
-                  <Ionicons name="alert-circle" size={18} color={colors.danger} />
-                  <Text style={styles.errorBannerText}>
-                    Something went wrong sending your message. Please try again.
-                  </Text>
-                </View>
+                <Banner styles={styles} tone="error" icon="alert-circle"
+                  text="Your message wasn't sent. Check your connection and try again." />
               )}
 
-              <View style={[styles.formRow, isWide && styles.formRowWide]}>
-                <FormField
-                  wide={isWide}
-                  icon="person-outline"
-                  label="Full Name"
-                  value={fullName}
-                  onChangeText={setFullName}
-                  placeholder="Juan Dela Cruz"
-                  error={errors.fullName}
-                  styles={styles}
-                  palette={colors}
-                />
-                <FormField
-                  wide={isWide}
-                  icon="mail-outline"
-                  label="Email"
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="you@example.com"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  error={errors.email}
-                  styles={styles}
-                  palette={colors}
-                />
+              <View style={styles.formRow}>
+                <FormField styles={styles} colors={colors} half={isTablet}
+                  icon="person-outline" label="Full name" value={fullName} onChangeText={setFullName}
+                  placeholder="Juan Dela Cruz" error={errors.fullName} />
+                <FormField styles={styles} colors={colors} half={isTablet}
+                  icon="mail-outline" label="Email" value={email} onChangeText={setEmail}
+                  placeholder="you@example.com" keyboardType="email-address" autoCapitalize="none" error={errors.email} />
               </View>
-
-              <View style={[styles.formRow, isWide && styles.formRowWide]}>
-                <FormField
-                  wide={isWide}
-                  icon="call-outline"
-                  label="Phone Number (optional)"
-                  value={phone}
-                  onChangeText={setPhone}
-                  placeholder="0970 175 6831"
-                  keyboardType="phone-pad"
-                  styles={styles}
-                  palette={colors}
-                />
-                <FormField
-                  wide={isWide}
-                  icon="pricetag-outline"
-                  label="Subject"
-                  value={subject}
-                  onChangeText={setSubject}
-                  placeholder="What's this about?"
-                  error={errors.subject}
-                  styles={styles}
-                  palette={colors}
-                />
+              <View style={styles.formRow}>
+                <FormField styles={styles} colors={colors} half={isTablet}
+                  icon="call-outline" label="Phone number (optional)" value={phone} onChangeText={setPhone}
+                  placeholder="09XX XXX XXXX" keyboardType="phone-pad" />
+                <FormField styles={styles} colors={colors} half={isTablet}
+                  icon="pricetag-outline" label="Subject" value={subject} onChangeText={setSubject}
+                  placeholder="What's this about?" error={errors.subject} />
               </View>
-
-              <FormField
-                icon="document-text-outline"
-                label="Message"
-                value={message}
-                onChangeText={setMessage}
-                placeholder="Type your message here..."
-                error={errors.message}
-                multiline
-                styles={styles}
-                palette={colors}
-              />
+              <FormField styles={styles} colors={colors}
+                icon="document-text-outline" label="Message" value={message} onChangeText={setMessage}
+                placeholder="Type your message here" error={errors.message} multiline />
 
               <TouchableOpacity
                 style={[styles.sendButton, submitting && styles.sendButtonDisabled]}
                 onPress={handleSend}
                 disabled={submitting}
                 activeOpacity={0.85}
+                accessibilityRole="button"
               >
                 {submitting
-                  ? <ActivityIndicator color={colors.onPrimary} size="small" />
+                  ? <ActivityIndicator color="#231B12" size="small" />
                   : (
                     <>
-                      <Ionicons name="send" size={15} color={colors.onPrimary} />
-                      <Text style={styles.sendButtonText}>Send Inquiry</Text>
+                      <Ionicons name="send" size={15} color="#231B12" />
+                      <Text style={styles.sendButtonText}>Send message</Text>
                     </>
-                  )
-                }
+                  )}
               </TouchableOpacity>
             </View>
 
-            {/* ── Location ───────────────────────────────────────── */}
-            <View style={styles.card}>
-              <View style={styles.cardTitleRow}>
-                <Ionicons name="map-outline" size={18} color={colors.primary} />
-                <Text style={styles.cardTitle}>Find Us</Text>
-              </View>
-              <TouchableOpacity style={styles.mapPlaceholder} onPress={handleGetDirections} activeOpacity={0.85}>
-                <View style={styles.mapPinRing}>
-                  <Ionicons name="location" size={22} color={colors.primary} />
-                </View>
-                <Text style={styles.mapPlaceholderText}>{HOTEL_INFO.address}</Text>
-                <Text style={styles.mapTapHint}>Tap to open in Maps</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.directionsButton} onPress={handleGetDirections} activeOpacity={0.85}>
-                <Ionicons name="navigate-outline" size={16} color={colors.onPrimary} />
-                <Text style={styles.directionsButtonText}>Get Directions</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* ── Social ─────────────────────────────────────────── */}
-            <View style={styles.card}>
-              <View style={styles.cardTitleRow}>
-                <Ionicons name="share-social-outline" size={18} color={colors.primary} />
-                <Text style={styles.cardTitle}>Follow Us</Text>
-              </View>
-              <View style={styles.socialRow}>
-                <SocialButton
-                  icon="logo-facebook"
-                  label="Facebook"
-                  onPress={() => Linking.openURL(SOCIAL_LINKS.facebook)}
-                  styles={styles}
-                  iconColor={colors.primary}
-                />
-                <SocialButton
-                  icon="logo-instagram"
-                  label="Instagram"
-                  onPress={() => Linking.openURL(SOCIAL_LINKS.instagram)}
-                  styles={styles}
-                  iconColor={colors.primary}
-                />
-                <SocialButton
-                  icon="mail-outline"
-                  label="Email"
-                  onPress={() => Linking.openURL(SOCIAL_LINKS.email)}
-                  styles={styles}
-                  iconColor={colors.primary}
-                />
-              </View>
-            </View>
-
-            {/* ── FAQ ────────────────────────────────────────────── */}
-            <View style={styles.card}>
-              <View style={styles.cardTitleRow}>
-                <Ionicons name="help-circle-outline" size={18} color={colors.primary} />
-                <Text style={styles.cardTitle}>Frequently Asked Questions</Text>
-              </View>
-              {FAQS.map((item, i) => {
-                const isOpen = openFaq === i;
-                return (
-                  <TouchableOpacity
-                    key={item.q}
-                    style={[styles.faqRow, i === FAQS.length - 1 && { borderBottomWidth: 0 }]}
-                    onPress={() => setOpenFaq(isOpen ? null : i)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.faqQuestionRow}>
-                      <Text style={styles.faqQuestion}>{item.q}</Text>
-                      <View style={[styles.faqChevronWrap, isOpen && styles.faqChevronWrapOpen]}>
-                        <Ionicons
-                          name={isOpen ? 'remove' : 'add'}
-                          size={16}
-                          color={isOpen ? colors.onPrimary : colors.primary}
-                        />
+            {/* FAQ */}
+            <View style={styles.faqCol}>
+              <Text style={styles.sectionTitle} accessibilityRole="header">Common questions</Text>
+              <View style={styles.faqList}>
+                {FAQS.map((item, i) => {
+                  const isOpen = openFaq === i;
+                  return (
+                    <TouchableOpacity
+                      key={item.q}
+                      style={[styles.faqRow, i === FAQS.length - 1 && styles.faqRowLast]}
+                      onPress={() => setOpenFaq(isOpen ? null : i)}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: isOpen }}
+                    >
+                      <View style={styles.faqQuestionRow}>
+                        <Text style={styles.faqQuestion}>{item.q}</Text>
+                        <View style={[styles.faqToggle, isOpen && styles.faqToggleOpen]}>
+                          <Ionicons name={isOpen ? 'remove' : 'add'} size={16} color={isOpen ? '#231B12' : styles.goldIcon.color} />
+                        </View>
                       </View>
-                    </View>
-                    {isOpen && <Text style={styles.faqAnswer}>{item.a}</Text>}
-                  </TouchableOpacity>
-                );
-              })}
+                      {isOpen && <Text style={styles.faqAnswer}>{item.a}</Text>}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
-
           </View>
         </View>
+
+        {/* ── Find us ────────────────────────────────────────────── */}
+        <View style={styles.section}>
+          <View style={styles.inner}>
+            <TouchableOpacity style={styles.findUs} onPress={handleGetDirections} activeOpacity={0.9} accessibilityRole="button">
+              <View style={styles.findUsPin}>
+                <Ionicons name="location" size={22} color="#231B12" />
+              </View>
+              <View style={{ flex: 1, minWidth: 200 }}>
+                <Text style={styles.findUsTitle}>Find us</Text>
+                <Text style={styles.findUsText}>{HOTEL_INFO.address}</Text>
+              </View>
+              <View style={styles.findUsAction}>
+                <Text style={styles.findUsActionText}>Get directions</Text>
+                <Ionicons name="navigate-outline" size={15} color="#F7F2EA" />
+              </View>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <Appfooter />
       </ScrollView>
     </View>
   );
 }
 
-/* ── Reusable form field ─────────────────────────────────────────────── */
-function FormField({ label, error, multiline, icon, wide, styles, palette, ...inputProps }) {
+function InfoCard({ styles, icon, title, value, hint, onPress }) {
+  const Wrap = onPress ? TouchableOpacity : View;
   return (
-    <View style={[styles.fieldWrap, wide && styles.fieldWrapWide]}>
+    <Wrap style={styles.infoCard} {...(onPress ? { onPress, activeOpacity: 0.85, accessibilityRole: 'button' } : {})}>
+      <View style={styles.infoIcon}>
+        <Ionicons name={icon} size={18} color={styles.goldIcon.color} />
+      </View>
+      <Text style={styles.infoTitle}>{title}</Text>
+      <Text style={styles.infoValue}>{value}</Text>
+      {!!hint && <Text style={[styles.infoHint, onPress && styles.infoHintLink]}>{hint}</Text>}
+    </Wrap>
+  );
+}
+
+function Banner({ styles, tone, icon, text }) {
+  const ok = tone === 'success';
+  return (
+    <View style={[styles.banner, ok ? styles.bannerOk : styles.bannerErr]}>
+      <Ionicons name={icon} size={18} color={ok ? '#1E7B34' : '#B3261E'} />
+      <Text style={[styles.bannerText, { color: ok ? '#1E5B2C' : '#8C1D18' }]}>{text}</Text>
+    </View>
+  );
+}
+
+function FormField({ label, error, multiline, icon, half, styles, colors, ...inputProps }) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={[styles.fieldWrap, half && styles.fieldWrapHalf]}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <View style={[
         styles.fieldInputRow,
         multiline && styles.fieldInputRowMultiline,
-        error && styles.fieldInputRowError,
+        focused && styles.fieldInputRowFocused,
+        !!error && styles.fieldInputRowError,
       ]}>
         {!!icon && (
-          <Ionicons
-            name={icon}
-            size={16}
-            color={palette.textMuted}
-            style={multiline ? styles.fieldIconTop : styles.fieldIcon}
-          />
+          <Ionicons name={icon} size={16} color={colors.textMuted} style={multiline ? styles.fieldIconTop : null} />
         )}
         <TextInput
           style={[styles.fieldInput, multiline && styles.fieldInputMultiline]}
-          placeholderTextColor={palette.textMuted}
+          placeholderTextColor={colors.textMuted}
           multiline={multiline}
-          numberOfLines={multiline ? 4 : 1}
+          numberOfLines={multiline ? 5 : 1}
           textAlignVertical={multiline ? 'top' : 'center'}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           {...inputProps}
         />
       </View>
@@ -466,402 +364,153 @@ function FormField({ label, error, multiline, icon, wide, styles, palette, ...in
   );
 }
 
-/* ── Reusable social button ───────────────────────────────────────────── */
-function SocialButton({ icon, label, onPress, styles, iconColor }) {
-  return (
-    <TouchableOpacity style={styles.socialButton} onPress={onPress} activeOpacity={0.85}>
-      <View style={styles.socialIconRing}>
-        <Ionicons name={icon} size={20} color={iconColor} />
-      </View>
-      <Text style={styles.socialButtonText}>{label}</Text>
-    </TouchableOpacity>
-  );
-}
+function getStyles(colors, { isWide, isTablet, isDark }) {
+  const gutter = isTablet ? 32 : 20;
+  const cardShadow = isDark
+    ? '0 1px 2px rgba(0,0,0,0.4), 0 14px 34px rgba(0,0,0,0.35)'
+    : '0 1px 2px rgba(43,36,28,0.06), 0 14px 34px rgba(43,36,28,0.09)';
+  const hairline = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(43,36,28,0.08)';
+  const goldText = isDark ? GOLD_LIGHT : '#6B4E1E';
 
-/* ── Styles (built from the active theme palette) ────────────────────── */
-function getStyles(colors, spacing, radius, fonts) {
   return StyleSheet.create({
     screen: {
       flex: 1,
       backgroundColor: colors.background,
+      ...web({
+        backgroundImage: isDark
+          ? 'linear-gradient(180deg, #1E1A14 0%, #17130F 100%)'
+          : 'linear-gradient(180deg, #FBF8F3 0%, #F4EDE2 100%)',
+      }),
     },
-    scroll: {
-      flex: 1,
-    },
+    scroll: { flex: 1 },
+    goldIcon: { color: goldText },
 
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      backgroundColor: colors.heroBackground,
-      paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.md,
-    },
-    headerWide: {
-      paddingHorizontal: spacing.xxl * 2,
-    },
-    backButton: {
-      width: 36,
-      height: 36,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: 18,
-      backgroundColor: 'rgba(255,255,255,0.12)',
-    },
-    headerTitle: {
-      fontSize: 16,
-      fontFamily: fonts.headingSemiBold,
-      color: colors.white,
-      letterSpacing: 0.3,
-    },
-    headerSpacer: {
-      width: 36,
-    },
-
-    wideContainer: {
-      maxWidth: 800,
-      alignSelf: 'center',
-      width: '100%',
-    },
-    contentPad: {
-      paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.lg,
-    },
-
-    card: {
-      backgroundColor: colors.card,
-      borderRadius: radius.lg,
-      borderWidth: 1,
-      borderColor: colors.border,
-      padding: spacing.lg,
-      marginBottom: spacing.lg,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.06,
-      shadowRadius: 10,
-      elevation: 2,
-    },
-    cardTitleRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.xs,
-      marginBottom: spacing.md,
-    },
-    cardTitle: {
-      fontSize: 16,
-      fontFamily: fonts.headingExtraBold,
-      color: colors.aboutAccent,
-    },
-
-    /* Brand block */
-    brandBlock: {
-      alignItems: 'center',
-      paddingBottom: spacing.md,
-    },
-    logoBadge: {
-      width: 52,
-      height: 52,
-      borderRadius: radius.lg,
-      backgroundColor: colors.primary,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: spacing.sm,
-    },
-    brandName: {
-      fontSize: 18,
-      fontFamily: fonts.headingExtraBold,
-      color: colors.text,
-      textAlign: 'center',
-      marginBottom: spacing.xs,
-    },
-    brandTagline: {
-      fontSize: 12,
-      fontFamily: fonts.bodyMedium,
-      color: colors.textMuted,
-      textAlign: 'center',
-    },
-    brandDivider: {
-      height: 1,
-      backgroundColor: colors.border,
-      marginBottom: spacing.lg,
-    },
-
-    /* Hotel info chips */
-    infoGrid: {
-      gap: spacing.md,
-    },
-    infoGridWide: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-    },
-    infoChip: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
+    section: { paddingHorizontal: gutter, paddingVertical: isWide ? 72 : 48 },
+    sectionTint: {
       backgroundColor: colors.cardAlt,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      padding: spacing.md,
-      gap: spacing.sm,
+      ...web({
+        backgroundImage: isDark
+          ? 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.05) 100%)'
+          : 'linear-gradient(180deg, #F3EBDD 0%, #EFE5D4 100%)',
+      }),
     },
-    infoChipWide: {
-      width: '48%',
-    },
-    infoIconWrap: {
-      width: 30,
-      height: 30,
-      borderRadius: 15,
-      backgroundColor: colors.primaryTint,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginTop: 1,
-    },
-    infoLabel: {
-      fontSize: 10,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.textMuted,
-      letterSpacing: 0.4,
-      marginBottom: 2,
-      textTransform: 'uppercase',
-    },
-    infoValue: {
-      fontSize: 13,
-      fontFamily: fonts.body,
-      color: colors.text,
-      lineHeight: 18,
-    },
-    infoLink: {
-      color: colors.primary,
-      fontFamily: fonts.bodySemiBold,
+    inner: { width: '100%', maxWidth: 1160, alignSelf: 'center' },
+    sectionTitle: {
+      fontFamily: F.display, fontSize: isTablet ? 30 : 26, lineHeight: isTablet ? 34 : 30,
+      letterSpacing: isTablet ? -1 : -0.8, color: colors.text,
     },
 
-    /* Form */
-    formRow: {
-      gap: 0,
+    /* Info cards */
+    infoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
+    infoCard: {
+      width: isWide ? '31%' : isTablet ? '46%' : '100%', flexGrow: 1,
+      backgroundColor: colors.card, borderRadius: 20, padding: 22,
+      borderWidth: 1, borderColor: hairline,
+      ...web({ boxShadow: cardShadow }),
     },
-    formRowWide: {
-      flexDirection: 'row',
-      gap: spacing.md,
+    infoIcon: {
+      width: 42, height: 42, borderRadius: 13, alignItems: 'center', justifyContent: 'center',
+      backgroundColor: isDark ? 'rgba(240,213,142,0.16)' : '#E9D6A6',
+      ...web({
+        backgroundImage: isDark
+          ? 'linear-gradient(180deg, rgba(240,213,142,0.22) 0%, rgba(201,161,74,0.14) 100%)'
+          : 'linear-gradient(180deg, #F6E7BF 0%, #E9D19A 100%)',
+      }),
+      marginBottom: 16,
     },
-    fieldWrap: {
-      marginBottom: spacing.md,
+    infoTitle: { fontFamily: F.semi, fontSize: 13, color: colors.textMuted },
+    infoValue: { marginTop: 4, fontFamily: F.bold, fontSize: 16, lineHeight: 23, letterSpacing: -0.3, color: colors.text },
+    infoHint: { marginTop: 6, fontFamily: F.body, fontSize: 13, lineHeight: 19, color: colors.textMuted },
+    infoHintLink: { color: goldText, fontFamily: F.semi },
+
+    /* Form + FAQ */
+    twoCol: { flexDirection: isWide ? 'row' : 'column', gap: isWide ? 48 : 40, alignItems: 'flex-start' },
+    card: {
+      backgroundColor: colors.card, borderRadius: 22,
+      borderWidth: 1, borderColor: hairline,
+      ...web({ boxShadow: cardShadow }),
     },
-    fieldWrapWide: {
-      flex: 1,
-    },
-    fieldLabel: {
-      fontSize: 12,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.textMuted,
-      marginBottom: spacing.xs,
-    },
+    formCard: { flex: isWide ? 1.25 : undefined, width: isWide ? undefined : '100%', padding: isTablet ? 28 : 20 },
+    cardTitle: { fontFamily: F.display, fontSize: isTablet ? 24 : 22, letterSpacing: -0.7, color: colors.text },
+    cardLead: { marginTop: 4, marginBottom: 18, fontFamily: F.body, fontSize: 14, lineHeight: 21, color: colors.textMuted },
+
+    banner: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, padding: 12, marginBottom: 16 },
+    bannerOk: { backgroundColor: '#DFF5E1' },
+    bannerErr: { backgroundColor: '#FCE1E1' },
+    bannerText: { flex: 1, fontFamily: F.medium, fontSize: 13, lineHeight: 19 },
+
+    formRow: { flexDirection: isTablet ? 'row' : 'column', gap: isTablet ? 14 : 0 },
+    fieldWrap: { marginBottom: 14 },
+    fieldWrapHalf: { flex: 1 },
+    fieldLabel: { fontFamily: F.semi, fontSize: 13, color: colors.text, marginBottom: 6 },
     fieldInputRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: radius.md,
-      backgroundColor: colors.card,
-      paddingHorizontal: spacing.md,
+      flexDirection: 'row', alignItems: 'center', gap: 10,
+      borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(43,36,28,0.14)', borderRadius: 12,
+      paddingHorizontal: 14, minHeight: 48,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#FFFDF9',
     },
-    fieldInputRowMultiline: {
-      alignItems: 'flex-start',
-      paddingVertical: spacing.sm,
-    },
-    fieldInputRowError: {
-      borderColor: colors.danger,
-    },
-    fieldIcon: {
-      marginRight: spacing.sm,
-    },
-    fieldIconTop: {
-      marginRight: spacing.sm,
-      marginTop: spacing.sm + 2,
-    },
+    fieldInputRowMultiline: { alignItems: 'flex-start', paddingVertical: 12, minHeight: 130 },
+    fieldInputRowFocused: { borderColor: GOLD, ...web({ boxShadow: '0 0 0 3px rgba(201,161,74,0.20)' }) },
+    fieldInputRowError: { borderColor: '#B3261E' },
+    fieldIconTop: { marginTop: 2 },
     fieldInput: {
-      flex: 1,
-      paddingVertical: spacing.sm + 2,
-      fontSize: 13,
-      fontFamily: fonts.body,
-      color: colors.text,
+      flex: 1, fontFamily: F.body, fontSize: 15, color: colors.text, paddingVertical: 12,
+      ...web({ outlineStyle: 'none' }),
     },
-    fieldInputMultiline: {
-      minHeight: 90,
-      paddingTop: spacing.xs,
-    },
-    fieldError: {
-      fontSize: 11,
-      fontFamily: fonts.body,
-      color: colors.danger,
-      marginTop: spacing.xs,
-    },
-
-    successBanner: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      backgroundColor: '#e8f5e9',
-      borderRadius: radius.md,
-      padding: spacing.md,
-      marginBottom: spacing.md,
-    },
-    successBannerText: {
-      flex: 1,
-      fontSize: 12,
-      fontFamily: fonts.bodyMedium,
-      color: '#1E7B34',
-      lineHeight: 17,
-    },
-    errorBanner: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      backgroundColor: colors.dangerBg,
-      borderRadius: radius.md,
-      padding: spacing.md,
-      marginBottom: spacing.md,
-    },
-    errorBannerText: {
-      flex: 1,
-      fontSize: 12,
-      fontFamily: fonts.bodyMedium,
-      color: colors.danger,
-      lineHeight: 17,
-    },
+    fieldInputMultiline: { minHeight: 104, paddingVertical: 0 },
+    fieldError: { marginTop: 5, fontFamily: F.medium, fontSize: 12, color: '#B3261E' },
 
     sendButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.sm,
-      backgroundColor: colors.primary,
-      borderRadius: radius.md,
-      paddingVertical: spacing.sm + 4,
-      marginTop: spacing.xs,
+      marginTop: 6,
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+      backgroundColor: '#DDBB6C',
+      ...web({
+        backgroundImage: `linear-gradient(180deg, ${GOLD_LIGHT} 0%, ${GOLD} 100%)`,
+        boxShadow: '0 1px 0 rgba(255,255,255,0.45) inset, 0 10px 26px rgba(201,161,74,0.30)',
+      }),
+      borderRadius: 12, paddingVertical: 15,
     },
-    sendButtonDisabled: {
-      opacity: 0.7,
-    },
-    sendButtonText: {
-      color: colors.onPrimary,
-      fontFamily: fonts.headingSemiBold,
-      fontSize: 14,
-      letterSpacing: 0.3,
-    },
+    sendButtonDisabled: { opacity: 0.6 },
+    sendButtonText: { fontFamily: F.semi, fontSize: 15, color: '#231B12', letterSpacing: -0.1 },
 
-    /* Map */
-    mapPlaceholder: {
-      minHeight: 150,
-      borderRadius: radius.md,
-      borderWidth: 1.5,
-      borderColor: colors.border,
-      borderStyle: 'dashed',
-      backgroundColor: colors.cardAlt,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.xs,
-      paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.lg,
-      marginBottom: spacing.md,
+    faqCol: { flex: isWide ? 1 : undefined, width: isWide ? undefined : '100%' },
+    faqList: { marginTop: 18 },
+    faqRow: { paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(43,36,28,0.12)' },
+    faqRowLast: { borderBottomWidth: 0 },
+    faqQuestionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
+    faqQuestion: { flex: 1, fontFamily: F.bold, fontSize: 16, lineHeight: 22, letterSpacing: -0.3, color: colors.text },
+    faqToggle: {
+      width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center',
+      borderWidth: 1, borderColor: isDark ? 'rgba(240,213,142,0.35)' : 'rgba(107,78,30,0.30)',
     },
-    mapPinRing: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      backgroundColor: colors.primaryTint,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: spacing.xs,
+    faqToggleOpen: {
+      borderColor: 'transparent', backgroundColor: '#DDBB6C',
+      ...web({ backgroundImage: `linear-gradient(180deg, ${GOLD_LIGHT} 0%, ${GOLD} 100%)` }),
     },
-    mapPlaceholderText: {
-      fontSize: 12,
-      fontFamily: fonts.bodyMedium,
-      color: colors.text,
-      textAlign: 'center',
-    },
-    mapTapHint: {
-      fontSize: 11,
-      fontFamily: fonts.body,
-      color: colors.primary,
-      marginTop: 2,
-    },
-    directionsButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: spacing.xs,
-      backgroundColor: colors.primary,
-      borderRadius: radius.md,
-      paddingVertical: spacing.sm + 2,
-    },
-    directionsButtonText: {
-      color: colors.onPrimary,
-      fontFamily: fonts.headingSemiBold,
-      fontSize: 13,
-    },
+    faqAnswer: { marginTop: 10, fontFamily: F.body, fontSize: 14, lineHeight: 22, color: colors.textMuted, paddingRight: 40 },
 
-    /* Social */
-    socialRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-around',
+    /* Find us */
+    findUs: {
+      flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 18,
+      padding: isTablet ? 28 : 20, borderRadius: 22,
+      backgroundColor: '#221B15',
+      ...web({
+        backgroundImage: 'radial-gradient(ellipse at 100% 0%, rgba(231,203,130,0.20) 0%, rgba(231,203,130,0) 55%), linear-gradient(135deg, #1B1511 0%, #3A2B1D 100%)',
+        boxShadow: '0 20px 50px rgba(23,18,14,0.25)',
+      }),
     },
-    socialButton: {
-      alignItems: 'center',
-      gap: spacing.xs,
+    findUsPin: {
+      width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+      backgroundColor: '#DDBB6C',
+      ...web({ backgroundImage: `linear-gradient(180deg, ${GOLD_LIGHT} 0%, ${GOLD} 100%)` }),
     },
-    socialIconRing: {
-      width: 52,
-      height: 52,
-      borderRadius: 26,
-      backgroundColor: colors.primaryTint,
-      borderWidth: 1,
-      borderColor: colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
+    findUsTitle: { fontFamily: F.display, fontSize: 20, letterSpacing: -0.6, color: '#F7F2EA' },
+    findUsText: { marginTop: 3, fontFamily: F.body, fontSize: 14, lineHeight: 21, color: 'rgba(247,242,234,0.72)' },
+    findUsAction: {
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      paddingVertical: 11, paddingHorizontal: 16, borderRadius: 12,
+      borderWidth: 1, borderColor: 'rgba(247,242,234,0.22)', backgroundColor: 'rgba(247,242,234,0.06)',
     },
-    socialButtonText: {
-      fontSize: 11,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.text,
-    },
-
-    /* FAQ */
-    faqRow: {
-      paddingVertical: spacing.md,
-      borderBottomWidth: 0.5,
-      borderBottomColor: colors.border,
-    },
-    faqQuestionRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: spacing.sm,
-    },
-    faqQuestion: {
-      flex: 1,
-      fontSize: 13,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.text,
-    },
-    faqChevronWrap: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: colors.primary,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    faqChevronWrapOpen: {
-      backgroundColor: colors.primary,
-    },
-    faqAnswer: {
-      fontSize: 12,
-      fontFamily: fonts.body,
-      color: colors.textMuted,
-      lineHeight: 18,
-      marginTop: spacing.sm,
-      paddingRight: spacing.xl,
-    },
+    findUsActionText: { fontFamily: F.semi, fontSize: 14, color: '#F7F2EA' },
   });
 }

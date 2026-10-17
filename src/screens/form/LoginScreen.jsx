@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
+import { fetchAccountRole, LOOKUP_FAILED_MESSAGE } from '../../utils/accountRole';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 
 // Kept in sync with App.jsx's DEACTIVATED_MESSAGE.
@@ -79,31 +80,26 @@ export default function LoginScreen({ onLogin, onForgotPress, onRegisterPress, o
       // trigger — no more resolveUserRole() guessing across differently-
       // shaped legacy fields (role / isAdmin / accessLevel / etc.) the way
       // the old Firestore "guests" docs needed.
-      let role = 'guest';
+      // App.jsx's auth listener sees the same SIGNED_IN and does any
+      // sign-out (deactivated account / role couldn't be read), keeping
+      // this screen showing — only one place signs out, so the two can't race.
+      let account;
       try {
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('role, active')
-          .eq('id', user.id)
-          .single();
-        if (profileError) throw profileError;
-        // Deactivated staff ("Remove" in the admin account screens):
-        // don't let them in, and say why. App.jsx's auth listener sees
-        // the same SIGNED_IN, does the actual sign-out, and keeps this
-        // screen showing — only one place signs out, so the two can't race.
-        if (profile?.active === false) {
-          setError(DEACTIVATED_MESSAGE);
-          return;
-        }
-        if (profile?.role) role = profile.role;
+        account = await fetchAccountRole(user.id); // retried a few times
       } catch (roleLookupError) {
-        // If the role lookup itself fails (e.g. offline), fail safe to
-        // 'guest' rather than blocking login entirely or risking a
-        // false admin grant.
-        console.warn('Role lookup failed, defaulting to guest:', roleLookupError);
+        // Never guess "guest" — that sent staff to the guest pages.
+        console.warn('Role lookup failed:', roleLookupError?.message || roleLookupError);
+        setError(LOOKUP_FAILED_MESSAGE);
+        return;
+      }
+      // Deactivated staff ("Remove" in the admin account screens):
+      // don't let them in, and say why.
+      if (!account.active) {
+        setError(DEACTIVATED_MESSAGE);
+        return;
       }
 
-      onLogin && onLogin(user, role);
+      onLogin && onLogin(user, account.role);
     } catch (e) {
       // Supabase Auth errors don't carry Firebase-style `auth/xxx` codes —
       // match on message content instead. `status` is also available if

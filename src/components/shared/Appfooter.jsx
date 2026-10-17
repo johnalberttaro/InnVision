@@ -1,11 +1,12 @@
 import React from 'react';
 import { View, Text, Image, StyleSheet, Linking, TouchableOpacity, useWindowDimensions } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/theme';
 
 // Logo fills the slot completely (see paymentSlot below, same dimensions,
 // zero padding) — resizeMode="cover" scales each logo up to fill the box
 // and crops any overflow, rather than shrinking to fit inside it.
-const LOGO_SIZE = { width: 76, height: 40 };
+const LOGO_SIZE = { width: 68, height: 36 };
 
 // Payment method logos — real image files from assets/payments/.
 const PAYMENT_METHODS = [
@@ -31,44 +32,73 @@ const PAYMENT_METHODS = [
   },
 ];
 
+const DEFAULT_EMAIL = 'hmdepartment@gmail.com';
+
 /**
- * AppFooter — shared bottom block: contact info + payment method logos.
+ * AppFooter — shared bottom block on the guest pages: who runs the hotel,
+ * the contact e-mail, and the accepted (simulated) e-wallets.
  * Render at the bottom of a screen's ScrollView content (not fixed/floating).
  *
- * On wide screens (>=768px), the footer's content column matches the same
- * 800px max-width used by the rest of the page content, so it lines up
- * with sections above it instead of spanning full browser width.
+ * Wide screens (>=768px): two columns (about + contact | payments) inside
+ * the same 800px content width as the rest of the page. Phones: stacked.
  *
  * Props:
- *  - phone?: string  (default '0970 175 6831')
+ *  - email?: string  (default 'hmdepartment@gmail.com')
  */
-export default function AppFooter({ phone = '0970 175 6831' }) {
+export default function AppFooter({ email = DEFAULT_EMAIL }) {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
 
-  const handleCall = () => {
-    Linking.openURL(`tel:${phone.replace(/\s+/g, '')}`);
+  const handleEmail = () => {
+    Linking.openURL(`mailto:${email}`).catch(() => {});
   };
 
   return (
     <View style={styles.outer}>
       <View style={[styles.wrap, isWide && styles.wrapWide]}>
-        <Text style={styles.name}>InnVision</Text>
+        <View style={[styles.columns, isWide && styles.columnsWide]}>
+          {/* About + contact */}
+          <View style={[styles.col, isWide && styles.colWideLeft]}>
+            <Text style={styles.name}>InnVision</Text>
+            <Text style={[styles.tagline, isWide && styles.textLeft]}>
+              Training hotel of the Hospitality Management Department,{'\n'}
+              Consolatrix College of Toledo City, Inc.
+            </Text>
 
-        <TouchableOpacity onPress={handleCall} activeOpacity={0.7}>
-          <Text style={styles.contact}>📞 {phone}</Text>
-        </TouchableOpacity>
+            <Text style={[styles.sectionLabel, isWide && styles.textLeft]}>CONTACT US</Text>
+            <TouchableOpacity
+              style={styles.emailBtn}
+              onPress={handleEmail}
+              activeOpacity={0.75}
+              accessibilityRole="link"
+              accessibilityLabel={`Email ${email}`}
+            >
+              <Ionicons name="mail-outline" size={15} color={colors.white} />
+              <Text style={styles.emailText}>{email}</Text>
+            </TouchableOpacity>
+          </View>
 
-        <Text style={styles.sectionLabel}>WE ACCEPT</Text>
-        <View style={styles.paymentRow}>
-          {PAYMENT_METHODS.map((pm) => (
-            <View key={pm.key} style={styles.paymentSlot}>
-              {pm.icon}
+          {/* Payments */}
+          <View style={[styles.col, isWide && styles.colWideRight]}>
+            <Text style={[styles.sectionLabel, isWide && styles.textRight]}>WE ACCEPT</Text>
+            <View style={[styles.paymentRow, isWide && styles.paymentRowWide]}>
+              {PAYMENT_METHODS.map((pm) => (
+                <View key={pm.key} style={styles.paymentSlot} accessibilityLabel={pm.label}>
+                  {pm.icon}
+                </View>
+              ))}
             </View>
-          ))}
+            <Text style={[styles.paymentNote, isWide && styles.textRight]}>
+              Online e-wallet payments are simulated for demonstration.
+            </Text>
+          </View>
         </View>
 
-        <Text style={styles.copyright}>© {new Date().getFullYear()} InnVision. All rights reserved.</Text>
+        <View style={styles.divider} />
+
+        <Text style={styles.copyright}>
+          © {new Date().getFullYear()} InnVision Training Hotel · Consolatrix College of Toledo City, Inc.
+        </Text>
       </View>
     </View>
   );
@@ -83,50 +113,95 @@ const styles = StyleSheet.create({
   // Inner content column — capped to match the rest of the page on wide screens
   wrap: {
     width: '100%',
-    paddingVertical: spacing.xl,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.lg,
     paddingHorizontal: spacing.lg,
-    alignItems: 'center',
   },
   wrapWide: {
     maxWidth: 800,
   },
+
+  columns: { alignItems: 'center', gap: spacing.lg },
+  columnsWide: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  col: { alignItems: 'center', width: '100%' },
+  colWideLeft: { alignItems: 'flex-start', width: 'auto', flex: 1, paddingRight: spacing.lg },
+  colWideRight: { alignItems: 'flex-end', width: 'auto' },
+  textLeft: { textAlign: 'left' },
+  textRight: { textAlign: 'right' },
+
   name: {
-    fontSize: 16,
-    fontFamily: fonts.headingBold,
+    fontSize: 18,
+    fontFamily: 'Inter_800ExtraBold',
+    letterSpacing: -0.4,
     color: colors.white,
-    marginBottom: spacing.xs,
+    marginBottom: 4,
   },
-  contact: {
-    fontSize: 13,
-    fontFamily: fonts.bodyMedium,
-    color: colors.white,
-    marginBottom: spacing.lg,
+  tagline: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: fonts.body,
+    color: 'rgba(255,255,255,0.75)',
+    textAlign: 'center',
+    marginBottom: spacing.md,
   },
   sectionLabel: {
     fontSize: 10,
     fontFamily: fonts.bodySemiBold,
-    letterSpacing: 0.6,
-    color: 'rgba(255,255,255,0.65)',
+    letterSpacing: 0.8,
+    color: 'rgba(255,255,255,0.6)',
     marginBottom: spacing.sm,
+    textAlign: 'center',
   },
+  emailBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  emailText: {
+    fontSize: 13,
+    fontFamily: fonts.bodySemiBold,
+    color: colors.white,
+  },
+
   paymentRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
     alignItems: 'center',
     gap: spacing.sm,
-    marginBottom: spacing.lg,
   },
+  paymentRowWide: { justifyContent: 'flex-end', maxWidth: 4 * 68 + 3 * 8 + 8 },
   paymentSlot: {
-    width: 76,
-    height: 40,
+    width: 68,
+    height: 36,
     borderRadius: radius.sm,
     backgroundColor: 'rgba(255,255,255,0.95)',
     overflow: 'hidden',
+  },
+  paymentNote: {
+    fontSize: 10,
+    fontFamily: fonts.body,
+    color: 'rgba(255,255,255,0.55)',
+    marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+
+  divider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    marginTop: spacing.lg,
+    marginBottom: spacing.md,
   },
   copyright: {
     fontSize: 10,
     fontFamily: fonts.body,
     color: 'rgba(255,255,255,0.55)',
+    textAlign: 'center',
   },
 });

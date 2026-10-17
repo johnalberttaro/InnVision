@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo } from 'react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,71 +6,77 @@ import {
   TouchableOpacity,
   StyleSheet,
   Image,
+  Animated,
+  AccessibilityInfo,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import ImageCarousel from '../../components/home/ImageCarousel';
 import HamburgerMenu from '../../components/home/HamburgerMenu';
 import HomeHeader from '../../components/shared/HomeHeader';
 import Appfooter from '../../components/shared/Appfooter';
 import FeedbackWidget from '../../components/shared/FeedbackWidget';
 import { useTheme } from '../../context/ThemeContext';
-
-// Two genuinely different photos, not two crops of the same one — web
-// keeps the original building photo, mobile uses a separate photo
-// better suited to a narrow portrait screen. Platform.OS (not a width
-// breakpoint) is the right check here since these are two different
-// source images tied to the platform itself, not just two sizes of one.
-const homeBackground = Platform.OS === 'web'
-  ? require('../../../assets/background.jpg')
-  : require('../../../assets/mobilebackground.jpg');
+import { subscribeToRoomTypes, compareRoomsForList, formatCurrency } from '../../utils/Roomsservice';
 
 /**
- * HomeScreen — Landing page.
+ * HomeScreen — guest landing page.
  *
- * MIGRATED TO CENTRALIZED THEME (useTheme()). Two things fixed during
- * migration, not just a mechanical swap:
- *  - `screen`'s background was `colors.white` (a token that's
- *    intentionally literal white in BOTH palettes) — that would have left
- *    this screen stuck white even in dark mode. Changed to
- *    `colors.background`, the token designed to flip.
- *  - `signInPromptText` / `bottomCtaText` used `colors.white` for text
- *    drawn on top of a primary/step-colored button. Since those button
- *    backgrounds flip to a light color in dark mode, the text sitting on
- *    them needs to flip to dark too — changed to the `onPrimary` token,
- *    which exists exactly for this case.
+ * REDESIGNED (Oct 2026). The old page was a stock-photo carousel
+ * ("Luxury Suites", "Student Discounts") on top of a blurred background
+ * photo. Now:
+ *   1. Announcement bar — events (Conference Room / Banquet Hall) can be
+ *      booked online.
+ *   2. Dark hero — one big headline, one sentence, two actions, three
+ *      quick facts; beside it a mosaic of the hotel's REAL photos, read
+ *      from the room types the admin manages (Room Types → images).
+ *   3. "Spaces you can book" — every room type, in the same order as the
+ *      Room List (Room 1, 2, 3, Conference Room, Accreditation Room,
+ *      Banquet Hall), with live "from" prices.
+ *   4. How booking works (a real 3-step sequence) and Good to know
+ *      (check-in/out, refund window, house rules).
  *
- * NEW: full-screen blurred background photo (assets/background.jpg —
- * pre-blurred at build time via PIL, not a runtime CSS/BlurView filter,
- * so it renders identically on web, iOS, and Android with zero extra
- * cost). Implemented as an absolutely-positioned <Image> filling the
- * outer container exactly (explicit position:'absolute' + top/left/
- * right/bottom:0 — NOT StyleSheet.absoluteFillObject, which RN 0.85+
- * removed entirely, see the comment on styles.backgroundLayer below —
- * plus resizeMode="cover"), rather than <ImageBackground> — ImageBackground's
- * flex-based sizing is inconsistent between React Native Web and native
- * (tall narrow mobile viewports vs. wide desktop ones), where an
- * explicit absolute-fill sizes identically on both. A semi-transparent
- * scrim in colors.background sits between the photo and all content, at
- * the same opacity in both themes, so every existing section keeps
- * exactly the legibility it had before — the photo just reads as a
- * subtle textured backdrop rather than a full takeover.
+ * The hero is always dark (in light and dark mode); everything below it
+ * follows the theme. One accent colour only (BRASS, from the logo's gold).
  *
- * Props:
- *  - onBookNow:       () => void
- *  - onSignIn:        () => void
- *  - onLogout:        () => void  — forwarded to the hamburger menu's Sign Out item
- *  - onProfilePress:  () => void
- *  - onAboutPress:    () => void
- *  - onContactPress:  () => void
- *  - onFindBooking:   () => void
- *  - onOrderFood:     () => void  — forwarded to both the wide-screen
- *                                   navbar (authenticated only) and the
- *                                   hamburger menu's Order Food item
- *  - onReportIssue:   () => void  — same forwarding pattern as onOrderFood,
- *                                   for the Report an Issue item
+ * Props (unchanged):
+ *  - onBookNow, onSignIn, onLogout, onProfilePress, onAboutPress,
+ *    onContactPress, onFindBooking, onReportIssue: () => void
  *  - isAuthenticated: boolean
  */
+
+const BRASS = '#C9A14A';
+const GOLD_LIGHT = '#F0D58E';
+const HERO_BG = '#221B15';       // solid fallback (native) for the hero gradient
+const HERO_TEXT = '#F7F2EA';
+const HERO_MUTED = 'rgba(247,242,234,0.70)';
+
+// Clean sans throughout the home page: Inter (already loaded by App.jsx —
+// the portal theme registers these two heavier weights).
+const F = {
+  display: 'Inter_800ExtraBold',
+  bold: 'Inter_700Bold',
+  semi: 'Inter_600SemiBold',
+  medium: 'Inter_500Medium',
+  body: 'Inter_400Regular',
+};
+
+// Gradients / soft shadows / glass are CSS on web; native gets the solid
+// fallback colour set next to each one.
+const web = (style) => (Platform.OS === 'web' ? style : null);
+const WIDE = 960;
+// Photo of the HM building (Consolatrix Suites) used as the hero backdrop.
+const HERO_PHOTO = require('../../../assets/hm-building.jpg');                // side-by-side hero from here up
+const TABLET = 640;
+
+function imageSource(img) {
+  if (!img) return null;
+  if (typeof img === 'string') return { uri: img };
+  if (img.source) return img.source;
+  if (img.uri) return { uri: img.uri };
+  return null;
+}
+
 export default function HomeScreen({
   onBookNow,
   onSignIn,
@@ -79,127 +85,223 @@ export default function HomeScreen({
   onAboutPress,
   onContactPress,
   onFindBooking,
-  onOrderFood,
   onReportIssue,
   isAuthenticated,
 }) {
   const [menuVisible, setMenuVisible] = useState(false);
-  const { colors, spacing, fonts } = useTheme();
-  const styles = useMemo(() => getStyles(colors, spacing, fonts), [colors, spacing, fonts]);
+  const { colors, spacing, fonts, isDark } = useTheme();
+  const { width } = useWindowDimensions();
+  const isWide = width >= WIDE;
+  const isTablet = width >= TABLET;
+  const styles = useMemo(
+    () => getStyles(colors, spacing, fonts, { isWide, isTablet, isDark }),
+    [colors, spacing, fonts, isWide, isTablet, isDark]
+  );
+
+  // Room types (names, photos, prices) — same source as the booking screens.
+  const [roomTypes, setRoomTypes] = useState([]);
+  useEffect(() => {
+    const unsub = subscribeToRoomTypes(setRoomTypes, () => {});
+    return () => unsub && unsub();
+  }, []);
+
+  const spaces = useMemo(
+    () => roomTypes
+      .filter((rt) => rt.isBookable !== false)
+      .map((rt) => ({ ...rt, roomTypeName: rt.name, roomNumber: '' }))
+      .sort(compareRoomsForList),
+    [roomTypes]
+  );
+
+  // Hero mosaic: the Banquet Hall (or the first type with a photo) large,
+  // two more spaces small.
+  const mosaic = useMemo(() => {
+    const withPhoto = spaces.filter((s) => imageSource((s.images || [])[0]));
+    if (withPhoto.length === 0) return [];
+    const lead = withPhoto.find((s) => /banquet/i.test(s.name)) || withPhoto[0];
+    const rest = withPhoto.filter((s) => s !== lead).slice(0, 2);
+    return [lead, ...rest];
+  }, [spaces]);
+
+  // One entrance moment: the hero copy fades/slides in once (skipped when
+  // the device asks for reduced motion).
+  const heroAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    let cancelled = false;
+    AccessibilityInfo.isReduceMotionEnabled?.()
+      .then((reduce) => {
+        if (cancelled) return;
+        if (reduce) heroAnim.setValue(1);
+        else Animated.timing(heroAnim, { toValue: 1, duration: 520, useNativeDriver: true }).start();
+      })
+      .catch(() => heroAnim.setValue(1));
+    return () => { cancelled = true; };
+  }, [heroAnim]);
+  const heroAnimStyle = {
+    opacity: heroAnim,
+    transform: [{ translateY: heroAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
+  };
+
+  // Signed-out guests go to the login screen first (booking needs an
+  // account); signed-in guests go straight to the booking flow.
+  const bookOrSignIn = isAuthenticated ? onBookNow : (onSignIn || onBookNow);
 
   return (
     <View style={styles.screen}>
-      {/* ROOT CAUSE, FOUND: React Native 0.85 (Expo SDK 57 ships 0.86)
-          removed StyleSheet.absoluteFillObject from the library. Every
-          layer below that spread it — backgroundLayer, backgroundImage,
-          scrim, contentLayer — was silently getting `position: 'absolute'`
-          etc. from NOTHING (spreading undefined is legal JS and
-          contributes zero properties), so they were all plain,
-          unpositioned, unsized normal-flow views on your phone this
-          whole time. That's why HomeHeader/the ScrollView never had
-          anything to be sized by, and why zIndex changes did nothing —
-          confirmed by web rendering the identical source perfectly,
-          since react-native-web has its own separate StyleSheet that
-          still has absoluteFillObject. See the long comment on
-          styles.backgroundLayer below for the full explanation. Fixed
-          by writing out the literal fill properties everywhere instead
-          of relying on that removed API. */}
-      <View style={styles.backgroundLayer} pointerEvents="none">
-        <Image source={homeBackground} style={styles.backgroundImage} resizeMode="cover" />
-        <View style={styles.scrim} />
-      </View>
+      <HomeHeader
+        onBookNow={onBookNow}
+        onSignIn={onSignIn}
+        onMenuPress={() => setMenuVisible(true)}
+        onProfilePress={onProfilePress}
+        onAboutPress={onAboutPress}
+        onContactPress={onContactPress}
+        onFindBooking={onFindBooking}
+        onReportIssue={onReportIssue}
+        isAuthenticated={isAuthenticated}
+      />
 
-      <View style={styles.contentLayer}>
-        <HomeHeader
-          onBookNow={onBookNow}
-          onSignIn={onSignIn}
-          onMenuPress={() => setMenuVisible(true)}
-          onProfilePress={onProfilePress}
-          onAboutPress={onAboutPress}
-          onContactPress={onContactPress}
-          onFindBooking={onFindBooking}
-          onOrderFood={onOrderFood}
-          onReportIssue={onReportIssue}
-          isAuthenticated={isAuthenticated}
-        />
+      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
+        {/* ── Announcement ───────────────────────────────────────── */}
+        <TouchableOpacity style={styles.announce} onPress={bookOrSignIn} activeOpacity={0.85} accessibilityRole="button">
+          <Text style={styles.announceText}>
+            Planning a seminar or a celebration? The Conference Room and Banquet Hall can now be booked online.
+          </Text>
+          <View style={styles.announceLink}>
+            <Text style={styles.announceLinkText}>Check dates</Text>
+            <Ionicons name="chevron-forward" size={13} color={HERO_BG} />
+          </View>
+        </TouchableOpacity>
 
-        <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-        <ImageCarousel onBookNow={onBookNow} />
+        {/* ── Hero ───────────────────────────────────────────────── */}
+        <View style={styles.hero}>
+          {/* The HM building, softly behind the hero (see heroPhoto/heroShade) */}
+          <Image source={HERO_PHOTO} style={styles.heroPhoto} resizeMode="cover" accessibilityIgnoresInvertColors />
+          <View style={styles.heroShade} pointerEvents="none" />
+          <View style={styles.heroInner}>
+            <Animated.View style={[styles.heroCopy, heroAnimStyle]}>
+              <Text style={styles.heroTitle} accessibilityRole="header">
+                Stay, meet and celebrate at the CCTC training hotel.
+              </Text>
+              <Text style={styles.heroLead}>
+                Guest rooms, a conference room and a banquet hall in Toledo City, run by
+                Hospitality Management students. See what's free and book in a few minutes.
+              </Text>
 
-        {/* ── About section ──────────────────────────────────────── */}
-        <View style={styles.aboutSection}>
-            <View style={styles.aboutHeader}>
-              <View style={styles.compassIcon}>
-                <Text style={styles.compassEmoji}>🧭</Text>
+              <View style={styles.heroActions}>
+                <TouchableOpacity style={styles.btnPrimary} onPress={bookOrSignIn} activeOpacity={0.85} accessibilityRole="button">
+                  <Text style={styles.btnPrimaryText}>Book a stay</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.btnGhost} onPress={bookOrSignIn} activeOpacity={0.85} accessibilityRole="button">
+                  <Text style={styles.btnGhostText}>See rooms and rates</Text>
+                </TouchableOpacity>
               </View>
-              <Text style={styles.aboutTitle}>About InnVision</Text>
-            </View>
 
-            <Text style={styles.aboutIntro}>
-              InnVision is a fully working hotel reservation system, built to
-              mirror how real property-management software runs a hotel from
-              the front desk to the back office.
-            </Text>
+              <View style={styles.facts}>
+                <Fact styles={styles} icon="wallet-outline" text="Pay online or at the hotel" />
+              </View>
+            </Animated.View>
 
-            <Text style={styles.aboutCapabilities}>
-              Guests get real-time room availability, instant booking
-              confirmation, and a secure account to track every stay. Behind
-              the scenes, front desk and admin teams get their own dashboards
-              for managing reservations, billing, housekeeping, and staff
-              accounts — the same workflow a real hotel runs on, end to end.
-            </Text>
-
-            <View style={styles.stepsList}>
-              {[
-                { n: '1', title: 'Search your dates', body: 'Check rates and room availability for any date range.' },
-                { n: '2', title: 'Choose your room', body: 'Compare room categories, amenities, and nightly rates.' },
-                { n: '3', title: 'Review & confirm', body: 'No account needed — get instant confirmation on the spot.' },
-              ].map((step) => (
-                <View key={step.n} style={styles.stepRow}>
-                  <View style={styles.stepNumber}>
-                    <Text style={styles.stepNumberText}>{step.n}</Text>
+            {mosaic.length > 0 && (
+              <View style={styles.mosaic}>
+                <MosaicTile styles={styles} space={mosaic[0]} big onPress={bookOrSignIn} />
+                {mosaic.length > 1 && (
+                  <View style={styles.mosaicCol}>
+                    {mosaic.slice(1).map((s) => (
+                      <MosaicTile key={s.id} styles={styles} space={s} onPress={bookOrSignIn} />
+                    ))}
                   </View>
-                  <View style={styles.stepTextWrap}>
-                    <Text style={styles.stepTitle}>{step.title}</Text>
-                    <Text style={styles.stepBody}>{step.body}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-
-            <Text style={styles.aboutAside}>
-              Built for Hospitality Management coursework at Consolatrix
-              College of Toledo City — every screen mirrors a real-world
-              property management booking engine. This homepage's colors,
-              photos, and menu items are easy to swap for your own
-              property's branding whenever you're ready.
-            </Text>
-
-            <TouchableOpacity style={styles.learnMoreBtn} onPress={onAboutPress} activeOpacity={0.7}>
-              <Text style={styles.learnMoreText}>Learn more about InnVision</Text>
-              <Ionicons name="chevron-forward" size={14} color={colors.aboutAccent} />
-            </TouchableOpacity>
-
-            {/* Sign In prompt for guests */}
-            {!isAuthenticated && (
-              <TouchableOpacity style={styles.signInPromptBtn} onPress={onSignIn}>
-                <Text style={styles.signInPromptText}>Sign In to Book Your Stay</Text>
-              </TouchableOpacity>
+                )}
+              </View>
             )}
+          </View>
         </View>
 
-        {/* ── Book Your Stay CTA (logged-in users only) ──────────── */}
-        {isAuthenticated && (
-          <View style={styles.bottomCtaWrap}>
-            <TouchableOpacity style={styles.bottomCtaButton} onPress={onBookNow}>
-              <Text style={styles.bottomCtaText}>Book Your Stay</Text>
-            </TouchableOpacity>
+        {/* ── Spaces you can book ────────────────────────────────── */}
+        {spaces.length > 0 && (
+          <View style={styles.section}>
+            <View style={styles.sectionHead}>
+              <Text style={styles.sectionTitle} accessibilityRole="header">Spaces you can book</Text>
+              <Text style={styles.sectionLead}>Prices are per night. Taxes and service charges are added at checkout.</Text>
+            </View>
+            {isTablet ? (
+              <View style={styles.spaceGrid}>
+                {spaces.map((s) => (
+                  <SpaceCard key={s.id} styles={styles} space={s} onPress={bookOrSignIn} />
+                ))}
+              </View>
+            ) : (
+              // Phones: one swipeable row instead of a very long column.
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                snapToInterval={Math.round(width * 0.78) + 16}
+                decelerationRate="fast"
+                contentContainerStyle={styles.spaceRow}
+                style={styles.spaceRowScroll}
+              >
+                {spaces.map((s) => (
+                  <View key={s.id} style={{ width: Math.round(width * 0.78) }}>
+                    <SpaceCard styles={styles} space={s} onPress={bookOrSignIn} />
+                  </View>
+                ))}
+              </ScrollView>
+            )}
           </View>
         )}
 
+        {/* ── How booking works ──────────────────────────────────── */}
+        <View style={[styles.section, styles.sectionTint]}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionTitle} accessibilityRole="header">How booking works</Text>
+          </View>
+          <View style={styles.steps}>
+            {[
+              { n: '1', title: 'Pick your dates', body: 'Choose check-in and check-out dates and how many guests are coming.' },
+              { n: '2', title: 'Choose a room or venue', body: 'Only spaces that are free for every night of your stay are shown.' },
+              { n: '3', title: 'Confirm your booking', body: 'Sign in, check the details, then pay online or at the hotel. The front desk confirms it.' },
+            ].map((step, i) => (
+              <View key={step.n} style={[styles.step, i > 0 && styles.stepDivider]}>
+                <Text style={styles.stepNumber}>{step.n}</Text>
+                <Text style={styles.stepTitle}>{step.title}</Text>
+                <Text style={styles.stepBody}>{step.body}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        {/* ── Good to know ───────────────────────────────────────── */}
+        <View style={styles.section}>
+          <View style={styles.sectionHead}>
+            <Text style={styles.sectionTitle} accessibilityRole="header">Good to know</Text>
+          </View>
+          <View style={styles.infoGrid}>
+            <Info styles={styles} icon="key-outline" title="Arrive any time after 2:00 PM"
+              body="Check-in opens at 2:00 PM on your arrival day. Bring a valid ID to the front desk." />
+            <Info styles={styles} icon="sunny-outline" title="Check out by 12:00 noon"
+              body="Want to stay longer? Request an extension from My Reservations before then." />
+            <Info styles={styles} icon="card-outline" title="24-hour refund window"
+              body="Online payments can be refunded if you cancel within 24 hours of paying." />
+            <Info styles={styles} icon="moon-outline" title="House rules"
+              body="Quiet hours from 10:00 PM to 7:00 AM. No smoking and no pets anywhere on the premises." />
+          </View>
+
+          <View style={styles.closing}>
+            <Text style={styles.closingText}>
+              {isAuthenticated ? 'Ready when you are.' : 'Sign in or create an account to book.'}
+            </Text>
+            <View style={styles.closingActions}>
+              <TouchableOpacity style={styles.btnDark} onPress={bookOrSignIn} activeOpacity={0.85} accessibilityRole="button">
+                <Text style={styles.btnDarkText}>{isAuthenticated ? 'Book a stay' : 'Sign in to book'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.textLink} onPress={onAboutPress} activeOpacity={0.7} accessibilityRole="link">
+                <Text style={styles.textLinkText}>About InnVision</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+
         <Appfooter />
-        </ScrollView>
-      </View>
+      </ScrollView>
 
       <HamburgerMenu
         visible={menuVisible}
@@ -208,7 +310,6 @@ export default function HomeScreen({
         onAboutPress={onAboutPress}
         onContactPress={onContactPress}
         onFindBooking={onFindBooking}
-        onOrderFood={onOrderFood}
         onReportIssue={onReportIssue}
         onLogout={onLogout}
         isAuthenticated={isAuthenticated}
@@ -219,237 +320,334 @@ export default function HomeScreen({
   );
 }
 
-function getStyles(colors, spacing, fonts) {
+function Fact({ styles, icon, text }) {
+  return (
+    <View style={styles.fact}>
+      <Ionicons name={icon} size={16} color={BRASS} />
+      <Text style={styles.factText}>{text}</Text>
+    </View>
+  );
+}
+
+function MosaicTile({ styles, space, big, onPress }) {
+  const src = imageSource((space.images || [])[0]);
+  return (
+    <TouchableOpacity
+      style={[styles.tile, big ? styles.tileBig : styles.tileSmall]}
+      onPress={onPress}
+      activeOpacity={0.9}
+      accessibilityRole="button"
+      accessibilityLabel={`Book the ${space.name}`}
+    >
+      {src && <Image source={src} style={styles.tileImage} resizeMode="cover" />}
+      <View style={styles.tileCaption}>
+        <Text style={styles.tileCaptionText} numberOfLines={1}>{space.name}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+function SpaceCard({ styles, space, onPress }) {
+  const src = imageSource((space.images || [])[0]);
+  const hasDiscount = space.originalPrice && space.price && space.originalPrice > space.price;
+  const detail = [space.bed, space.occupancy].filter(Boolean).join(', ');
+  return (
+    <TouchableOpacity style={styles.space} onPress={onPress} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel={`${space.name}, from ${formatCurrency(space.price)} per night`}>
+      <View style={styles.spaceImageWrap}>
+        {src
+          ? <Image source={src} style={styles.spaceImage} resizeMode="cover" />
+          : <View style={[styles.spaceImage, styles.spaceImageEmpty]}><Ionicons name="image-outline" size={26} color="#9C8F78" /></View>}
+      </View>
+      <Text style={styles.spaceName}>{space.name}</Text>
+      {!!detail && <Text style={styles.spaceDetail} numberOfLines={1}>{detail}</Text>}
+      {space.price != null && (
+        <Text style={styles.spacePrice}>
+          From <Text style={styles.spacePriceStrong}>{formatCurrency(space.price)}</Text> a night
+          {hasDiscount ? <Text>{'\u00A0\u00A0'}<Text style={styles.spacePriceWas}>{formatCurrency(space.originalPrice)}</Text></Text> : null}
+        </Text>
+      )}
+    </TouchableOpacity>
+  );
+}
+
+function Info({ styles, icon, title, body }) {
+  return (
+    <View style={styles.info}>
+      <View style={styles.infoIcon}>
+        <Ionicons name={icon} size={18} color={styles.infoIconColor.color} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.infoTitle}>{title}</Text>
+        <Text style={styles.infoBody}>{body}</Text>
+      </View>
+    </View>
+  );
+}
+
+function getStyles(colors, spacing, fonts, { isWide, isTablet, isDark }) {
+  const gutter = isTablet ? spacing.xl : spacing.lg;
+  const maxW = 1160;
+  const titleSize = isWide ? 68 : isTablet ? 52 : 40;
+  const cardShadow = isDark
+    ? '0 1px 2px rgba(0,0,0,0.4), 0 14px 34px rgba(0,0,0,0.35)'
+    : '0 1px 2px rgba(43,36,28,0.06), 0 14px 34px rgba(43,36,28,0.09)';
+
   return StyleSheet.create({
     screen: {
       flex: 1,
+      backgroundColor: colors.background,
+      ...web({
+        backgroundImage: isDark
+          ? 'linear-gradient(180deg, #1E1A14 0%, #17130F 100%)'
+          : 'linear-gradient(180deg, #FBF8F3 0%, #F4EDE2 100%)',
+      }),
+    },
+    scroll: { flex: 1 },
+
+    /* Announcement — gold sheen */
+    announce: {
+      backgroundColor: '#D6B464',
+      ...web({ backgroundImage: 'linear-gradient(90deg, #B98C3A 0%, #E7CB82 50%, #B98C3A 100%)' }),
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      justifyContent: 'center',
+      columnGap: spacing.md,
+      rowGap: 4,
+      paddingVertical: 10,
+      paddingHorizontal: gutter,
+    },
+    announceText: { fontSize: 13, lineHeight: 18, fontFamily: F.medium, color: '#231B12', textAlign: 'center', flexShrink: 1, letterSpacing: -0.1 },
+    announceLink: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+    announceLinkText: { fontSize: 13, fontFamily: F.semi, color: '#231B12', textDecorationLine: 'underline' },
+
+    /* Hero — smooth espresso → bronze with a soft gold glow */
+    hero: {
+      backgroundColor: HERO_BG,
       position: 'relative',
-      // Web-only. Without a resolved height here, some browsers leave this
-      // container's height ambiguous and the absolute-fill background
-      // Image below collapses to 0px. (This was originally suspected as
-      // the cause of the header/content disappearing on native too, when
-      // it was applied unconditionally — it wasn't; the real cause was the
-      // sibling structure below. Kept web-only here since it's still
-      // genuinely needed there.)
-      ...(Platform.OS === 'web' ? { minHeight: '100%' } : null),
+      overflow: 'hidden',
+      paddingHorizontal: gutter,
+      paddingTop: isWide ? 84 : 52,
+      paddingBottom: isWide ? 92 : 52,
     },
-    // Single wrapper holding the background photo + scrim together, kept
-    // OUT of the normal flex flow (pointerEvents:'none' on the JSX element
-    // so it never intercepts touches meant for content above it).
-    //
-    // ROOT CAUSE, FOUND (not a guess): React Native 0.85 removed
-    // `StyleSheet.absoluteFillObject` from the library entirely — Expo
-    // SDK 57 ships RN 0.86, so it's gone here. `StyleSheet.absoluteFillObject`
-    // is now simply `undefined`, and spreading undefined into an object
-    // literal (`...StyleSheet.absoluteFillObject`) is valid JS that
-    // silently contributes NOTHING. Every layer below that used that
-    // spread was therefore never actually `position: 'absolute'` on your
-    // phone — they were plain, unpositioned, unsized normal-flow views
-    // the whole time, which is why HomeHeader/the ScrollView had nothing
-    // to be sized by and never appeared, and why explicit zIndex changes
-    // did nothing (zIndex has no effect on views that were never
-    // positioned to begin with). This never showed up on web because
-    // `expo start`'s browser target uses react-native-web — a separate
-    // package with its own independent StyleSheet implementation that
-    // still has absoluteFillObject — so identical source code produced
-    // two different results on the two platforms.
-    // FIX: every spot that used `...StyleSheet.absoluteFillObject` below
-    // now uses the literal properties it used to expand to instead —
-    // `position: 'absolute', top: 0, left: 0, right: 0, bottom: 0` — a
-    // plain style object with no dependency on any StyleSheet API, so
-    // there's nothing here for a future RN version to remove again.
-    backgroundLayer: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      zIndex: 0,
+    // Building photo fills the hero; the shade above it keeps the left
+    // (headline) side dark and lets the building show on the right.
+    heroPhoto: {
+      position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+      width: '100%', height: '100%',
+      opacity: isWide ? 0.55 : 0.4,
     },
-    // Sized identically on web and native via absolute-fill, rather
-    // than ImageBackground's flex-based sizing (see file header note).
-    backgroundImage: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      width: '100%',
-      height: '100%',
+    heroShade: {
+      position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: 'rgba(23,18,14,0.78)',
+      ...web({
+        backgroundColor: 'transparent',
+        backgroundImage: [
+          'radial-gradient(ellipse at 88% 12%, rgba(231,203,130,0.20) 0%, rgba(231,203,130,0) 46%)',
+          isWide
+            ? 'linear-gradient(90deg, rgba(23,18,14,0.97) 0%, rgba(23,18,14,0.90) 38%, rgba(30,23,17,0.62) 70%, rgba(42,32,22,0.50) 100%)'
+            : 'linear-gradient(180deg, rgba(23,18,14,0.94) 0%, rgba(23,18,14,0.86) 60%, rgba(30,23,17,0.80) 100%)',
+          'linear-gradient(180deg, rgba(23,18,14,0) 70%, rgba(23,18,14,0.6) 100%)',
+        ].join(', '),
+      }),
     },
-    // Sits between the photo and all content. Same hex as the old solid
-    // screen background, just with reduced opacity so the photo shows
-    // through as a soft texture rather than fighting with the white
-    // cards/sections on top of it.
-    scrim: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: `${colors.background}A6`,
-    },
-    // Single wrapper holding HomeHeader + the ScrollView together. Also
-    // an absolute fill (see backgroundLayer's comment above for why) —
-    // its own children (HomeHeader, then the ScrollView) still lay out
-    // normally *inside* it regardless of how contentLayer itself is
-    // positioned relative to `screen`.
-    contentLayer: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
+    heroInner: {
+      position: 'relative', // above the photo + shade
       zIndex: 1,
+      width: '100%',
+      maxWidth: maxW,
+      alignSelf: 'center',
+      flexDirection: isWide ? 'row' : 'column',
+      alignItems: isWide ? 'center' : 'stretch',
+      gap: isWide ? 64 : 40,
     },
-    scroll: {
-      flex: 1,
+    heroCopy: { flex: isWide ? 1.1 : undefined, maxWidth: 660 },
+    heroTitle: {
+      fontFamily: F.display,
+      fontSize: titleSize,
+      lineHeight: Math.round(titleSize * 1.03),
+      letterSpacing: -(titleSize * 0.035),
+      color: HERO_TEXT,
     },
+    heroLead: {
+      marginTop: spacing.lg,
+      fontSize: isTablet ? 18 : 16,
+      lineHeight: isTablet ? 29 : 25,
+      fontFamily: F.body,
+      color: HERO_MUTED,
+      maxWidth: 560,
+      letterSpacing: -0.1,
+    },
+    heroActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 32 },
+    btnPrimary: {
+      backgroundColor: '#DDBB6C',
+      ...web({
+        backgroundImage: `linear-gradient(180deg, ${GOLD_LIGHT} 0%, ${BRASS} 100%)`,
+        boxShadow: '0 1px 0 rgba(255,255,255,0.45) inset, 0 10px 26px rgba(201,161,74,0.35)',
+      }),
+      borderRadius: 12,
+      paddingVertical: 15,
+      paddingHorizontal: 26,
+    },
+    btnPrimaryText: { fontSize: 15, fontFamily: F.semi, color: '#231B12', letterSpacing: -0.1 },
+    btnGhost: {
+      borderRadius: 12,
+      paddingVertical: 14,
+      paddingHorizontal: 24,
+      borderWidth: 1,
+      borderColor: 'rgba(247,242,234,0.22)',
+      backgroundColor: 'rgba(247,242,234,0.06)',
+      ...web({ backdropFilter: 'blur(8px)' }),
+    },
+    btnGhostText: { fontSize: 15, fontFamily: F.semi, color: HERO_TEXT, letterSpacing: -0.1 },
 
-    /* About */
-    aboutSection: {
-      backgroundColor: `${colors.aboutBackground}A6`,
-      padding: spacing.xl,
+    facts: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 28 },
+    fact: {
+      flexDirection: 'row', alignItems: 'center', gap: 7,
+      paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999,
+      backgroundColor: 'rgba(247,242,234,0.07)',
+      borderWidth: 1, borderColor: 'rgba(247,242,234,0.10)',
     },
-    aboutHeader: {
-      alignItems: 'center',
-      marginBottom: spacing.lg,
-    },
-    compassIcon: {
-      width: 56,
-      height: 56,
-      borderRadius: 28,
-      borderWidth: 2,
-      borderColor: colors.aboutAccent,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: spacing.sm,
-    },
-    compassEmoji: {
-      fontSize: 24,
-    },
-    aboutTitle: {
-      fontSize: 20,
-      fontFamily: fonts.headingExtraBold,
-      color: colors.aboutAccent,
-      letterSpacing: 0.5,
-    },
-    aboutIntro: {
-      fontSize: 15,
-      fontFamily: fonts.headingSemiBold,
-      lineHeight: 22,
-      color: colors.text,
-      textAlign: 'center',
-      marginBottom: spacing.md,
-    },
-    aboutCapabilities: {
-      fontSize: 13,
-      fontFamily: fonts.body,
-      lineHeight: 20,
-      color: colors.textMuted,
-      textAlign: 'left',
-      marginBottom: spacing.lg,
-    },
+    factText: { fontSize: 13, fontFamily: F.medium, color: HERO_TEXT, letterSpacing: -0.1 },
 
-    /* Steps — a real sequence (search -> select -> confirm), not a
-       decorative numbered list */
-    stepsList: {
-      gap: spacing.md,
-      marginBottom: spacing.lg,
-    },
-    stepRow: {
+    mosaic: {
+      flex: isWide ? 1 : undefined,
       flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: spacing.md,
+      gap: 12,
+      height: isWide ? 460 : isTablet ? 360 : 260,
     },
+    mosaicCol: { flex: 1, gap: 12 },
+    tile: {
+      overflow: 'hidden',
+      backgroundColor: '#3A3127',
+      position: 'relative',
+      borderWidth: 1,
+      borderColor: 'rgba(247,242,234,0.08)',
+      ...web({ boxShadow: '0 24px 60px rgba(0,0,0,0.45)' }),
+    },
+    tileBig: { flex: 1.5, borderRadius: 22 },
+    tileSmall: { flex: 1, borderRadius: 18 },
+    tileImage: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' },
+    tileCaption: {
+      position: 'absolute', left: 12, bottom: 12, maxWidth: '85%',
+      backgroundColor: 'rgba(23,18,14,0.62)',
+      ...web({ backdropFilter: 'blur(10px)' }),
+      borderRadius: 999, paddingVertical: 6, paddingHorizontal: 12,
+      borderWidth: 1, borderColor: 'rgba(247,242,234,0.12)',
+    },
+    tileCaptionText: { fontSize: 12, fontFamily: F.semi, color: HERO_TEXT },
+
+    /* Sections */
+    section: { paddingHorizontal: gutter, paddingVertical: isWide ? 88 : 56 },
+    sectionTint: {
+      backgroundColor: colors.cardAlt,
+      ...web({
+        backgroundImage: isDark
+          ? 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.05) 100%)'
+          : 'linear-gradient(180deg, #F3EBDD 0%, #EFE5D4 100%)',
+      }),
+    },
+    sectionHead: { width: '100%', maxWidth: maxW, alignSelf: 'center', marginBottom: isTablet ? 36 : 24 },
+    sectionTitle: {
+      fontFamily: F.display,
+      fontSize: isTablet ? 38 : 30,
+      lineHeight: isTablet ? 42 : 34,
+      letterSpacing: isTablet ? -1.3 : -1,
+      color: colors.text,
+    },
+    sectionLead: { marginTop: 8, fontSize: 15, lineHeight: 23, fontFamily: F.body, color: colors.textMuted, maxWidth: 620 },
+
+    spaceGrid: {
+      width: '100%', maxWidth: maxW, alignSelf: 'center',
+      flexDirection: 'row', flexWrap: 'wrap', columnGap: 24, rowGap: 24,
+    },
+    spaceRowScroll: { marginHorizontal: -gutter },
+    spaceRow: { paddingHorizontal: gutter, paddingBottom: 12, gap: 16 },
+    space: {
+      ...(isTablet ? { width: isWide ? '31%' : '47%', flexGrow: 1, maxWidth: isWide ? 372 : undefined } : { width: '100%' }),
+      backgroundColor: colors.card,
+      borderRadius: 20,
+      padding: 10,
+      paddingBottom: 18,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(43,36,28,0.06)',
+      ...web({ boxShadow: cardShadow }),
+    },
+    spaceImageWrap: { borderRadius: 14, overflow: 'hidden', backgroundColor: colors.cardAlt },
+    spaceImage: { width: '100%', aspectRatio: 16 / 10 },
+    spaceImageEmpty: { alignItems: 'center', justifyContent: 'center' },
+    spaceName: { marginTop: 14, marginHorizontal: 6, fontFamily: F.bold, fontSize: 18, lineHeight: 23, letterSpacing: -0.4, color: colors.text },
+    spaceDetail: { marginTop: 2, marginHorizontal: 6, fontSize: 13, fontFamily: F.body, color: colors.textMuted },
+    spacePrice: { marginTop: 10, marginHorizontal: 6, fontSize: 14, fontFamily: F.body, color: colors.textMuted },
+    spacePriceStrong: { fontFamily: F.bold, color: colors.text, fontSize: 16, letterSpacing: -0.3 },
+    spacePriceWas: { fontSize: 12, color: colors.textMuted, textDecorationLine: 'line-through' },
+
+    steps: {
+      width: '100%', maxWidth: maxW, alignSelf: 'center',
+      flexDirection: isTablet ? 'row' : 'column',
+    },
+    step: { flex: isTablet ? 1 : undefined, paddingVertical: isTablet ? 0 : spacing.md, paddingRight: isTablet ? spacing.xl : 0 },
+    stepDivider: isTablet
+      ? { borderLeftWidth: 1, borderLeftColor: colors.border, paddingLeft: spacing.xl }
+      : { borderTopWidth: 1, borderTopColor: colors.border },
     stepNumber: {
-      width: 28,
-      height: 28,
-      borderRadius: 14,
-      backgroundColor: colors.aboutAccent,
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexShrink: 0,
-      marginTop: 2,
+      fontFamily: F.display, fontSize: 44, lineHeight: 48, letterSpacing: -1.5,
+      color: BRASS,
+      ...web({
+        backgroundImage: `linear-gradient(180deg, ${GOLD_LIGHT} 0%, #A87E2F 100%)`,
+        WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
+      }),
     },
-    stepNumberText: {
-      fontSize: 13,
-      fontFamily: fonts.headingBold,
-      color: colors.onPrimary,
-    },
-    stepTextWrap: { flex: 1 },
-    stepTitle: {
-      fontSize: 14,
-      fontFamily: fonts.headingSemiBold,
-      color: colors.text,
-      marginBottom: 2,
-    },
-    stepBody: {
-      fontSize: 12.5,
-      fontFamily: fonts.body,
-      lineHeight: 18,
-      color: colors.textMuted,
-    },
+    stepTitle: { marginTop: 6, fontFamily: F.bold, fontSize: 18, lineHeight: 23, letterSpacing: -0.4, color: colors.text },
+    stepBody: { marginTop: 4, fontSize: 14, lineHeight: 22, fontFamily: F.body, color: colors.textMuted, maxWidth: 340 },
 
-    aboutAside: {
-      fontSize: 12,
-      fontFamily: fonts.body,
-      lineHeight: 18,
-      color: colors.textMuted,
-      textAlign: 'center',
-      paddingTop: spacing.md,
-      marginBottom: spacing.sm,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
+    infoGrid: {
+      width: '100%', maxWidth: maxW, alignSelf: 'center',
+      flexDirection: 'row', flexWrap: 'wrap', columnGap: 40, rowGap: 30,
     },
+    info: { flexDirection: 'row', gap: 14, width: isTablet ? '46%' : '100%', flexGrow: 1 },
+    infoIcon: {
+      width: 42, height: 42, borderRadius: 13,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: isDark ? 'rgba(240,213,142,0.16)' : '#E9D6A6',
+      ...web({
+        backgroundImage: isDark
+          ? 'linear-gradient(180deg, rgba(240,213,142,0.22) 0%, rgba(201,161,74,0.14) 100%)'
+          : 'linear-gradient(180deg, #F6E7BF 0%, #E9D19A 100%)',
+        boxShadow: '0 1px 0 rgba(255,255,255,0.6) inset',
+      }),
+    },
+    infoIconColor: { color: isDark ? GOLD_LIGHT : '#6B4E1E' },
+    infoTitle: { fontFamily: F.bold, fontSize: 16, lineHeight: 22, letterSpacing: -0.3, color: colors.text },
+    infoBody: { marginTop: 3, fontSize: 14, lineHeight: 22, fontFamily: F.body, color: colors.textMuted, maxWidth: 460 },
 
-    /* Learn more */
-    learnMoreBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      alignSelf: 'center',
-      marginTop: spacing.xs,
-      marginBottom: spacing.sm,
+    closing: {
+      width: '100%', maxWidth: maxW, alignSelf: 'center',
+      marginTop: isWide ? 72 : 48,
+      padding: isTablet ? 32 : 24,
+      borderRadius: 22,
+      backgroundColor: HERO_BG,
+      ...web({
+        backgroundImage: 'radial-gradient(ellipse at 100% 0%, rgba(231,203,130,0.20) 0%, rgba(231,203,130,0) 55%), linear-gradient(135deg, #1B1511 0%, #3A2B1D 100%)',
+        boxShadow: '0 20px 50px rgba(23,18,14,0.25)',
+      }),
+      flexDirection: isTablet ? 'row' : 'column',
+      alignItems: isTablet ? 'center' : 'flex-start',
+      justifyContent: 'space-between',
+      gap: 16,
     },
-    learnMoreText: {
-      fontSize: 13,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.aboutAccent,
+    closingText: { fontFamily: F.display, fontSize: isTablet ? 26 : 22, letterSpacing: -0.8, color: HERO_TEXT, flexShrink: 1 },
+    closingActions: { flexDirection: 'row', alignItems: 'center', gap: 20, flexWrap: 'wrap' },
+    btnDark: {
+      backgroundColor: '#DDBB6C',
+      ...web({
+        backgroundImage: `linear-gradient(180deg, ${GOLD_LIGHT} 0%, ${BRASS} 100%)`,
+        boxShadow: '0 1px 0 rgba(255,255,255,0.45) inset, 0 10px 26px rgba(201,161,74,0.30)',
+      }),
+      borderRadius: 12, paddingVertical: 14, paddingHorizontal: 24,
     },
-
-    /* Sign in prompt */
-    signInPromptBtn: {
-      marginTop: spacing.sm,
-      alignSelf: 'center',
-      backgroundColor: colors.primary,
-      borderRadius: 999,
-      paddingVertical: spacing.md,
-      paddingHorizontal: spacing.xxl,
-    },
-    signInPromptText: {
-      color: colors.onPrimary,
-      fontFamily: fonts.headingSemiBold,
-      fontSize: 14,
-      letterSpacing: 0.3,
-    },
-
-    /* Book Your Stay */
-    bottomCtaWrap: {
-      padding: spacing.xl,
-      alignItems: 'center',
-      gap: spacing.md,
-    },
-    bottomCtaButton: {
-      backgroundColor: colors.step,
-      borderRadius: 999,
-      paddingVertical: spacing.lg,
-      paddingHorizontal: spacing.xxl,
-    },
-    bottomCtaText: {
-      color: colors.onPrimary,
-      fontFamily: fonts.headingSemiBold,
-      fontSize: 15,
-    },
+    btnDarkText: { fontSize: 15, fontFamily: F.semi, color: '#231B12' },
+    textLink: { paddingVertical: 6 },
+    textLinkText: { fontSize: 14, fontFamily: F.semi, color: HERO_TEXT, textDecorationLine: 'underline' },
   });
 }

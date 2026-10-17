@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,57 +8,48 @@ import {
   Platform,
   useWindowDimensions,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
-import { colors, spacing, fonts } from '../../utils/theme';
 import GuestNotificationBell from './GuestNotificationBell';
 
-const WIDE_SCREEN_BREAKPOINT = 768;
+// Links + actions fit on one row from here up; below it the hamburger
+// menu takes over (keeps tablets / small laptops from a crowded row).
+const WIDE_SCREEN_BREAKPOINT = 1000;
 
-// RESOLVED: a diagnostic flag used to live here to test whether expo-blur's
-// BlurView was a "missing native view" under the New Architecture, after
-// the header disappeared post-SDK 54→57 upgrade. Isolation-tested (alone,
-// and combined with the rest of the header) and proven completely
-// unrelated — the real cause was StyleSheet.absoluteFillObject being
-// removed in RN 0.85+ (see HomeScreen.jsx). BlurView renders normally.
-
-const CONTENT_PADDING_TOP = Platform.select({
-  ios: spacing.sm,
-  android: spacing.sm,
-  default: spacing.md,
-});
-
-const CONTENT_PADDING_BOTTOM = Platform.select({
-  ios: spacing.sm,
-  android: spacing.sm,
-  default: spacing.md,
-});
+// Dark header that runs straight into the Home page's dark hero.
+// Same palette as HomeScreen.jsx.
+const BG = '#17120E';
+const TEXT = '#F7F2EA';
+const TEXT_MUTED = 'rgba(247,242,234,0.74)';
+const GOLD = '#C9A14A';
+const GOLD_LIGHT = '#F0D58E';
+const F = {
+  display: 'Inter_800ExtraBold',
+  semi: 'Inter_600SemiBold',
+  medium: 'Inter_500Medium',
+};
+// Gradients / blur / soft shadows are CSS on web; native gets the solid
+// colour set next to each one.
+const web = (style) => (Platform.OS === 'web' ? style : null);
 
 /**
- * HomeHeader — logo + InnVision name + dynamic CTA + nav/hamburger.
+ * HomeHeader — logo + InnVision name, nav links (wide screens), the
+ * notification bell (signed-in guests), the main action, and the
+ * hamburger (narrow screens).
+ *
+ * REDESIGNED (Oct 2026): dark, so it flows into the Home hero like a
+ * modern product site's navigation; Inter type; gold "Book now".
  *
  * Safe-area note: this header does NOT call useSafeAreaInsets() itself.
- * The app's root SafeAreaView (in App.jsx, imported from
- * 'react-native-safe-area-context') already applies the top inset to every
- * screen it wraps, including the one that renders this header. Adding a
- * second inset here would double-pad the header — that's exactly what
- * happened during initial development, which is why this component went
- * through an inset-handling change and back. If this header is ever
- * rendered somewhere NOT wrapped by that root SafeAreaView, re-add
- * useSafeAreaInsets() here at that point — don't add it preemptively.
+ * The app's root SafeAreaView (App.jsx) already applies the top inset to
+ * every screen it wraps. Adding a second inset here would double-pad it.
  *
- * CTA button behavior:
- *  - isAuthenticated = false  →  shows "SIGN IN"  (calls onSignIn)
- *  - isAuthenticated = true   →  shows "BOOK NOW" (calls onBookNow)
+ * Main action:
+ *  - signed out → "Sign in"  (onSignIn)
+ *  - signed in  → "Book now" (onBookNow)
  *
- * Props:
- *  - onBookNow:        () => void
- *  - onSignIn:         () => void
- *  - onMenuPress:      () => void
- *  - onProfilePress:   () => void
- *  - onAboutPress:     () => void
- *  - onContactPress:   () => void
- *  - onFindBooking:    () => void   — navigate to the booking lookup screen
- *  - isAuthenticated:  boolean
+ * Props (unchanged):
+ *  - onBookNow, onSignIn, onMenuPress, onProfilePress, onAboutPress,
+ *    onContactPress, onFindBooking, onReportIssue, onHomePress: () => void
+ *  - isAuthenticated: boolean
  */
 export default function HomeHeader({
   onBookNow,
@@ -73,16 +64,13 @@ export default function HomeHeader({
   onHomePress,
 }) {
   const { width } = useWindowDimensions();
-  // Tracks which single element (by label) currently has the mouse
-  // over it — React Native Web forwards onMouseEnter/onMouseLeave to
-  // the underlying DOM node, which is how "hover" works here (there's
-  // no native RN concept of it; on a phone/tablet these events simply
-  // never fire, so this harmlessly does nothing there).
+  // Hover state (web only — onMouseEnter/Leave never fire on touch devices).
   const [hoveredNav, setHoveredNav] = useState(null);
   const [ctaHovered, setCtaHovered] = useState(false);
   const [logoHovered, setLogoHovered] = useState(false);
   const [menuBtnHovered, setMenuBtnHovered] = useState(false);
   const isWideScreen = width >= WIDE_SCREEN_BREAKPOINT;
+  const isPhone = width < 420;
 
   const handleCtaPress = () => {
     if (isAuthenticated) {
@@ -92,307 +80,199 @@ export default function HomeHeader({
     }
   };
 
-  // Nav items — Report an Issue and Profile only shown when authenticated.
+  // Report an Issue and Profile only when signed in.
   const navItems = [
     { label: 'About',            onPress: () => onAboutPress && onAboutPress() },
-    { label: 'Promos',           onPress: () => {} },
     { label: 'Contact Us',       onPress: () => onContactPress && onContactPress() },
     { label: 'My Reservations',  onPress: () => onFindBooking && onFindBooking() },
     ...(isAuthenticated
       ? [{ label: 'Report an Issue', onPress: () => onReportIssue && onReportIssue() }]
-      : []
-    ),
+      : []),
     ...(isAuthenticated
       ? [{ label: 'Profile', onPress: () => onProfilePress && onProfilePress(), isAccent: true }]
-      : []
-    ),
+      : []),
   ];
 
   return (
-    <View style={styles.shadowWrap}>
-      {/* BlurView is a background LAYER behind the content, not a wrapper
-          around it — deliberately, after its logo/nav/CTA/hamburger all
-          disappeared together on an Android device. Nesting that content
-          inside BlurView's own children meant a native rendering hiccup
-          could take the whole header down with it; as an absolute-fill
-          sibling instead, that can no longer happen — worst case is just
-          a missing blur backdrop, never a missing header.
-
-          No blurMethod/blurTarget: real Android blur needs BOTH
-          blurMethod="dimezisBlurView" AND a blurTarget ref pointing at a
-          <BlurTargetView> wrapped around whatever sits BEHIND this header
-          (this screen's own background image + ScrollView, in
-          HomeScreen.jsx) — a change in the screens that use this header,
-          not something fixable here alone. Per Expo's own docs, without
-          blurTarget, dimezisBlurView silently falls back to a plain
-          semi-transparent tint anyway — exactly what omitting blurMethod
-          gets you directly, minus the console warning and the unused
-          prop. Worth adding the BlurTargetView wiring later if real
-          blur-behind-content on Android is ever wanted. */}
-      <BlurView
-        intensity={40}
-        tint="light"
-        style={styles.blur}
-      />
-      <View style={styles.tint} />
-
+    <View style={styles.bar} accessibilityRole="header">
       <View style={styles.content}>
-
-          {/* ── Logo ─────────────────────────────────────────── */}
+        {/* ── Left: logo + links ───────────────────────────── */}
+        <View style={styles.left}>
           <TouchableOpacity
             style={[styles.logoRow, logoHovered && styles.logoRowHovered]}
             activeOpacity={0.8}
             onPress={onHomePress}
             onMouseEnter={() => setLogoHovered(true)}
             onMouseLeave={() => setLogoHovered(false)}
+            accessibilityRole="link"
+            accessibilityLabel="InnVision home"
           >
-            <Image
-              source={require('../../../assets/logo.png')}
-              style={styles.logoImage}
-            />
+            <View style={styles.logoTile}>
+              <Image source={require('../../../assets/logo.png')} style={styles.logoImage} />
+            </View>
             <Text style={styles.name} numberOfLines={1}>InnVision</Text>
           </TouchableOpacity>
 
-          {/* ── Right side ───────────────────────────────────── */}
-          <View style={styles.navRight}>
-
-            {/* Wide screen nav links */}
-            {isWideScreen && (
-              <View style={styles.navLinks}>
-                {navItems.map(item => {
-                  const isHovered = hoveredNav === item.label;
-                  return (
-                    <TouchableOpacity
-                      key={item.label}
-                      style={styles.navLinkItem}
-                      onPress={item.onPress}
-                      activeOpacity={0.7}
-                      onMouseEnter={() => setHoveredNav(item.label)}
-                      onMouseLeave={() => setHoveredNav(null)}
-                    >
-                      <Text style={[styles.navLinkText, item.isAccent && styles.navLinkAccent, isHovered && styles.navLinkHovered]}>
-                        {item.label}
-                      </Text>
-                      <View style={[styles.navLinkUnderline, isHovered && styles.navLinkUnderlineVisible]} />
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-
-            {/* Notification bell — signed-in guests only. Booking deadline
-                reminders + Front Desk booking updates; "View in My
-                Reservations" reuses the same navigation as the nav link. */}
-            {isAuthenticated && (
-              <GuestNotificationBell onViewBooking={(id) => onFindBooking && onFindBooking(id)} />
-            )}
-
-            {/* CTA button */}
-            <TouchableOpacity
-              style={[
-                styles.ctaButton,
-                isAuthenticated ? styles.ctaBookNow : styles.ctaSignIn,
-                ctaHovered && styles.ctaHovered,
-              ]}
-              onPress={handleCtaPress}
-              activeOpacity={0.85}
-              onMouseEnter={() => setCtaHovered(true)}
-              onMouseLeave={() => setCtaHovered(false)}
-            >
-              <Text style={styles.ctaText}>
-                {isAuthenticated ? 'BOOK NOW' : 'SIGN IN'}
-              </Text>
-            </TouchableOpacity>
-
-            {/* Hamburger — mobile only. 44x44 touch target with extra
-                inset from the screen edge, per accessibility guidelines. */}
-            {!isWideScreen && (
-              <TouchableOpacity
-                style={[styles.menuButton, menuBtnHovered && styles.menuButtonHovered]}
-                onPress={onMenuPress}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                accessibilityLabel="Open menu"
-                accessibilityRole="button"
-                onMouseEnter={() => setMenuBtnHovered(true)}
-                onMouseLeave={() => setMenuBtnHovered(false)}
-              >
-                <View style={styles.menuLinesWrap}>
-                  <View style={styles.menuLine} />
-                  <View style={styles.menuLine} />
-                  <View style={styles.menuLine} />
-                </View>
-              </TouchableOpacity>
-            )}
-          </View>
+          {isWideScreen && (
+            <View style={styles.navLinks}>
+              {navItems.map((item) => {
+                const isHovered = hoveredNav === item.label;
+                return (
+                  <TouchableOpacity
+                    key={item.label}
+                    style={styles.navLinkItem}
+                    onPress={item.onPress}
+                    activeOpacity={0.7}
+                    onMouseEnter={() => setHoveredNav(item.label)}
+                    onMouseLeave={() => setHoveredNav(null)}
+                    accessibilityRole="link"
+                  >
+                    <Text style={[styles.navLinkText, item.isAccent && styles.navLinkAccent, isHovered && styles.navLinkHovered]}>
+                      {item.label}
+                    </Text>
+                    <View style={[styles.navLinkUnderline, (isHovered || item.isAccent) && styles.navLinkUnderlineVisible]} />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
         </View>
+
+        {/* ── Right: bell + main action + hamburger ────────── */}
+        <View style={styles.right}>
+          {isAuthenticated && (
+            <GuestNotificationBell
+              onViewBooking={(id) => onFindBooking && onFindBooking(id)}
+              iconColor={TEXT}
+              badgeBorderColor={BG}
+            />
+          )}
+
+          <TouchableOpacity
+            style={[
+              styles.ctaButton,
+              isPhone && styles.ctaButtonPhone,
+              isAuthenticated ? styles.ctaBookNow : styles.ctaSignIn,
+              ctaHovered && styles.ctaHovered,
+            ]}
+            onPress={handleCtaPress}
+            activeOpacity={0.85}
+            onMouseEnter={() => setCtaHovered(true)}
+            onMouseLeave={() => setCtaHovered(false)}
+            accessibilityRole="button"
+          >
+            <Text style={styles.ctaText}>{isAuthenticated ? 'Book now' : 'Sign in'}</Text>
+          </TouchableOpacity>
+
+          {!isWideScreen && (
+            <TouchableOpacity
+              style={[styles.menuButton, menuBtnHovered && styles.menuButtonHovered]}
+              onPress={onMenuPress}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Open menu"
+              accessibilityRole="button"
+              onMouseEnter={() => setMenuBtnHovered(true)}
+              onMouseLeave={() => setMenuBtnHovered(false)}
+            >
+              <View style={styles.menuLinesWrap}>
+                <View style={styles.menuLine} />
+                <View style={[styles.menuLine, styles.menuLineShort]} />
+                <View style={styles.menuLine} />
+              </View>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  shadowWrap: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  // Now an absolute-fill layer sitting BEHIND styles.content (a sibling,
-  // not a parent) — see the comment above the <BlurView> element itself
-  // for why. top/left/right/bottom (matching the existing `tint` style
-  // right below) rather than StyleSheet.absoluteFillObject, just to stay
-  // consistent with how this file already expresses "fill the parent".
-  blur: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    overflow: 'hidden',
-  },
-  tint: {
-    position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
-    // Matches theme.js lightColors.background (#F5EFE6). Opacity raised to
-    // 0.94 (from 0.72) because BlurView's tint="light" renders its own
-    // native whitish blur backdrop underneath — at lower opacity that
-    // native white was bleeding through and washing out the cream color,
-    // making the header read white instead of cream. If the background
-    // token in theme.js changes, update the rgb values to match (keep the
-    // alpha near 0.9+ for the same reason).
-    backgroundColor: 'rgba(245,239,230,0.94)',
+  bar: {
+    backgroundColor: BG,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(247,242,234,0.08)',
+    zIndex: 10,
+    ...web({
+      backgroundImage: 'linear-gradient(180deg, #1B1511 0%, #17120E 100%)',
+      backdropFilter: 'saturate(140%) blur(10px)',
+    }),
   },
   content: {
+    width: '100%',
+    maxWidth: 1240,
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    // At narrow phone widths the logo + name + CTA + hamburger can
-    // overflow a non-wrapping row and clip the right-side CTA.
-    // Allow the row itself to wrap so nothing gets pushed off-screen.
-    flexWrap: 'wrap',
-    paddingHorizontal: spacing.lg,
-    paddingTop: CONTENT_PADDING_TOP,
-    paddingBottom: CONTENT_PADDING_BOTTOM,
+    paddingHorizontal: 20,
+    paddingVertical: Platform.select({ ios: 10, android: 10, default: 14 }),
+    gap: 12,
   },
 
-  // Logo
-  logoRow: {
-    flexDirection: 'row',
+  left: { flexDirection: 'row', alignItems: 'center', flexShrink: 1, gap: 28 },
+
+  // Logo — on a cream tile so the logo's dark parts stay visible.
+  logoRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 1, gap: 10 },
+  logoRowHovered: { opacity: 0.85 },
+  logoTile: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: TEXT,
     alignItems: 'center',
-    flexShrink: 1,
-    marginRight: spacing.sm,
+    justifyContent: 'center',
+    overflow: 'hidden',
+    ...web({ boxShadow: '0 1px 0 rgba(255,255,255,0.6) inset, 0 4px 14px rgba(0,0,0,0.35)' }),
   },
-  logoRowHovered: {
-    opacity: 0.75,
-  },
-  logoImage: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    marginRight: spacing.sm,
-    resizeMode: 'contain',
-  },
+  logoImage: { width: 30, height: 30, resizeMode: 'contain' },
   name: {
-    fontSize: 16,
-    fontFamily: fonts.headingExtraBold,
-    color: colors.primary,
-    letterSpacing: 0.3,
+    fontSize: 18,
+    fontFamily: F.display,
+    color: TEXT,
+    letterSpacing: -0.5,
     flexShrink: 1,
   },
 
-  // Nav
-  navRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    flexShrink: 1,
-    marginLeft: 'auto',
-  },
-  navLinks: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: spacing.sm,
-  },
-  navLinkItem: {
-    marginHorizontal: spacing.sm,
-    alignItems: 'center',
-  },
-  navLinkText: {
-    fontSize: 14,
-    fontFamily: fonts.headingSemiBold,
-    color: colors.text,
-  },
-  navLinkHovered: {
-    color: colors.primary,
-  },
-  navLinkAccent: {
-    color: colors.primary,
-    fontFamily: fonts.headingBold,
-    textDecorationLine: 'underline',
-    textDecorationColor: colors.accent,
-    textDecorationStyle: 'solid',
-  },
-  // A small underline that fades in on hover — invisible (transparent)
-  // by default rather than absent, so its reserved space doesn't cause
-  // the row to shift height when a link becomes hovered.
-  navLinkUnderline: {
-    width: 14,
-    height: 2,
-    borderRadius: 1,
-    marginTop: 3,
-    backgroundColor: 'transparent',
-  },
-  navLinkUnderlineVisible: {
-    backgroundColor: colors.accent,
-  },
+  // Links
+  navLinks: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  navLinkItem: { paddingHorizontal: 10, paddingVertical: 6, alignItems: 'center' },
+  navLinkText: { fontSize: 14, fontFamily: F.medium, color: TEXT_MUTED, letterSpacing: -0.15 },
+  navLinkHovered: { color: TEXT },
+  navLinkAccent: { color: GOLD_LIGHT, fontFamily: F.semi },
+  navLinkUnderline: { width: 16, height: 2, borderRadius: 1, marginTop: 4, backgroundColor: 'transparent' },
+  navLinkUnderlineVisible: { backgroundColor: GOLD },
 
-  // CTA
-  ctaButton: {
-    borderRadius: 999,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    flexShrink: 1,
-  },
+  // Right side
+  right: { flexDirection: 'row', alignItems: 'center', gap: 10, marginLeft: 'auto' },
+
+  ctaButton: { borderRadius: 10, paddingVertical: 10, paddingHorizontal: 18 },
+  ctaButtonPhone: { paddingHorizontal: 14 },
   ctaBookNow: {
-    backgroundColor: colors.step,
+    backgroundColor: '#DDBB6C',
+    ...web({
+      backgroundImage: `linear-gradient(180deg, ${GOLD_LIGHT} 0%, ${GOLD} 100%)`,
+      boxShadow: '0 1px 0 rgba(255,255,255,0.45) inset, 0 6px 18px rgba(201,161,74,0.30)',
+    }),
   },
   ctaSignIn: {
-    backgroundColor: colors.primary,
+    backgroundColor: TEXT,
+    ...web({ boxShadow: '0 6px 18px rgba(0,0,0,0.30)' }),
   },
-  ctaHovered: {
-    opacity: 0.88,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  ctaText: {
-    color: colors.white,
-    fontFamily: fonts.headingSemiBold,
-    fontSize: 11,
-    letterSpacing: 0.5,
-  },
+  ctaHovered: { opacity: 0.92 },
+  ctaText: { color: '#231B12', fontFamily: F.semi, fontSize: 14, letterSpacing: -0.15 },
 
-  // Hamburger — outer touchable is a full 44x44 target; inner lines stay
-  // visually compact and centered within it.
+  // Hamburger — 44x44 touch target.
   menuButton: {
     width: 44,
     height: 44,
-    borderRadius: 22,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: spacing.xs,
-    marginRight: -spacing.xs, // keeps the visible icon aligned with content edge despite the larger tap target
+    marginRight: -6,
   },
-  menuButtonHovered: {
-    backgroundColor: 'rgba(0,0,0,0.05)',
-  },
-  menuLinesWrap: {
-    width: 24,
-    height: 18,
-    justifyContent: 'space-between',
-  },
-  menuLine: {
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: colors.primary,
-  },
+  menuButtonHovered: { backgroundColor: 'rgba(247,242,234,0.08)' },
+  menuLinesWrap: { width: 22, height: 16, justifyContent: 'space-between', alignItems: 'flex-end' },
+  menuLine: { width: 22, height: 2, borderRadius: 1, backgroundColor: TEXT },
+  menuLineShort: { width: 15 },
 });
