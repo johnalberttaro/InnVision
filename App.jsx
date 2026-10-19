@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, StatusBar, Modal, Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
@@ -394,8 +394,9 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <ThemeProvider userId={user?.id}>
-          <SafeAreaView style={styles.safeArea}>
-            <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+          {/* Dark to match the loading screen, so phones show no white strip at the top. */}
+          <SafeAreaView style={[styles.safeArea, { backgroundColor: '#17120E' }]}>
+            <StatusBar barStyle="light-content" backgroundColor="#17120E" />
             <LoadingScreen />
           </SafeAreaView>
         </ThemeProvider>
