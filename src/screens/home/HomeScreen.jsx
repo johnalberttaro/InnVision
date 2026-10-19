@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import HamburgerMenu from '../../components/home/HamburgerMenu';
 import HomeHeader from '../../components/shared/HomeHeader';
 import Appfooter from '../../components/shared/Appfooter';
 import FeedbackWidget from '../../components/shared/FeedbackWidget';
+import InstallPrompt from '../../components/shared/InstallPrompt';
 import { useTheme } from '../../context/ThemeContext';
 import { subscribeToRoomTypes, compareRoomsForList, formatCurrency } from '../../utils/Roomsservice';
 
@@ -316,6 +317,8 @@ export default function HomeScreen({
       />
 
       <FeedbackWidget autoOpenOnRecentBooking />
+      {/* "Install InnVision" card (web only; hidden once installed) */}
+      <InstallPrompt />
     </View>
   );
 }
