@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, StatusBar, Modal, Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
@@ -16,6 +16,7 @@ import { Inter_700Bold } from '@expo-google-fonts/inter/700Bold';
 import { Inter_800ExtraBold } from '@expo-google-fonts/inter/800ExtraBold';
 import { supabase } from './src/services/supabase';
 import { fetchAccountRole, screenForRole, LOOKUP_FAILED_MESSAGE } from './src/utils/accountRole';
+import { readSession, writeSession, clearSession } from './src/utils/sessionState';
 
 import HomeScreen           from './src/screens/home/HomeScreen';
 import LoginScreen          from './src/screens/form/LoginScreen';
@@ -171,6 +172,12 @@ export default function App() {
   // sign such a user out, so the SIGNED_OUT event that follows lands on
   // the login screen (with loginNotice explaining why) instead of home.
   const blockedSignOutRef = useRef(false);
+  // Who is signed in right now — so a repeat SIGNED_IN for the SAME user
+  // (Supabase sends one when you come back to the tab) doesn't send you
+  // back to Home.
+  const currentUserIdRef = useRef(null);
+  // Where this tab was before a page reload (see utils/sessionState.js).
+  const savedNavRef = useRef(readSession('nav'));
   const [loginNotice, setLoginNotice] = useState('');
 
   // Keeps LoadingScreen visible for at least 3 seconds, regardless of how
@@ -186,9 +193,35 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
 
-    const resolveRoleAndRoute = async (sessionUser) => {
+    // After a reload, put the person back on the screen they were on, if
+    // it's one their account may see. Only used once, on startup.
+    const restoreSavedScreen = (target, signedIn) => {
+      const saved = savedNavRef.current;
+      savedNavRef.current = null;
+      if (!saved || !saved.screen) return false;
+      const guestScreens = signedIn
+        ? ['home', 'profile', 'about', 'contact', 'myReservations', 'reportIssue', 'roomRates', 'reviewPay']
+        : ['home', 'about', 'contact', 'login', 'register', 'forgotPassword', 'roomRates', 'reviewPay'];
+      if (target !== 'home' || !guestScreens.includes(saved.screen)) return false;
+      const details = saved.bookingDetails
+        ? {
+            ...saved.bookingDetails,
+            checkIn: saved.bookingDetails.checkIn ? new Date(saved.bookingDetails.checkIn) : null,
+            checkOut: saved.bookingDetails.checkOut ? new Date(saved.bookingDetails.checkOut) : null,
+          }
+        : null;
+      if ((saved.screen === 'roomRates' || saved.screen === 'reviewPay') && !details) return false;
+      if (saved.screen === 'reviewPay' && !saved.selectedRooms) return false;
+      setBookingDetails(details);
+      setSelectedRooms(saved.selectedRooms || null);
+      setScreen(saved.screen);
+      return true;
+    };
+
+    const resolveRoleAndRoute = async (sessionUser, { restore = false } = {}) => {
+      currentUserIdRef.current = sessionUser?.id || null;
       if (!sessionUser) {
-        setScreen('home');
+        if (!(restore && restoreSavedScreen('home', false))) setScreen('home');
         return;
       }
       let account;
@@ -215,7 +248,9 @@ export default function App() {
         await supabase.auth.signOut();
         return;
       }
-      setScreen(screenForRole(account.role));
+      const target = screenForRole(account.role);
+      if (restore && restoreSavedScreen(target, true)) return;
+      setScreen(target);
     };
 
     // Checks for an existing session ONCE on startup — this is the actual
@@ -240,7 +275,7 @@ export default function App() {
         setAuthLoading(false);
         return;
       }
-      resolveRoleAndRoute(sessionUser).finally(() => {
+      resolveRoleAndRoute(sessionUser, { restore: true }).finally(() => {
         if (mounted) setAuthLoading(false);
       });
     }).catch((sessionError) => {
@@ -274,6 +309,12 @@ export default function App() {
         setScreen('login');
         return;
       }
+      // Supabase also sends SIGNED_IN again when you switch back to this
+      // tab. Only a real change of account re-routes; the same person
+      // stays exactly where they were.
+      if (event === 'SIGNED_IN' && sessionUser && sessionUser.id === currentUserIdRef.current) {
+        return;
+      }
       if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
         resolveRoleAndRoute(sessionUser);
       }
@@ -298,8 +339,17 @@ export default function App() {
   // screen opens at that booking; cleared once it has scrolled there.
   const [focusReservationId, setFocusReservationId] = useState(null);
 
+  // Remember the current screen (and the booking in progress) for this tab,
+  // so a page reload comes back here. Skipped until the startup check has
+  // decided where to go, so it doesn't overwrite what was saved.
+  useEffect(() => {
+    if (authLoading) return;
+    writeSession('nav', { screen, bookingDetails, selectedRooms });
+  }, [authLoading, screen, bookingDetails, selectedRooms]);
+
   // ── Auth handlers ───────────────────────────────────────────────────
   const handleLogin = (supabaseUser, role) => {
+    currentUserIdRef.current = supabaseUser?.id || null;
     setUser(supabaseUser);
     setScreen(screenForRole(role));
   };
@@ -317,6 +367,8 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
+      clearSession(); // don't reopen the last person's screens in this tab
+      currentUserIdRef.current = null;
       setUser(null);
       setScreen('home');
     } catch (e) {

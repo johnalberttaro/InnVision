@@ -21,6 +21,7 @@ const EXCLUDED_RESERVATION_STATUSES = ['cancelled', 'declined'];
 
 const NOTIF_META = {
   reservation: { icon: 'calendar-outline', color: '#2C5EA8', bg: '#E3ECF8', title: 'New reservation' },
+  cancellation: { icon: 'close-circle-outline', color: '#B3261E', bg: '#FCE1E1', title: 'Reservation cancelled' },
 };
 // Default set when a shell doesn't pass notificationTypes (Front Desk).
 const ALL_TYPES = ['reservation'];
@@ -106,6 +107,9 @@ export default function DashboardNavbar({
   const wantReservations = types.includes('reservation');
 
   const [reservationRows, setReservationRows] = useState([]);
+  // Bookings guests cancelled, newest first (needs cancelled_at from
+  // sql/cancel_notifications.sql; falls back to updated_at without it).
+  const [cancelRows, setCancelRows] = useState([]);
   const [panelOpen, setPanelOpen] = useState(false);
   const [lastSeenAt, setLastSeenAt] = useState(null);
   // Measured, not guessed — used to offset the Modal's panel down to just
@@ -133,26 +137,59 @@ export default function DashboardNavbar({
       }
       setReservationRows((data || []).filter((r) => !EXCLUDED_RESERVATION_STATUSES.includes(r.status)));
     };
-    loadReservations();
+    const loadCancellations = async () => {
+      let res = await supabase
+        .from('reservations')
+        .select('id, guest_details, guest_email, room_type, status, refund_status, cancelled_at, updated_at')
+        .eq('status', 'cancelled')
+        .order('cancelled_at', { ascending: false, nullsFirst: false })
+        .limit(MAX_PER_SOURCE);
+      if (res.error) {
+        // cancelled_at not added yet — use updated_at instead.
+        res = await supabase
+          .from('reservations')
+          .select('id, guest_details, guest_email, room_type, status, refund_status, updated_at')
+          .eq('status', 'cancelled')
+          .order('updated_at', { ascending: false })
+          .limit(MAX_PER_SOURCE);
+      }
+      if (res.error) {
+        console.error('Failed to load cancellation notifications:', res.error);
+        return;
+      }
+      setCancelRows(res.data || []);
+    };
+    const loadAll = () => { loadReservations(); loadCancellations(); };
+    loadAll();
 
     const channel = supabase
       .channel('navbar-notifications-reservations')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, loadReservations)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'reservations' }, loadAll)
       .subscribe();
     return () => supabase.removeChannel(channel);
   }, [wantReservations]);
 
   const items = useMemo(() => {
-    return reservationRows
+    const created = reservationRows.map((r) => ({
+      key: `reservation-${r.id}`,
+      type: 'reservation',
+      occurredAt: r.created_at,
+      subtitle: `${reservationGuestName(r)}${r.room_type ? ` · ${r.room_type}` : ''}`,
+    }));
+    const cancelled = cancelRows
+      .filter((r) => r.cancelled_at || r.updated_at)
       .map((r) => ({
-        key: `reservation-${r.id}`,
+        key: `cancellation-${r.id}`,
+        // Opens Reservation Management like a new-reservation row does.
         type: 'reservation',
-        occurredAt: r.created_at,
-        subtitle: `${reservationGuestName(r)}${r.room_type ? ` · ${r.room_type}` : ''}`,
-      }))
+        meta: 'cancellation',
+        occurredAt: r.cancelled_at || r.updated_at,
+        subtitle: `${reservationGuestName(r)}${r.room_type ? ` · ${r.room_type}` : ''}${r.refund_status === 'pending' ? ' · Refund requested' : ''}`,
+      }));
+    return [...created, ...cancelled]
       .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
       .slice(0, MAX_TOTAL);
-  }, [reservationRows]);
+  }, [reservationRows, cancelRows]);
 
   const unseenCount = useMemo(() => {
     if (!lastSeenAt) return items.length; // never opened the panel on this device — everything's new
@@ -243,7 +280,7 @@ export default function DashboardNavbar({
             ) : (
               <ScrollView style={styles.panelList} showsVerticalScrollIndicator={false}>
                 {items.map((item) => {
-                  const meta = NOTIF_META[item.type];
+                  const meta = NOTIF_META[item.meta || item.type];
                   return (
                     <TouchableOpacity
                       key={item.key}

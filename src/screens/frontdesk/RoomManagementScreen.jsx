@@ -20,6 +20,7 @@ import {
   statusMeta,
 } from '../../utils/Roomsservice';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
+import { useTabState } from '../../utils/sessionState';
 
 // Room-Types-only accent colors — deliberately kept local to this file
 // rather than added to portalTheme.js, which every other portal screen
@@ -101,10 +102,7 @@ export default function RoomManagementScreen({ onLogout, section = 'types', canM
   // FrontDeskDashboardScreen's "rooms:availability" card still work — they
   // change the `section` prop, and this effect resyncs the active tab to
   // match, same as ReservationsScreen.jsx's activeTab/filterKey pattern).
-  const [activeTab, setActiveTab] = useState(section);
-  useEffect(() => {
-    setActiveTab(section);
-  }, [section]);
+  const [activeTab, setActiveTab] = useTabState('RoomManagementScreen:tab', section); // kept on page reload
 
   useEffect(() => {
     const unsubTypes = subscribeToRoomTypes(

@@ -6,6 +6,7 @@ import GuestRecordsScreen from './GuestRecordsScreen';
 import GuestRatingsScreen from '../admin/GuestRatingsScreen';
 import InquiriesScreen from './InquiriesScreen';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
+import { useTabState } from '../../utils/sessionState';
 
 // Every possible Guest Management sub-screen. Which of these actually show
 // up as tabs is controlled by the `tabKeys` prop — Front Desk's own
@@ -46,10 +47,7 @@ export default function GuestManagementScreen({ section = 'profiles', tabKeys, o
   // for instance, still works — it changes the `section` prop and this
   // effect resyncs the active tab, same pattern as every other tab bar
   // built this session).
-  const [activeTab, setActiveTab] = useState(section);
-  useEffect(() => {
-    setActiveTab(section);
-  }, [section]);
+  const [activeTab, setActiveTab] = useTabState('GuestManagementScreen:tab', section); // kept on page reload
 
   return (
     <View style={styles.screen}>

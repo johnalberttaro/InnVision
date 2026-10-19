@@ -7,6 +7,7 @@ import ReceiptsScreen from './ReceiptsScreen';
 import OutstandingBalancesScreen from './OutstandingBalancesScreen';
 import TransactionHistoryScreen from './TransactionHistoryScreen';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
+import { useTabState } from '../../utils/sessionState';
 
 // Every possible Billing Management sub-screen. Which show up as tabs is
 // controlled by the `tabKeys` prop — Admin's fd:billing:* sidebar list
@@ -41,10 +42,7 @@ const ALL_TABS = [
 export default function BillingManagementScreen({ section = 'records', tabKeys, onSelectRecord, staffUid, staffName }) {
   const tabs = ALL_TABS.filter((t) => tabKeys.includes(t.key));
 
-  const [activeTab, setActiveTab] = useState(section);
-  useEffect(() => {
-    setActiveTab(section);
-  }, [section]);
+  const [activeTab, setActiveTab] = useTabState('BillingManagementScreen:tab', section); // kept on page reload
 
   return (
     <View style={styles.screen}>

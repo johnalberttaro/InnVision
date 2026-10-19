@@ -11,6 +11,7 @@ import MyProfileScreen from '../frontdesk/MyProfileScreen';
 import DashboardFooter from '../../components/shared/DashboardFooter';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, fonts } from '../../utils/portalTheme';
+import { usePersistedState } from '../../utils/sessionState';
 
 const WIDE_BREAKPOINT = 1024;
 const LAST_SEEN_KEY_PREFIX = 'maintenance-requests-last-seen:';
@@ -26,7 +27,8 @@ const LAST_SEEN_KEY_PREFIX = 'maintenance-requests-last-seen:';
  * Housekeeping — see MaintenanceMyTasksScreen.jsx's own note on this).
  */
 export default function MaintenanceShell({ onLoggedOut, staffName, staffUid }) {
-  const [activeKey, setActiveKey] = useState('mytasks');
+  // Remembered for this tab, so a page reload stays on the same page.
+  const [activeKey, setActiveKey] = usePersistedState('maintenance:activeKey', 'mytasks');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;

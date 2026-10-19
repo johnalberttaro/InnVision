@@ -5,6 +5,7 @@ import HousekeepingScheduleScreen from './HousekeepingSchedule';
 import RoomCleaningStatusScreen from './RoomCleaningStatusScreen';
 import MaintenanceRequestScreen from './MaintenanceRequest';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
+import { useTabState } from '../../utils/sessionState';
 
 // Unlike Guest/Billing Management, Front Desk's own sidebar and Admin's
 // fd:housekeeping:* mirror have always listed the exact same 3 items, so
@@ -32,10 +33,7 @@ const TABS = [
  *                           accepted — dropped here, it was dead).
  */
 export default function HousekeepingManagementScreen({ section = 'schedule', staffUid, staffName }) {
-  const [activeTab, setActiveTab] = useState(section);
-  useEffect(() => {
-    setActiveTab(section);
-  }, [section]);
+  const [activeTab, setActiveTab] = useTabState('HousekeepingManagementScreen:tab', section); // kept on page reload
 
   return (
     <View style={styles.screen}>

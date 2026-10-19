@@ -24,6 +24,7 @@ import RecordPaymentModal from '../frontdesk/RecordPaymentModal';
 import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import DashboardFooter from '../../components/shared/DashboardFooter';
 import { colors, spacing, fonts } from '../../utils/portalTheme';
+import { usePersistedState } from '../../utils/sessionState';
 
 const WIDE_BREAKPOINT = 1024;
 
@@ -51,7 +52,8 @@ const NOTIFICATION_TYPES = ['reservation'];
  * user — payment attribution will show the admin name via `staffName`.
  */
 export default function AdminShell({ onLoggedOut, adminName }) {
-  const [activeKey, setActiveKey] = useState('dashboard');
+  // Remembered for this tab, so a page reload stays on the same page.
+  const [activeKey, setActiveKey] = usePersistedState('admin:activeKey', 'dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;

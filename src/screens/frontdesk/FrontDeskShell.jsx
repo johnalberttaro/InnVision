@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import FrontDeskSidebar from './FrontDeskSidebar';
 import FrontDeskDashboardScreen from './FrontDeskDashboardScreen';
@@ -16,6 +16,7 @@ import DashboardNavbar from '../../components/shared/DashboardNavbar';
 import DashboardFooter from '../../components/shared/DashboardFooter';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, fonts } from '../../utils/portalTheme';
+import { usePersistedState } from '../../utils/sessionState';
 
 const WIDE_BREAKPOINT = 1024;
 
@@ -28,7 +29,8 @@ const NOTIFICATION_ROUTES = {
 };
 
 export default function FrontDeskShell({ onLoggedOut, staffName, staffRole, staffUid }) {
-  const [activeKey, setActiveKey] = useState('dashboard');
+  // Remembered for this tab, so a page reload stays on the same page.
+  const [activeKey, setActiveKey] = usePersistedState('frontdesk:activeKey', 'dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;

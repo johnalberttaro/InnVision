@@ -26,6 +26,7 @@ import {
   declineStayExtension,
   subscribeToStayExtensions,
 } from '../../utils/StayExtensionService';
+import { useTabState } from '../../utils/sessionState';
 
 // All 8 Reservation Management sidebar items, now tabs at the top of this
 // one screen instead of separate sidebar sub-items/routes. The first 6 are
@@ -81,14 +82,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
   // that has to keep landing on the right tab. Everything reachable only
   // through the sidebar now flows through the tab bar below instead, which
   // is why the Shells' routing didn't need the same per-item wiring anymore.
-  const [activeTab, setActiveTab] = useState(filterKey);
-  useEffect(() => {
-    setActiveTab(filterKey);
-    // Only matters if a future caller re-renders an already-mounted
-    // ReservationsScreen with a new filterKey — today every path into this
-    // screen is a fresh mount (Shell only ever renders one active screen at
-    // a time), so this is a safety net rather than something in active use.
-  }, [filterKey]);
+  const [activeTab, setActiveTab] = useTabState('ReservationsScreen:tab', filterKey); // kept on page reload
 
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);

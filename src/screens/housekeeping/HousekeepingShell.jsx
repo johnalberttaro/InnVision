@@ -11,13 +11,14 @@ import MyProfileScreen from '../frontdesk/MyProfileScreen';
 import DashboardFooter from '../../components/shared/DashboardFooter';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, fonts } from '../../utils/portalTheme';
+import { usePersistedState } from '../../utils/sessionState';
 
 const WIDE_BREAKPOINT = 1024;
 const LAST_SEEN_KEY_PREFIX = 'housekeeping-tasks-last-seen:';
 
 /**
- * HousekeepingShell — the Housekeeping staff portal. Same shape as
- * FnbShell.jsx (sidebar + top bar + content area + footer).
+ * HousekeepingShell — the Housekeeping staff portal (sidebar + top bar +
+ * content area + footer).
  *
  * Screens:
  *  - My Tasks — rooms assigned to this staff member.
@@ -35,7 +36,8 @@ const LAST_SEEN_KEY_PREFIX = 'housekeeping-tasks-last-seen:';
  * badge doesn't require actually completing anything, just looking.
  */
 export default function HousekeepingShell({ onLoggedOut, staffName, staffUid }) {
-  const [activeKey, setActiveKey] = useState('mytasks');
+  // Remembered for this tab, so a page reload stays on the same page.
+  const [activeKey, setActiveKey] = usePersistedState('housekeeping:activeKey', 'mytasks');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const { width } = useWindowDimensions();
   const isWide = width >= WIDE_BREAKPOINT;
