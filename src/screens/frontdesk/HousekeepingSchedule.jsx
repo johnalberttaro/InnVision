@@ -101,6 +101,8 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
     assignedAt: row.assigned_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+    // Note the housekeeper typed when marking the room complete.
+    completionNote: row.completion_note,
   });
 
   // ── Load tasks (realtime) ───────────────────────────────────────────
@@ -357,10 +359,21 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
             <Text style={styles.taskActionBtnText}>Mark Complete</Text>
           </TouchableOpacity>
         ) : (
-          <View style={styles.completedRow}>
-            <Ionicons name="checkmark-circle" size={14} color="#1E7B34" />
-            <Text style={styles.completedText}>Done</Text>
-          </View>
+          <>
+            <View style={styles.completedRow}>
+              <Ionicons name="checkmark-circle" size={14} color="#1E7B34" />
+              <Text style={styles.completedText}>Done</Text>
+            </View>
+            {!!task.completionNote && (
+              <View style={styles.staffNote}>
+                <Ionicons name="chatbox-ellipses-outline" size={13} color={colors.textMuted} style={{ marginTop: 1 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.staffNoteLabel}>Note from {task.assignedToName || 'housekeeping'}</Text>
+                  <Text style={styles.staffNoteText}>{task.completionNote}</Text>
+                </View>
+              </View>
+            )}
+          </>
         )}
       </View>
     );
@@ -780,6 +793,14 @@ const styles = StyleSheet.create({
   taskActionBtnText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.white },
 
   completedRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: spacing.xs },
+  staffNote: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    backgroundColor: colors.cardAlt, borderRadius: radius.sm,
+    borderLeftWidth: 3, borderLeftColor: '#1E7B34',
+    paddingVertical: spacing.xs + 2, paddingHorizontal: spacing.sm, marginTop: spacing.sm,
+  },
+  staffNoteLabel: { fontSize: 10, fontFamily: fonts.bodySemiBold, color: colors.textMuted, marginBottom: 1 },
+  staffNoteText: { fontSize: 12, fontFamily: fonts.body, fontStyle: 'italic', color: colors.text, lineHeight: 16 },
   completedText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: '#1E7B34' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },

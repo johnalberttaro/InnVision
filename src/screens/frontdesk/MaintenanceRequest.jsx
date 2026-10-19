@@ -117,7 +117,9 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
     assignedToName: row.assigned_to_name,
     assignedTo2: row.assigned_to_2,
     assignedToName2: row.assigned_to_name_2,
-    resolutionNotes: row.resolution_notes,
+    // Note the maintenance staff typed when marking it resolved
+    // (MaintenanceMyTasksScreen saves it as resolution_note).
+    resolutionNotes: row.resolution_note ?? row.resolution_notes ?? null,
     createdAt: row.created_at,
     assignedAt: row.assigned_at,
     startedAt: row.started_at,
@@ -438,10 +440,21 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
             <Text style={styles.reqActionBtnText}>Mark Resolved</Text>
           </TouchableOpacity>
         ) : (
-          <View style={styles.completedRow}>
-            <Ionicons name="checkmark-circle" size={14} color="#1E7B34" />
-            <Text style={styles.completedText}>Resolved</Text>
-          </View>
+          <>
+            <View style={styles.completedRow}>
+              <Ionicons name="checkmark-circle" size={14} color="#1E7B34" />
+              <Text style={styles.completedText}>Resolved</Text>
+            </View>
+            {!!request.resolutionNotes && (
+              <View style={styles.staffNote}>
+                <Ionicons name="chatbox-ellipses-outline" size={13} color={colors.textMuted} style={{ marginTop: 1 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.staffNoteLabel}>Note from {request.assignedToName || 'maintenance'}</Text>
+                  <Text style={styles.staffNoteText}>{request.resolutionNotes}</Text>
+                </View>
+              </View>
+            )}
+          </>
         )}
       </View>
     );
@@ -920,6 +933,14 @@ const styles = StyleSheet.create({
   reqActionBtnText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.white },
 
   completedRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: spacing.xs },
+  staffNote: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+    backgroundColor: colors.cardAlt, borderRadius: radius.sm,
+    borderLeftWidth: 3, borderLeftColor: '#1E7B34',
+    paddingVertical: spacing.xs + 2, paddingHorizontal: spacing.sm, marginTop: spacing.sm,
+  },
+  staffNoteLabel: { fontSize: 10, fontFamily: fonts.bodySemiBold, color: colors.textMuted, marginBottom: 1 },
+  staffNoteText: { fontSize: 12, fontFamily: fonts.body, fontStyle: 'italic', color: colors.text, lineHeight: 16 },
   completedText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: '#1E7B34' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
