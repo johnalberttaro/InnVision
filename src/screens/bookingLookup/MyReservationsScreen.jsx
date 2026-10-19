@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Modal,
+  Platform,
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,6 +17,11 @@ import { submitRoomReview, fetchReviewedIds } from '../../utils/ReviewsService';
 import RatingModal from '../../components/shared/RatingModal';
 import ExtendStayModal from './ExtendStayModal';
 import GuestNotificationBell from '../../components/shared/GuestNotificationBell';
+import Appfooter from '../../components/shared/Appfooter';
+import {
+  getDownpaymentInfo, downpaymentBadge, downpaymentReminder, downpaymentMethodLabel,
+  useDownpaymentSettings, formatDueDate,
+} from '../../utils/downpayment';
 import {
   fetchMyLatestExtensions,
   cancelStayExtension,
@@ -69,12 +75,31 @@ import { useTheme } from '../../context/ThemeContext';
 // tap) — it's expanded, scrolled into view and briefly highlighted, in the
 // main list or in Reservation History. onFocusHandled() lets the parent
 // clear it so a later visit opens normally.
+// REDESIGNED (Oct 2026) to match the Home page: dark top bar + hero, Inter
+// type, gold actions, clean cards, shared footer. Logic is unchanged.
+const BAR_BG = '#17120E';
+const HERO_TEXT = '#F7F2EA';
+const GOLD = '#C9A14A';
+const GOLD_LIGHT = '#F0D58E';
+const F = {
+  display: 'Inter_800ExtraBold',
+  bold: 'Inter_700Bold',
+  semi: 'Inter_600SemiBold',
+  medium: 'Inter_500Medium',
+  body: 'Inter_400Regular',
+};
+const web = (style) => (Platform.OS === 'web' ? style : null);
+
 export default function MyReservationsScreen({ onBack, onViewReservation, focusReservationId, onFocusHandled }) {
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  const isTablet = width >= 640;
 
-  const { colors, spacing, radius, fonts } = useTheme();
-  const styles = useMemo(() => getStyles(colors, spacing, radius, fonts), [colors, spacing, radius, fonts]);
+  const { colors, spacing, radius, fonts, isDark } = useTheme();
+  const styles = useMemo(
+    () => getStyles(colors, spacing, radius, fonts, { isWide, isTablet, isDark }),
+    [colors, spacing, radius, fonts, isWide, isTablet, isDark]
+  );
 
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading]           = useState(true);
@@ -92,7 +117,6 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
   const historyScrollRef = useRef(null);
   const cardOffsetsRef   = useRef({});   // `${list}:${id}` -> y inside the list
   const listPadOffsetRef = useRef({ main: 0, history: 0 });
-  const [menuVisible, setMenuVisible] = useState(false);
 
   // Which of this guest's checked-out reservations already have a room
   // rating submitted — hides the "Rate your stay" prompt for those.
@@ -185,6 +209,8 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
   // Maps a Postgres reservations row (snake_case) to the same camelCase
   // shape the Firestore version used, so every helper/JSX below stays
   // unchanged.
+  const dpSettings = useDownpaymentSettings();
+
   const reservationToCamel = (row) => ({
     id: row.id,
     guestEmail: row.guest_email,
@@ -208,6 +234,12 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
     // the note at the top of this file.
     checkedInAt: row.checked_in_at,
     checkedOutAt: row.checked_out_at,
+    // Downpayment (sql/downpayment.sql) — empty on bookings made before it.
+    downpaymentAmount: row.downpayment_amount,
+    downpaymentStatus: row.downpayment_status,
+    downpaymentDueAt: row.downpayment_due_at,
+    downpaymentPaidAt: row.downpayment_paid_at,
+    downpaymentMethod: row.downpayment_method,
   });
 
   const fetchReservations = useCallback(async () => {
@@ -391,10 +423,10 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
 
   const statusMeta = (status) => {
     switch ((status || '').toLowerCase()) {
-      case 'upcoming':    return { label: 'Upcoming',    bg: colors.primaryTint, text: colors.primary };
-      case 'pending':     return { label: 'Pending',     bg: '#FFF4D6', text: '#9A7B00' };
-      case 'checked-in':  return { label: 'Checked-In',  bg: '#DFF5E1', text: '#1E7B34' };
-      case 'checked-out': return { label: 'Checked-Out', bg: colors.cardAlt, text: colors.textMuted };
+      case 'upcoming':    return { label: 'Confirmed',             bg: '#E3ECF8', text: '#2C5EA8' };
+      case 'pending':     return { label: 'Awaiting confirmation', bg: '#FFF4D6', text: '#8A6A00' };
+      case 'checked-in':  return { label: 'Checked in',            bg: '#DFF5E1', text: '#1E7B34' };
+      case 'checked-out': return { label: 'Checked out',           bg: colors.cardAlt, text: colors.textMuted };
       case 'cancelled':   return { label: 'Cancelled',   bg: '#FCE1E1', text: '#B3261E' };
       default:            return { label: status || 'Unknown', bg: colors.cardAlt, text: colors.textMuted };
     }
@@ -410,7 +442,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
   // 24-hour cancellation/refund window, measured from when the booking
   // was made (createdAt). For a quick test of the refund flow you can
   // temporarily set this to 1 * 60 * 1000 (1 minute) — but change it back.
-  const CANCEL_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+  const CANCEL_WINDOW_MS = (dpSettings.cancelWindowHours || 24) * 60 * 60 * 1000; // 24 hours (booking_settings)
   const isOnlinePaid = (r) => (r.paymentMode || '').toLowerCase() === 'online';
   const withinCancelWindow = (r) => {
     if (!r.createdAt) return false;
@@ -448,13 +480,23 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
       // it's actually queryable afterward. Front Desk/Admin's "Refunds
       // Pending" view (ReservationsScreen.jsx, filterKey
       // 'reservations:refunds') reads refund_status directly off this row.
-      const refundEligible = isOnlinePaid(cancelTarget) && withinCancelWindow(cancelTarget);
+      // With a downpayment, only what was actually paid is refundable, and
+      // only inside the window. Older bookings (no downpayment) keep the
+      // original rule: online-paid and inside the window.
+      const dp = getDownpaymentInfo(cancelTarget);
+      const refundEligible = dp.applies
+        ? dp.status === 'paid' && withinCancelWindow(cancelTarget)
+        : isOnlinePaid(cancelTarget) && withinCancelWindow(cancelTarget);
       const { error } = await supabase
         .from('reservations')
         .update({
           status: 'cancelled', // updated_at trigger covers the "when" automatically
           ...(refundEligible
-            ? { refund_status: 'pending', refund_requested_at: new Date().toISOString() }
+            ? {
+                refund_status: 'pending',
+                refund_requested_at: new Date().toISOString(),
+                ...(dp.applies ? { downpayment_status: 'refund_pending' } : {}),
+              }
             : {}),
         })
         .eq('id', cancelTarget.id);
@@ -463,7 +505,9 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
       setCancelTarget(null);
       setSuccessMessage(
         refundEligible
-          ? 'Your reservation has been cancelled. Your refund is being processed by our front desk team.'
+          ? dp.applies
+            ? `Your reservation has been cancelled. Your downpayment refund of ${formatCurrency(dp.amount)} is being processed by our front desk team.`
+            : 'Your reservation has been cancelled. Your refund is being processed by our front desk team.'
           : 'Your reservation has been cancelled.'
       );
       await fetchReservations();
@@ -490,26 +534,77 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
         style={[styles.card, highlightId === r.id && styles.cardHighlighted]}
         onLayout={(e) => { cardOffsetsRef.current[`${listKey}:${r.id}`] = e.nativeEvent.layout.y; }}
       >
-        {/* Summary row */}
+        {/* Summary */}
         <View style={styles.resHeader}>
-          <Text style={styles.resId}>{referenceNumber(r.id)}</Text>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.resTitle} numberOfLines={1}>{r.roomType || 'Reservation'}</Text>
+            <Text style={styles.resId}>{referenceNumber(r.id)}  ·  {guestName(r)}</Text>
+          </View>
           <View style={[styles.badge, { backgroundColor: meta.bg }]}>
-            <Text style={[styles.badgeText, { color: meta.text }]}>
-              {meta.label.toUpperCase()}
-            </Text>
+            <Text style={[styles.badgeText, { color: meta.text }]}>{meta.label}</Text>
           </View>
         </View>
 
-        <Text style={styles.resGuestName}>{guestName(r)}</Text>
-
-        <View style={styles.resGrid}>
-          <SummaryItem label="Check-in" value={formatDate(r.checkIn)} styles={styles} />
-          <SummaryItem label="Check-out" value={formatDate(r.checkOut)} styles={styles} />
-          <SummaryItem label="Nights" value={r.nights ?? '—'} styles={styles} />
-          <SummaryItem label="Rooms" value={r.selectedRooms?.length ?? 0} styles={styles} />
-          <SummaryItem label="Room type" value={r.roomType || '—'} styles={styles} />
-          <SummaryItem label="Total" value={formatCurrency(r.totalAmount)} styles={styles} />
+        <View style={styles.stayStrip}>
+          <View style={styles.stayCol}>
+            <Text style={styles.stayLabel}>Check-in</Text>
+            <Text style={styles.stayValue}>{formatDate(r.checkIn)}</Text>
+          </View>
+          <View style={styles.stayArrow}>
+            <Ionicons name="arrow-forward" size={16} color={colors.textMuted} />
+            <Text style={styles.stayNights}>{r.nights ?? '—'} night{r.nights === 1 ? '' : 's'}</Text>
+          </View>
+          <View style={styles.stayCol}>
+            <Text style={styles.stayLabel}>Check-out</Text>
+            <Text style={styles.stayValue}>{formatDate(r.checkOut)}</Text>
+          </View>
+          <View style={[styles.stayCol, styles.stayTotal]}>
+            <Text style={styles.stayLabel}>Total</Text>
+            <Text style={styles.stayTotalValue}>{formatCurrency(r.totalAmount)}</Text>
+          </View>
         </View>
+
+        {/* Downpayment status, amount, balance and due date */}
+        {(() => {
+          const dp = getDownpaymentInfo(r);
+          const badge = downpaymentBadge(dp);
+          if (!badge) return null;
+          const beforeCheckIn = ['pending', 'upcoming'].includes((r.status || '').toLowerCase());
+          return (
+            <View style={styles.dpStrip}>
+              <View style={styles.dpStripTop}>
+                <View style={[styles.dpBadge, { backgroundColor: badge.bg }]}>
+                  <Ionicons name={badge.icon} size={13} color={badge.text} />
+                  <Text style={[styles.dpBadgeText, { color: badge.text }]}>{badge.label}</Text>
+                </View>
+                <Text style={styles.dpAmounts}>
+                  {formatCurrency(dp.amount)} downpayment · {formatCurrency(dp.balance)} balance at the hotel
+                </Text>
+              </View>
+              {dp.status === 'pending' && beforeCheckIn && !!dp.dueAt && (
+                <Text style={[styles.dpLine, dp.overdue && { color: colors.danger }]}>
+                  {dp.overdue
+                    ? `The downpayment was due ${formatDueDate(dp.dueAt)}. Please pay at the front desk as soon as possible — your room may be released.`
+                    : `Downpayment required: ${formatCurrency(dp.amount)}, pay at the front desk by ${formatDueDate(dp.dueAt)}.`}
+                </Text>
+              )}
+              {dp.status === 'paid' && !!dp.paidAt && (
+                <Text style={styles.dpLine}>
+                  Paid {formatDateTime(dp.paidAt)} via {downpaymentMethodLabel(dp.method)}
+                  {(r.paymentMode || '').toLowerCase() === 'online' ? ' (simulated)' : ''}.
+                </Text>
+              )}
+              {dp.status === 'refund_pending' && (
+                <Text style={styles.dpLine}>Your downpayment refund of {formatCurrency(dp.amount)} is being processed by the front desk.</Text>
+              )}
+              {beforeCheckIn && (
+                <Text style={styles.dpReminder}>
+                  {downpaymentReminder({ amount: dp.amount, balance: dp.balance, cancelWindowHours: dpSettings.cancelWindowHours })}
+                </Text>
+              )}
+            </View>
+          );
+        })()}
 
         {/* Expanded details */}
         {expanded && (
@@ -518,9 +613,15 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
             <View style={styles.resGrid}>
               <SummaryItem label="Booking date" value={formatDate(r.createdAt)} styles={styles} />
               <SummaryItem label="Guests" value={r.guestCount ?? '—'} styles={styles} />
-              <SummaryItem label="Room number(s)" value={roomLabel(r)} styles={styles} />
+              <SummaryItem label="Rooms" value={r.selectedRooms?.length ?? 0} styles={styles} />
               <SummaryItem label="Selected rate" value={rateLabel(r)} styles={styles} />
               <SummaryItem label="Payment method" value={paymentMethod(r)} styles={styles} />
+              {getDownpaymentInfo(r).applies && (
+                <>
+                  <SummaryItem label="Downpayment" value={formatCurrency(getDownpaymentInfo(r).amount)} styles={styles} />
+                  <SummaryItem label="Balance at the hotel" value={formatCurrency(getDownpaymentInfo(r).balance)} styles={styles} />
+                </>
+              )}
               <SummaryItem label="Email" value={emailAddress(r)} styles={styles} />
               <SummaryItem label="Contact number" value={contactNumber(r)} styles={styles} />
               {/* NEW: actual arrival/departure timestamps — distinct from
@@ -550,17 +651,18 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
             <Ionicons
               name={expanded ? 'chevron-up' : 'chevron-down'}
               size={16}
-              color={colors.primary}
+              color={styles.linkButtonText.color}
             />
           </TouchableOpacity>
 
+          <View style={styles.actionsRight}>
           {canCancel(r) && (
             <TouchableOpacity
               style={styles.cancelButton}
               onPress={() => requestCancel(r)}
               activeOpacity={0.85}
             >
-              <Text style={styles.cancelButtonText}>Cancel Reservation</Text>
+              <Text style={styles.cancelButtonText}>Cancel reservation</Text>
             </TouchableOpacity>
           )}
 
@@ -570,8 +672,8 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
               onPress={() => setExtendTarget(r)}
               activeOpacity={0.85}
             >
-              <Ionicons name="calendar-outline" size={14} color={colors.onPrimary} />
-              <Text style={styles.rateButtonText}>Extend Stay</Text>
+              <Ionicons name="calendar-outline" size={14} color="#231B12" />
+              <Text style={styles.rateButtonText}>Extend stay</Text>
             </TouchableOpacity>
           )}
 
@@ -587,11 +689,12 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
                 onPress={() => setRatingTarget(r)}
                 activeOpacity={0.85}
               >
-                <Ionicons name="star-outline" size={14} color={colors.onPrimary} />
-                <Text style={styles.rateButtonText}>Rate Your Stay</Text>
+                <Ionicons name="star-outline" size={14} color="#231B12" />
+                <Text style={styles.rateButtonText}>Rate your stay</Text>
               </TouchableOpacity>
             )
           )}
+          </View>
         </View>
 
         {extPending && (
@@ -640,49 +743,31 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
 
   return (
     <View style={styles.screen}>
-      {/* Header */}
-      <View style={[styles.header, isWide && styles.headerWide]}>
-        <TouchableOpacity onPress={onBack} style={styles.backButton} accessibilityLabel="Go back">
-          <Ionicons name="arrow-back" size={22} color={colors.white} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>My Reservations</Text>
-        <View style={styles.headerActions}>
-          <GuestNotificationBell
-            iconColor={colors.white}
-            badgeBorderColor={colors.heroBackground}
-            onViewBooking={(id) => id && setLocalFocusId(id)}
-          />
-          <TouchableOpacity
-            onPress={() => setMenuVisible((v) => !v)}
-            style={styles.backButton}
-            accessibilityLabel="More options"
-          >
-            <Ionicons name="ellipsis-vertical" size={20} color={colors.white} />
+      {/* Top bar */}
+      <View style={styles.header}>
+        <View style={styles.headerInner}>
+          <TouchableOpacity onPress={onBack} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Go back">
+            <Ionicons name="arrow-back" size={20} color={HERO_TEXT} />
           </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Dropdown menu */}
-      <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
-        <TouchableOpacity
-          style={styles.menuOverlay}
-          activeOpacity={1}
-          onPress={() => setMenuVisible(false)}
-        >
-          <View style={[styles.menuDropdown, isWide && styles.menuDropdownWide]}>
+          <Text style={styles.headerTitle}>My Reservations</Text>
+          <View style={styles.headerActions}>
+            <GuestNotificationBell
+              iconColor={HERO_TEXT}
+              badgeBorderColor={BAR_BG}
+              onViewBooking={(id) => id && setLocalFocusId(id)}
+            />
             <TouchableOpacity
-              style={styles.menuItem}
-              onPress={() => {
-                setMenuVisible(false);
-                setHistoryVisible(true);
-              }}
+              onPress={() => setHistoryVisible(true)}
+              style={styles.historyButton}
+              accessibilityRole="button"
+              accessibilityLabel="Reservation history"
             >
-              <Ionicons name="time-outline" size={18} color={colors.text} />
-              <Text style={styles.menuItemText}>Reservation History</Text>
+              <Ionicons name="time-outline" size={16} color={HERO_TEXT} />
+              {isTablet && <Text style={styles.historyButtonText}>History</Text>}
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
-      </Modal>
+        </View>
+      </View>
 
       <ScrollView
         ref={mainScrollRef}
@@ -692,8 +777,24 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />
         }
       >
-        <View style={isWide && styles.wideContainer}>
-          <View style={styles.contentPad} onLayout={(e) => { listPadOffsetRef.current.main = e.nativeEvent.layout.y; }}>
+        <View style={styles.hero}>
+          <View style={styles.heroInner}>
+            <Text style={styles.heroTitle} accessibilityRole="header">My reservations</Text>
+            <Text style={styles.heroLead}>
+              {loading
+                ? 'Loading your bookings…'
+                : activeReservations.length === 0
+                  ? 'No current bookings. Past and cancelled stays are in History.'
+                  : `${activeReservations.length} current booking${activeReservations.length === 1 ? '' : 's'}. Past and cancelled stays are in History.`}
+            </Text>
+          </View>
+        </View>
+
+        {/* list offset is measured here (relative to the scroll content) so a
+            notification tap still scrolls to the right card */}
+        <View onLayout={(e) => { listPadOffsetRef.current.main = e.nativeEvent.layout.y; }}>
+        <View style={styles.wideContainer}>
+          <View style={styles.contentPad}>
 
             {loading ? (
               <View style={styles.centerBlock}>
@@ -719,6 +820,9 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
             )}
           </View>
         </View>
+        </View>
+
+        <Appfooter />
       </ScrollView>
 
       {/* History panel */}
@@ -729,20 +833,23 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
         presentationStyle="fullScreen"
       >
         <View style={styles.screen}>
-          <View style={[styles.header, isWide && styles.headerWide]}>
-            <TouchableOpacity
-              onPress={() => setHistoryVisible(false)}
-              style={styles.backButton}
-              accessibilityLabel="Close history"
-            >
-              <Ionicons name="arrow-back" size={22} color={colors.white} />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Reservation History</Text>
-            <View style={styles.headerSpacer} />
+          <View style={styles.header}>
+            <View style={styles.headerInner}>
+              <TouchableOpacity
+                onPress={() => setHistoryVisible(false)}
+                style={styles.backButton}
+                accessibilityRole="button"
+                accessibilityLabel="Close history"
+              >
+                <Ionicons name="arrow-back" size={20} color={HERO_TEXT} />
+              </TouchableOpacity>
+              <Text style={styles.headerTitle}>Reservation History</Text>
+              <View style={styles.headerSpacer} />
+            </View>
           </View>
           <ScrollView ref={historyScrollRef} style={styles.scroll} showsVerticalScrollIndicator={false}>
-            <View style={isWide && styles.wideContainer}>
-              <View style={styles.contentPad} onLayout={(e) => { listPadOffsetRef.current.history = e.nativeEvent.layout.y; }}>
+            <View style={styles.wideContainer} onLayout={(e) => { listPadOffsetRef.current.history = e.nativeEvent.layout.y; }}>
+              <View style={styles.contentPad}>
                 {historyReservations.length === 0 ? (
                   <View style={styles.messageCard}>
                     <Ionicons name="time-outline" size={22} color={colors.textMuted} />
@@ -774,11 +881,20 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
             <Text style={styles.modalTitle}>Cancel this reservation?</Text>
             <Text style={styles.modalBody}>
               {cancelTarget
-                ? `This will cancel ${referenceNumber(cancelTarget.id)} and release the assigned room(s).${
-                    (cancelTarget.paymentMode || '').toLowerCase() === 'online'
-                      ? " You're within the 24-hour cancellation window, so this qualifies for a refund."
-                      : ''
-                  } This can't be undone.`
+                ? (() => {
+                    const dp = getDownpaymentInfo(cancelTarget);
+                    let refundNote = '';
+                    if (dp.applies) {
+                      if (dp.status === 'paid' && withinCancelWindow(cancelTarget)) {
+                        refundNote = ` You're within the ${dpSettings.cancelWindowHours}-hour cancellation window, so your downpayment of ${formatCurrency(dp.amount)} qualifies for a refund.`;
+                      } else if (dp.status === 'paid') {
+                        refundNote = ` The ${dpSettings.cancelWindowHours}-hour refund window has passed, so the downpayment of ${formatCurrency(dp.amount)} is not refundable.`;
+                      }
+                    } else if ((cancelTarget.paymentMode || '').toLowerCase() === 'online') {
+                      refundNote = " You're within the 24-hour cancellation window, so this qualifies for a refund.";
+                    }
+                    return `This will cancel ${referenceNumber(cancelTarget.id)} and release the assigned room(s).${refundNote} This can't be undone.`;
+                  })()
                 : ''}
             </Text>
             <View style={styles.modalActions}>
@@ -787,7 +903,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
                 onPress={dismissCancelDialog}
                 disabled={cancelling}
               >
-                <Text style={styles.modalButtonSecondaryText}>Keep Reservation</Text>
+                <Text style={styles.modalButtonSecondaryText}>Keep reservation</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalButtonDanger]}
@@ -796,7 +912,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
               >
                 {cancelling
                   ? <ActivityIndicator color={colors.white} size="small" />
-                  : <Text style={styles.modalButtonDangerText}>Yes, Cancel</Text>
+                  : <Text style={styles.modalButtonDangerText}>Yes, cancel</Text>
                 }
               </TouchableOpacity>
             </View>
@@ -820,7 +936,7 @@ export default function MyReservationsScreen({ onBack, onViewReservation, focusR
               style={[styles.modalButton, styles.modalButtonPrimary, { marginTop: spacing.md }]}
               onPress={() => setSuccessMessage('')}
             >
-              <Text style={styles.modalButtonDangerText}>Done</Text>
+              <Text style={styles.modalButtonPrimaryText}>Done</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -863,365 +979,209 @@ function SummaryItem({ label, value, styles }) {
   );
 }
 
-function getStyles(colors, spacing, radius, fonts) {
+function getStyles(colors, spacing, radius, fonts, { isWide, isTablet, isDark }) {
+  const gutter = isTablet ? 32 : 20;
+  const cardShadow = isDark
+    ? '0 1px 2px rgba(0,0,0,0.4), 0 14px 34px rgba(0,0,0,0.35)'
+    : '0 1px 2px rgba(43,36,28,0.06), 0 14px 34px rgba(43,36,28,0.09)';
+  const hairline = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(43,36,28,0.08)';
+  const goldText = isDark ? GOLD_LIGHT : '#6B4E1E';
+  const goldButton = {
+    backgroundColor: '#DDBB6C',
+    ...web({
+      backgroundImage: `linear-gradient(180deg, ${GOLD_LIGHT} 0%, ${GOLD} 100%)`,
+      boxShadow: '0 1px 0 rgba(255,255,255,0.45) inset, 0 6px 18px rgba(201,161,74,0.28)',
+    }),
+  };
+
   return StyleSheet.create({
     screen: {
       flex: 1,
       backgroundColor: colors.background,
+      ...web({
+        backgroundImage: isDark
+          ? 'linear-gradient(180deg, #1E1A14 0%, #17130F 100%)'
+          : 'linear-gradient(180deg, #FBF8F3 0%, #F4EDE2 100%)',
+      }),
     },
-    scroll: {
-      flex: 1,
-    },
+    scroll: { flex: 1 },
 
+    /* Top bar */
     header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      backgroundColor: colors.heroBackground,
-      paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.md,
+      backgroundColor: BAR_BG,
+      borderBottomWidth: 1,
+      borderBottomColor: 'rgba(247,242,234,0.08)',
+      ...web({ backgroundImage: 'linear-gradient(180deg, #1B1511 0%, #17120E 100%)' }),
     },
-    headerWide: {
-      paddingHorizontal: spacing.xxl * 2,
+    headerInner: {
+      width: '100%', maxWidth: 1240, alignSelf: 'center',
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      paddingHorizontal: 20, paddingVertical: 12,
     },
     backButton: {
-      width: 36,
-      height: 36,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: 18,
-      backgroundColor: 'rgba(255,255,255,0.12)',
+      width: 38, height: 38, borderRadius: 12,
+      alignItems: 'center', justifyContent: 'center',
+      backgroundColor: 'rgba(247,242,234,0.08)',
+      borderWidth: 1, borderColor: 'rgba(247,242,234,0.12)',
     },
-    headerTitle: {
-      fontSize: 16,
-      fontFamily: fonts.headingSemiBold,
-      color: colors.white,
-      letterSpacing: 0.3,
+    headerTitle: { fontFamily: F.semi, fontSize: 15, color: HERO_TEXT, letterSpacing: -0.2 },
+    headerSpacer: { width: 38 },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    historyButton: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      height: 38, paddingHorizontal: isTablet ? 14 : 11, borderRadius: 12,
+      backgroundColor: 'rgba(247,242,234,0.08)',
+      borderWidth: 1, borderColor: 'rgba(247,242,234,0.12)',
     },
-    headerSpacer: {
-      width: 36,
-    },
+    historyButtonText: { fontFamily: F.semi, fontSize: 13, color: HERO_TEXT },
 
-    menuOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.15)',
+    /* Hero */
+    hero: {
+      backgroundColor: '#221B15',
+      ...web({
+        backgroundImage: [
+          'radial-gradient(ellipse at 88% 10%, rgba(231,203,130,0.20) 0%, rgba(231,203,130,0) 46%)',
+          'linear-gradient(160deg, #17120E 0%, #2A2119 55%, #3E2E1F 100%)',
+        ].join(', '),
+      }),
+      paddingHorizontal: gutter,
+      paddingTop: isWide ? 52 : 36,
+      paddingBottom: isWide ? 56 : 36,
     },
-    menuDropdown: {
-      position: 'absolute',
-      top: 56,
-      right: spacing.lg,
-      backgroundColor: colors.card,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      paddingVertical: spacing.xs,
-      minWidth: 190,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.12,
-      shadowRadius: 12,
-      elevation: 4,
+    heroInner: { width: '100%', maxWidth: 880, alignSelf: 'center' },
+    heroTitle: {
+      fontFamily: F.display, fontSize: isWide ? 48 : isTablet ? 40 : 32,
+      lineHeight: isWide ? 52 : isTablet ? 44 : 36, letterSpacing: isWide ? -1.7 : -1.1, color: HERO_TEXT,
     },
-    menuDropdownWide: {
-      right: spacing.xxl * 2,
-    },
-    menuItem: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      paddingVertical: spacing.sm + 2,
-      paddingHorizontal: spacing.md,
-    },
-    menuItemText: {
-      fontSize: 13,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.text,
-    },
+    heroLead: { marginTop: 10, fontFamily: F.body, fontSize: isTablet ? 16 : 15, lineHeight: 24, color: 'rgba(247,242,234,0.70)' },
 
-    wideContainer: {
-      maxWidth: 800,
-      alignSelf: 'center',
-      width: '100%',
-    },
-    contentPad: {
-      paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.lg,
-    },
+    /* List */
+    wideContainer: { maxWidth: 880, alignSelf: 'center', width: '100%' },
+    contentPad: { paddingHorizontal: gutter, paddingTop: isWide ? 36 : 24, paddingBottom: isWide ? 64 : 40 },
 
-    centerBlock: {
-      alignItems: 'center',
-      paddingVertical: spacing.xl,
-      gap: spacing.sm,
-    },
+    centerBlock: { alignItems: 'center', paddingVertical: spacing.xl, gap: spacing.sm },
 
     card: {
       backgroundColor: colors.card,
-      borderRadius: radius.lg,
+      borderRadius: 22,
       borderWidth: 1,
-      borderColor: colors.border,
-      padding: spacing.lg,
-      marginBottom: spacing.lg,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.06,
-      shadowRadius: 10,
-      elevation: 2,
-    },
-
-    helperText: {
-      fontSize: 12,
-      fontFamily: fonts.body,
-      color: colors.textMuted,
-      lineHeight: 18,
-    },
-
-    messageCard: {
-      alignItems: 'center',
-      gap: spacing.sm,
-      paddingVertical: spacing.xl,
-      paddingHorizontal: spacing.lg,
-    },
-    messageText: {
-      fontSize: 13,
-      fontFamily: fonts.body,
-      color: colors.textMuted,
-      textAlign: 'center',
-      lineHeight: 19,
-    },
-
-    resHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: spacing.xs,
-    },
-    resId: {
-      fontSize: 13,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.text,
-    },
-    badge: {
-      paddingVertical: 3,
-      paddingHorizontal: spacing.sm,
-      borderRadius: radius.sm,
-    },
-    badgeText: {
-      fontSize: 10,
-      fontFamily: fonts.bodySemiBold,
-      letterSpacing: 0.4,
-    },
-    resGuestName: {
-      fontSize: 15,
-      fontFamily: fonts.headingBold,
-      color: colors.text,
-      marginBottom: spacing.sm,
-    },
-    resGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: spacing.md,
-    },
-    resItem: {
-      minWidth: 120,
-    },
-    resItemLabel: {
-      fontSize: 11,
-      fontFamily: fonts.body,
-      color: colors.textMuted,
-      marginBottom: 2,
-    },
-    resItemValue: {
-      fontSize: 13,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.text,
-    },
-
-    detailsBlock: {
-      marginTop: spacing.sm,
-    },
-    divider: {
-      height: 1,
-      backgroundColor: colors.border,
-      marginBottom: spacing.md,
-    },
-
-    actionsRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginTop: spacing.md,
-      paddingTop: spacing.md,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-    },
-    linkButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-    },
-    linkButtonText: {
-      fontSize: 12,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.primary,
-    },
-    cancelButton: {
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.md,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.danger,
-    },
-    cancelButtonText: {
-      fontSize: 12,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.danger,
-    },
-    cancelExpiredNote: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 5,
-      marginTop: spacing.sm,
-      paddingTop: spacing.sm,
-      paddingHorizontal: 2,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-    },
-    cancelExpiredNoteText: {
-      flex: 1,
-      fontSize: 11,
-      fontFamily: fonts.body,
-      color: colors.textMuted,
-      fontStyle: 'italic',
-      lineHeight: 15,
-    },
-    rateButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.md,
-      borderRadius: radius.md,
-      backgroundColor: colors.primary,
-    },
-    rateButtonText: {
-      fontSize: 12,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.onPrimary,
-    },
-    extensionNote: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      marginTop: spacing.sm,
-      padding: spacing.sm + 2,
-      borderRadius: radius.md,
-      backgroundColor: colors.cardAlt,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    extensionNoteTitle: {
-      fontSize: 12,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.text,
-    },
-    extensionNoteText: {
-      fontSize: 11,
-      fontFamily: fonts.body,
-      color: colors.textMuted,
-      lineHeight: 16,
-      marginTop: 2,
-    },
-    extensionWithdraw: {
-      fontSize: 12,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.danger,
+      borderColor: hairline,
+      padding: isTablet ? 22 : 18,
+      marginBottom: 18,
+      ...web({ boxShadow: cardShadow }),
     },
     cardHighlighted: {
+      borderColor: GOLD,
       borderWidth: 2,
-      borderColor: colors.primary,
-      backgroundColor: colors.cardAlt,
-    },
-    headerActions: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-    },
-    ratedBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.md,
-    },
-    ratedBadgeText: {
-      fontSize: 12,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.text,
+      ...web({ boxShadow: `0 0 0 4px rgba(201,161,74,0.18), ${cardShadow}` }),
     },
 
+    helperText: { fontSize: 13, fontFamily: F.body, color: colors.textMuted, lineHeight: 19 },
+
+    messageCard: {
+      alignItems: 'center', gap: 10,
+      paddingVertical: 40, paddingHorizontal: 24,
+      backgroundColor: colors.card, borderRadius: 22, borderWidth: 1, borderColor: hairline,
+      ...web({ boxShadow: cardShadow }),
+    },
+    messageText: { fontSize: 14, fontFamily: F.body, color: colors.textMuted, textAlign: 'center', lineHeight: 21, maxWidth: 380 },
+
+    resHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+    resTitle: { fontFamily: F.display, fontSize: isTablet ? 22 : 19, letterSpacing: -0.6, color: colors.text },
+    resId: { marginTop: 3, fontFamily: F.medium, fontSize: 13, color: colors.textMuted },
+    badge: { paddingVertical: 5, paddingHorizontal: 11, borderRadius: 999 },
+    badgeText: { fontSize: 12, fontFamily: F.semi },
+
+    stayStrip: {
+      marginTop: 16,
+      flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center',
+      columnGap: isTablet ? 22 : 14, rowGap: 12,
+      padding: 14, borderRadius: 16,
+      backgroundColor: colors.cardAlt,
+    },
+    stayCol: {},
+    stayLabel: { fontFamily: F.medium, fontSize: 12, color: colors.textMuted },
+    stayValue: { marginTop: 2, fontFamily: F.bold, fontSize: 15, letterSpacing: -0.3, color: colors.text },
+    stayArrow: { alignItems: 'center' },
+    stayNights: { fontFamily: F.medium, fontSize: 11, color: colors.textMuted, marginTop: 2 },
+    stayTotal: { marginLeft: isTablet ? 'auto' : 0, alignItems: isTablet ? 'flex-end' : 'flex-start' },
+    stayTotalValue: { marginTop: 2, fontFamily: F.display, fontSize: 18, letterSpacing: -0.5, color: colors.text },
+
+    resGrid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 24, rowGap: 14 },
+    resItem: { minWidth: isTablet ? 170 : 130 },
+    resItemLabel: { fontSize: 12, fontFamily: F.medium, color: colors.textMuted, marginBottom: 2 },
+    resItemValue: { fontSize: 14, fontFamily: F.semi, color: colors.text },
+
+    detailsBlock: { marginTop: 16 },
+    divider: { height: 1, backgroundColor: hairline, marginBottom: 16 },
+
+    actionsRow: {
+      flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between',
+      gap: 10, marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: hairline,
+    },
+    actionsRight: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginLeft: 'auto' },
+    linkButton: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 6 },
+    linkButtonText: { fontSize: 14, fontFamily: F.semi, color: goldText },
+    cancelButton: {
+      paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12,
+      borderWidth: 1, borderColor: isDark ? 'rgba(255,102,89,0.6)' : 'rgba(179,38,30,0.45)',
+    },
+    cancelButtonText: { fontSize: 14, fontFamily: F.semi, color: colors.danger },
+    rateButton: {
+      flexDirection: 'row', alignItems: 'center', gap: 7,
+      paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12,
+      ...goldButton,
+    },
+    rateButtonText: { fontSize: 14, fontFamily: F.semi, color: '#231B12' },
+    ratedBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, paddingHorizontal: 6 },
+    ratedBadgeText: { fontSize: 14, fontFamily: F.semi, color: colors.text },
+
+    cancelExpiredNote: {
+      flexDirection: 'row', alignItems: 'flex-start', gap: 6,
+      marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: hairline,
+    },
+    cancelExpiredNoteText: { flex: 1, fontSize: 12, fontFamily: F.body, color: colors.textMuted, lineHeight: 17 },
+    dpStrip: {
+      marginTop: 12, padding: 12, borderRadius: 14, gap: 6,
+      backgroundColor: isDark ? 'rgba(240,213,142,0.08)' : '#FBF6EA',
+      borderWidth: 1, borderColor: isDark ? 'rgba(240,213,142,0.22)' : '#EBD9AE',
+    },
+    dpStripTop: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+    dpBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 4, paddingHorizontal: 10, borderRadius: 999 },
+    dpBadgeText: { fontSize: 12, fontFamily: F.semi },
+    dpAmounts: { fontSize: 13, fontFamily: F.semi, color: colors.text, flexShrink: 1 },
+    dpLine: { fontSize: 12.5, fontFamily: F.medium || F.semi, color: colors.text, lineHeight: 18 },
+    dpReminder: { fontSize: 12, fontFamily: F.body, color: colors.textMuted, lineHeight: 17 },
+    extensionNote: {
+      flexDirection: 'row', alignItems: 'center', gap: 10,
+      marginTop: 12, padding: 12, borderRadius: 14,
+      backgroundColor: isDark ? 'rgba(240,213,142,0.10)' : '#FBF1D8',
+      borderWidth: 1, borderColor: isDark ? 'rgba(240,213,142,0.25)' : '#EBD39A',
+    },
+    extensionNoteTitle: { fontSize: 13, fontFamily: F.semi, color: colors.text },
+    extensionNoteText: { fontSize: 12, fontFamily: F.body, color: colors.textMuted, lineHeight: 17, marginTop: 2 },
+    extensionWithdraw: { fontSize: 13, fontFamily: F.semi, color: colors.danger },
+
+    /* Dialogs */
     modalOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.45)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: spacing.lg,
+      flex: 1, backgroundColor: 'rgba(23,18,14,0.55)',
+      alignItems: 'center', justifyContent: 'center', padding: 20,
+      ...web({ backdropFilter: 'blur(4px)' }),
     },
     modalCard: {
-      backgroundColor: colors.card,
-      borderRadius: radius.lg,
-      padding: spacing.xl,
-      width: '100%',
-      maxWidth: 400,
-      alignItems: 'center',
+      backgroundColor: colors.card, borderRadius: 22, padding: 26,
+      width: '100%', maxWidth: 420, alignItems: 'center',
+      ...web({ boxShadow: '0 30px 80px rgba(0,0,0,0.35)' }),
     },
-    modalTitle: {
-      fontSize: 16,
-      fontFamily: fonts.headingExtraBold,
-      color: colors.text,
-      marginBottom: spacing.xs,
-      textAlign: 'center',
-    },
-    modalBody: {
-      fontSize: 13,
-      fontFamily: fonts.body,
-      color: colors.textMuted,
-      textAlign: 'center',
-      lineHeight: 19,
-      marginBottom: spacing.lg,
-    },
-    modalActions: {
-      flexDirection: 'row',
-      gap: spacing.sm,
-      width: '100%',
-    },
-    modalButton: {
-      flex: 1,
-      paddingVertical: spacing.sm + 2,
-      borderRadius: radius.md,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    modalButtonSecondary: {
-      backgroundColor: colors.cardAlt,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    modalButtonSecondaryText: {
-      fontSize: 13,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.text,
-    },
-    modalButtonDanger: {
-      backgroundColor: colors.danger,
-    },
-    modalButtonDangerText: {
-      fontSize: 13,
-      fontFamily: fonts.bodySemiBold,
-      color: colors.white,
-    },
-    modalButtonPrimary: {
-      backgroundColor: colors.primary,
-      width: '100%',
-    },
+    modalTitle: { fontSize: 19, fontFamily: F.display, letterSpacing: -0.5, color: colors.text, marginBottom: 6, textAlign: 'center' },
+    modalBody: { fontSize: 14, fontFamily: F.body, color: colors.textMuted, textAlign: 'center', lineHeight: 21, marginBottom: 20 },
+    modalActions: { flexDirection: 'row', gap: 10, width: '100%' },
+    modalButton: { flex: 1, paddingVertical: 13, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+    modalButtonSecondary: { backgroundColor: colors.cardAlt, borderWidth: 1, borderColor: hairline },
+    modalButtonSecondaryText: { fontSize: 14, fontFamily: F.semi, color: colors.text },
+    modalButtonDanger: { backgroundColor: colors.danger },
+    modalButtonDangerText: { fontSize: 14, fontFamily: F.semi, color: '#FFFFFF' },
+    modalButtonPrimary: { width: '100%', ...goldButton },
+    modalButtonPrimaryText: { fontSize: 14, fontFamily: F.semi, color: '#231B12' },
   });
 }

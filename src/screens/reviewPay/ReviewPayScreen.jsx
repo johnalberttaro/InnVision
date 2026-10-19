@@ -21,6 +21,9 @@ import { useTheme } from '../../context/ThemeContext';
 import { formatDate } from '../../utils/dateHelpers';
 import { formatCurrency } from '../../utils/roomRates';
 import { isDoubleBookingError } from '../../utils/Roomsservice';
+import {
+  useDownpaymentSettings, computeDownpayment, downpaymentReminder, downpaymentAgreement, formatDueDate,
+} from '../../utils/downpayment';
 
 const TAX_RATE = 0.17;
 const TWO_COL_BREAKPOINT = 680;
@@ -133,6 +136,12 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   // Set after a simulated e-wallet payment — shown on the confirmation.
   const [simulatedPayment, setSimulatedPayment] = useState(null);
   const [agreed, setAgreed]                   = useState(false);
+  // Downpayment (utils/downpayment.js, sql/downpayment.sql): the guest must
+  // tick that they understand the downpayment and the balance at the hotel.
+  const [dpAgreed, setDpAgreed]               = useState(false);
+  const dpSettings                            = useDownpaymentSettings();
+  // What the database actually saved — shown on the confirmation.
+  const [savedDownpayment, setSavedDownpayment] = useState(null);
   const [errors, setErrors]                   = useState({});
   // Shown above the action buttons when the save itself fails. Inline
   // rather than Alert.alert, which does nothing on React Native Web.
@@ -195,6 +204,10 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
   const subtotal = combinedNightlyRate * Math.max(nights, 1);
   const tax      = Math.round(subtotal * TAX_RATE);
   const total    = subtotal + tax;
+  // Same formula the database uses when the booking is saved.
+  const { downpayment, balance } = computeDownpayment(total, dpSettings.rate);
+  const hasDownpayment = downpayment > 0;
+  const dpPercent = Math.round(dpSettings.rate * 100);
   const roomTypeSummary = selectedRooms.map((r) => r.roomTypeName || r.name).join(', ');
 
   if (showSuccessState) {
@@ -216,6 +229,37 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
 
             {simulatedPayment && (
               <SimulatedPaymentReceipt payment={simulatedPayment} styles={styles} />
+            )}
+
+            {savedDownpayment && (
+              <View style={[styles.dpBox, { marginTop: spacing.md, alignSelf: 'stretch' }]}>
+                <View style={styles.dpHead}>
+                  <Ionicons
+                    name={savedDownpayment.status === 'paid' ? 'checkmark-circle' : 'time-outline'}
+                    size={18}
+                    color={savedDownpayment.status === 'paid' ? '#1E7B34' : '#8A6A00'}
+                  />
+                  <Text style={styles.dpTitle}>
+                    {savedDownpayment.status === 'paid' ? 'Downpayment paid' : 'Downpayment required'}
+                  </Text>
+                </View>
+                <View style={styles.dpRow}>
+                  <Text style={styles.dpRowLabel}>{savedDownpayment.status === 'paid' ? 'Paid now (simulated)' : 'Downpayment'}</Text>
+                  <Text style={styles.dpRowValue}>{formatCurrency(savedDownpayment.amount)}</Text>
+                </View>
+                <View style={styles.dpRow}>
+                  <Text style={styles.dpRowLabel}>Balance payable at the hotel</Text>
+                  <Text style={styles.dpRowValue}>{formatCurrency(savedDownpayment.balance)}</Text>
+                </View>
+                {savedDownpayment.status === 'pending' && !!savedDownpayment.dueAt && (
+                  <Text style={styles.dpDue}>
+                    Pay the downpayment at the front desk by {formatDueDate(savedDownpayment.dueAt)} to keep your reservation.
+                  </Text>
+                )}
+                <Text style={styles.dpText}>
+                  {downpaymentReminder({ amount: savedDownpayment.amount, balance: savedDownpayment.balance, cancelWindowHours: dpSettings.cancelWindowHours })}
+                </Text>
+              </View>
             )}
 
             {reservationId && (
@@ -249,6 +293,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
     }
     if (!phone.trim()) e.phone = 'Phone number is required.';
     if (!agreed) e.agreed = 'Please agree to the Terms & Conditions.';
+    if (hasDownpayment && !dpAgreed) e.dpAgreed = 'Please confirm that you understand the downpayment.';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -347,7 +392,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
           // screen (✓ moves it to 'upcoming', ✕ moves it to 'declined').
           status: 'pending',
         })
-        .select('id, total_amount, created_at')
+        .select('id, total_amount, created_at, downpayment_amount, downpayment_status, downpayment_due_at')
         .single();
       if (error) throw error;
 
@@ -355,6 +400,17 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
       // The database recomputes the price (sql/secure_guest_bookings.sql),
       // so confirm with the amount it actually saved.
       const savedTotal = inserted.total_amount ?? total;
+      const savedDp = inserted.downpayment_amount != null ? Number(inserted.downpayment_amount) : null;
+      setSavedDownpayment(
+        savedDp && inserted.downpayment_status
+          ? {
+              amount: savedDp,
+              balance: Math.max(Number(savedTotal) - savedDp, 0),
+              status: inserted.downpayment_status,
+              dueAt: inserted.downpayment_due_at,
+            }
+          : null
+      );
 
       // Guest Records upsert — see upsertGuestRecord() docstring above.
       // Runs after the reservation write succeeds; its own errors are
@@ -368,7 +424,11 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
         setSimulatedPayment({
           walletId,
           paidAt: inserted.created_at || new Date().toISOString(),
-          amount: savedTotal,
+          // Only the downpayment is paid now; the rest is paid at the hotel.
+          amount: savedDp ?? savedTotal,
+          isDownpayment: savedDp != null,
+          balance: savedDp != null ? Math.max(Number(savedTotal) - savedDp, 0) : 0,
+          refundWindowHours: dpSettings.cancelWindowHours,
         });
       } else {
         setSimulatedPayment(null);
@@ -410,7 +470,8 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
       return;
     }
 
-    if (paymentMode === 'online') {
+    // A free stay has nothing to pay online.
+    if (paymentMode === 'online' && hasDownpayment) {
       setPaymentStep('ewallet');
       return;
     }
@@ -470,6 +531,9 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
             subtotal={subtotal}
             tax={tax}
             total={total}
+            downpayment={downpayment}
+            balance={balance}
+            cancelWindowHours={dpSettings.cancelWindowHours}
             onCancel={handleEwalletCancel}
             onConfirmPayment={handleEwalletConfirm}
           />
@@ -600,6 +664,47 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
               </View>
             </View>
 
+            {/* Downpayment reminder + required acknowledgment */}
+            {hasDownpayment && (
+              <View style={[styles.dpBox, errors.dpAgreed && styles.dpBoxError]}>
+                <View style={styles.dpHead}>
+                  <Ionicons name="wallet-outline" size={18} color="#8A6A00" />
+                  <Text style={styles.dpTitle}>Downpayment required ({dpPercent}%)</Text>
+                </View>
+                <View style={styles.dpRow}>
+                  <Text style={styles.dpRowLabel}>
+                    {paymentMode === 'online' ? 'Downpayment to pay now' : 'Downpayment (pay at the front desk)'}
+                  </Text>
+                  <Text style={styles.dpRowValue}>{formatCurrency(downpayment)}</Text>
+                </View>
+                <View style={styles.dpRow}>
+                  <Text style={styles.dpRowLabel}>Balance payable at the hotel</Text>
+                  <Text style={styles.dpRowValue}>{formatCurrency(balance)}</Text>
+                </View>
+                <Text style={styles.dpText}>
+                  {downpaymentReminder({ amount: downpayment, balance, cancelWindowHours: dpSettings.cancelWindowHours })}
+                </Text>
+                {paymentMode === 'hotel' && (
+                  <Text style={styles.dpDue}>
+                    Pay the downpayment at the front desk within {dpSettings.dueHours} hours of booking (or before check-in, if that's sooner). Unpaid reservations may be released.
+                  </Text>
+                )}
+                <TouchableOpacity
+                  style={styles.dpAgreeRow}
+                  onPress={() => { setDpAgreed((v) => !v); clearError('dpAgreed'); }}
+                  activeOpacity={0.8}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: dpAgreed }}
+                >
+                  <View style={[styles.checkbox, dpAgreed && styles.checkboxChecked]}>
+                    {dpAgreed && <Text style={styles.checkmark}>✓</Text>}
+                  </View>
+                  <Text style={styles.dpAgreeText}>{downpaymentAgreement({ amount: downpayment, balance })}</Text>
+                </TouchableOpacity>
+                {errors.dpAgreed && <Text style={styles.errorText}>{errors.dpAgreed}</Text>}
+              </View>
+            )}
+
             {/* Terms & Conditions */}
             <TouchableOpacity
               style={[styles.termsRow, errors.agreed && styles.termsRowError]}
@@ -646,7 +751,7 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
                 {confirming
                   ? <ActivityIndicator color={colors.onPrimary} />
                   : <Text style={styles.confirmBtnText}>
-                      {paymentMode === 'online' ? 'Pay Now' : 'Confirm Reservation'}
+                      {paymentMode === 'online' && hasDownpayment ? 'Pay Downpayment' : 'Confirm Reservation'}
                     </Text>
                 }
               </TouchableOpacity>
@@ -703,9 +808,26 @@ export default function ReviewPayScreen({ bookingDetails, selectedRooms, user, o
               <Text style={styles.totalValue}>{formatCurrency(total)}</Text>
             </View>
 
+            {hasDownpayment && (
+              <>
+                <View style={styles.calcRow}>
+                  <Text style={styles.calcLabel}>Downpayment ({dpPercent}%)</Text>
+                  <Text style={[styles.calcValue, { fontFamily: fonts.bodySemiBold }]}>{formatCurrency(downpayment)}</Text>
+                </View>
+                <View style={styles.calcRow}>
+                  <Text style={styles.calcLabel}>Balance at the hotel</Text>
+                  <Text style={styles.calcValue}>{formatCurrency(balance)}</Text>
+                </View>
+              </>
+            )}
+
             <Text style={styles.taxNote}>*Includes taxes and service charges.</Text>
             <Text style={[styles.taxNote, { fontFamily: fonts.bodySemiBold, marginTop: 2 }]}>
-              * {paymentMode === 'online' ? 'Pay online upon confirmation.' : 'Pay at hotel upon check-in.'}
+              * {!hasDownpayment
+                  ? 'Pay at hotel upon check-in.'
+                  : paymentMode === 'online'
+                    ? 'Downpayment paid online now; balance paid at the hotel.'
+                    : `Downpayment paid at the front desk within ${dpSettings.dueHours} hours; balance at the hotel.`}
             </Text>
 
             {/* Reservation ID badge — only appears once addDoc has actually
@@ -744,7 +866,7 @@ function formatDateTime(value) {
 // labelled so it can never be mistaken for a real payment receipt.
 function SimulatedPaymentReceipt({ payment, styles }) {
   const paidAt = new Date(payment.paidAt);
-  const refundUntil = new Date(paidAt.getTime() + 24 * 60 * 60 * 1000);
+  const refundUntil = new Date(paidAt.getTime() + (payment.refundWindowHours || 24) * 60 * 60 * 1000);
   return (
     <View style={styles.simReceipt}>
       <View style={styles.simStamp}>
@@ -754,7 +876,10 @@ function SimulatedPaymentReceipt({ payment, styles }) {
 
       <View style={styles.simReceiptRows}>
         <SimRow styles={styles} label="E-wallet (demo)" value={EWALLET_LABELS[payment.walletId] || payment.walletId} />
-        <SimRow styles={styles} label="Amount (simulated)" value={formatCurrency(payment.amount)} />
+        <SimRow styles={styles} label={payment.isDownpayment ? 'Downpayment (simulated)' : 'Amount (simulated)'} value={formatCurrency(payment.amount)} />
+        {payment.isDownpayment && (
+          <SimRow styles={styles} label="Balance at the hotel" value={formatCurrency(payment.balance)} />
+        )}
         <SimRow styles={styles} label="Payment time" value={formatDateTime(paidAt)} />
         <SimRow styles={styles} label="Refund requests until" value={formatDateTime(refundUntil)} last />
       </View>
@@ -843,6 +968,22 @@ function getStyles(colors, spacing, radius, fonts) {
     termsRowError: { borderColor: colors.danger, backgroundColor: colors.dangerBg },
     checkbox:        { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center', marginTop: 1, flexShrink: 0 },
     checkboxChecked: { backgroundColor: colors.primary, borderColor: colors.primary },
+
+    // Downpayment reminder (highlighted, gold accent — readable in light and dark)
+    dpBox: {
+      borderRadius: radius.md, borderWidth: 1, borderColor: '#C9A14A', borderLeftWidth: 4,
+      backgroundColor: colors.cardAlt, padding: spacing.md, marginBottom: spacing.md, gap: 6,
+    },
+    dpBoxError: { borderColor: colors.danger },
+    dpHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
+    dpTitle: { fontSize: 14, fontFamily: fonts.headingBold, color: colors.text },
+    dpRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.md },
+    dpRowLabel: { fontSize: 13, fontFamily: fonts.body, color: colors.textMuted, flexShrink: 1 },
+    dpRowValue: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.text },
+    dpText: { fontSize: 12.5, lineHeight: 18, fontFamily: fonts.body, color: colors.text, marginTop: 4 },
+    dpDue: { fontSize: 12.5, lineHeight: 18, fontFamily: fonts.bodySemiBold, color: colors.text },
+    dpAgreeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm, marginTop: 6 },
+    dpAgreeText: { flex: 1, fontSize: 12.5, lineHeight: 18, fontFamily: fonts.bodyMedium, color: colors.text },
     checkmark:       { color: colors.onPrimary, fontSize: 11, fontFamily: fonts.bodySemiBold },
     termsText:       { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, flex: 1, lineHeight: 16 },
     termsLink:       { color: colors.primary, fontFamily: fonts.bodySemiBold, textDecorationLine: 'underline' },

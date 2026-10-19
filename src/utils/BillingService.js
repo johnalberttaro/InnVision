@@ -87,9 +87,15 @@ function transactionToCamel(row) {
 /**
  * Creates a guest folio. Called automatically by the check-in flow.
  *
- * If the reservation was paid online (paymentMode: 'online'), the folio
- * is auto-settled immediately after creation via recordPayment(), using
- * the reservation's eWalletProvider as the payment method.
+ * Payments already made before check-in are recorded on the new folio
+ * right away via recordPayment():
+ *  - DOWNPAYMENT (sql/downpayment.sql): if the reservation's downpayment is
+ *    'paid' (simulated e-wallet at booking, or recorded by the front desk),
+ *    exactly that amount is recorded, so the folio starts "Partially paid"
+ *    with the balance still to collect.
+ *  - OLDER bookings with no downpayment: unchanged. If paid online
+ *    (paymentMode: 'online'), the whole folio is auto-settled, using the
+ *    reservation's eWalletProvider as the payment method.
  *
  * paymentMode/eWalletProvider can be passed in directly if the caller
  * already has them; otherwise they're looked up from the reservation row.
@@ -132,25 +138,50 @@ export async function createBillingRecord({
 
   const folioId = inserted.id;
 
-  // Fall back to reading the reservation row if the caller didn't pass
-  // payment info explicitly.
-  if (paymentMode === undefined && reservationRef) {
+  // Read the reservation's payment info (and its downpayment, if any). The
+  // caller's paymentMode/eWalletProvider still win when passed explicitly.
+  let downpayment = null;
+  if (reservationRef) {
     try {
       const { data: resData } = await supabase
         .from('reservations')
-        .select('payment_mode, ewallet_provider')
+        .select('payment_mode, ewallet_provider, downpayment_status, downpayment_amount, downpayment_method, downpayment_recorded_by, downpayment_recorded_by_name')
         .eq('id', reservationRef)
         .single();
       if (resData) {
-        paymentMode = resData.payment_mode;
-        eWalletProvider = resData.ewallet_provider;
+        if (paymentMode === undefined) paymentMode = resData.payment_mode;
+        if (eWalletProvider === undefined) eWalletProvider = resData.ewallet_provider;
+        if (resData.downpayment_status) downpayment = resData;
       }
     } catch (err) {
       console.error('Could not look up reservation payment info for auto-settlement:', err);
     }
   }
 
-  if (paymentMode === 'online' && totalAmountDue > 0) {
+  if (downpayment) {
+    // Downpayment booking: record only what was actually paid up front.
+    // Pending (never paid) or refunded downpayments record nothing; the
+    // front desk collects the full amount as usual.
+    const paidAmount = Math.min(Number(downpayment.downpayment_amount) || 0, totalAmountDue);
+    if (downpayment.downpayment_status === 'paid' && paidAmount > 0) {
+      const online = paymentMode === 'online';
+      try {
+        await recordPayment({
+          folioId,
+          amount: paidAmount,
+          paymentMethod: downpayment.downpayment_method || (online ? eWalletProvider || 'online' : 'cash'),
+          processedByUid: online ? null : downpayment.downpayment_recorded_by || null,
+          // 'Online Payment (Auto)' is what marks a receipt as SIMULATED
+          // (ReceiptDetailModal.jsx's isSimulatedReceipt).
+          processedByName: online
+            ? 'Online Payment (Auto)'
+            : `${downpayment.downpayment_recorded_by_name || 'Front Desk'} (Downpayment)`,
+        });
+      } catch (err) {
+        console.error(`Recording the downpayment failed for folio ${folioId}:`, err);
+      }
+    }
+  } else if (paymentMode === 'online' && totalAmountDue > 0) {
     try {
       await recordPayment({
         folioId,

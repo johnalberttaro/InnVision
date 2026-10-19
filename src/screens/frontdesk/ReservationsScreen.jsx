@@ -19,6 +19,7 @@ import { updateRoomStatus, ROOM_STATUS, isDoubleBookingError } from '../../utils
 import WalkInScreen from './WalkInScreen';
 import TapeChartScreen from './TapeChartScreen';
 import RecordPaymentModal from './RecordPaymentModal';
+import { getDownpaymentInfo, downpaymentBadge, downpaymentMethodLabel, formatDueDate } from '../../utils/downpayment';
 import {
   fetchPendingExtensions,
   approveStayExtension,
@@ -35,6 +36,7 @@ const TABS = [
   { key: 'reservations:all',       label: 'All',         icon: 'list-outline' },
   { key: 'reservations:pending',   label: 'Pending',      icon: 'time-outline' },
   { key: 'reservations:confirmed', label: 'Confirmed',    icon: 'checkmark-circle-outline' },
+  { key: 'reservations:downpayment', label: 'Awaiting Downpayment', icon: 'wallet-outline' },
   { key: 'reservations:checkins',  label: 'Check-ins',    icon: 'log-in-outline' },
   { key: 'reservations:checkouts', label: 'Check-outs',   icon: 'log-out-outline' },
   { key: 'reservations:extensions', label: 'Extensions',  icon: 'calendar-number-outline' },
@@ -107,6 +109,10 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
   // RecordPaymentModal, reached from checkoutWarning's "Collect Payment".
   const [checkoutWarning, setCheckoutWarning] = useState(null);
   const [recordPaymentFolio, setRecordPaymentFolio] = useState(null);
+  // "Record Downpayment" dialog (pay-at-hotel bookings): { item } | null.
+  const [downpaymentTarget, setDownpaymentTarget] = useState(null);
+  const [downpaymentMethod, setDownpaymentMethod] = useState('cash');
+  const [recordingDownpayment, setRecordingDownpayment] = useState(false);
 
   const confirmDialog = (title, message, confirmLabel, onConfirmPressed) => {
     setDialogState({
@@ -150,6 +156,13 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     refundRequestedAt: row.refund_requested_at,
     refundProcessedAt: row.refund_processed_at,
     refundProcessedByName: row.refund_processed_by_name,
+    // Downpayment (sql/downpayment.sql) — empty on bookings made before it.
+    downpaymentAmount: row.downpayment_amount,
+    downpaymentStatus: row.downpayment_status,
+    downpaymentDueAt: row.downpayment_due_at,
+    downpaymentPaidAt: row.downpayment_paid_at,
+    downpaymentMethod: row.downpayment_method,
+    downpaymentRecordedByName: row.downpayment_recorded_by_name,
   });
 
   // Human-readable labels for known e-wallet providers — same mapping
@@ -487,10 +500,24 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     );
   };
 
+  // One line for dialogs: what was paid up front and what's still due.
+  const downpaymentSummary = (item) => {
+    const dp = getDownpaymentInfo(item);
+    if (!dp.applies) return '';
+    if (dp.status === 'paid') {
+      return `Downpayment paid: ${formatCurrency(dp.amount)} (${downpaymentMethodLabel(dp.method)}). Balance due: ${formatCurrency(dp.balance)}.`;
+    }
+    if (dp.status === 'pending') {
+      return `Downpayment NOT paid yet (${formatCurrency(dp.amount)}). Full amount due: ${formatCurrency(dp.total)}.`;
+    }
+    return '';
+  };
+
   const handleCheckIn = (item) => {
+    const dpLine = downpaymentSummary(item);
     confirmDialog(
       'Check in this guest?',
-      `${getGuestName(item)} — ${item.roomType}`,
+      `${getGuestName(item)} — ${item.roomType}${dpLine ? `\n\n${dpLine}` : ''}`,
       'Check In',
       () =>
         runStatusUpdate({
@@ -578,10 +605,20 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
   // would mislabel this as a "reservation_cancelled" notification instead
   // of a refund one. Same shape otherwise (setActingId, confirm-then-act,
   // toast, notification, reload, error handling).
+  // With a downpayment, only the downpayment that was paid is refunded.
+  const refundAmount = (item) => {
+    const dp = getDownpaymentInfo(item);
+    return dp.applies ? dp.amount : item.totalAmount;
+  };
+  const refundViaLabel = (item) => {
+    const dp = getDownpaymentInfo(item);
+    return dp.applies && dp.method ? downpaymentMethodLabel(dp.method) : paymentProviderLabel(item);
+  };
+
   const handleMarkRefunded = (item) => {
     confirmDialog(
       'Mark this refund as processed?',
-      `${getGuestName(item)} — ${formatCurrency(item.totalAmount)} via ${paymentProviderLabel(item)}. Only confirm after you've actually sent the refund — this just records that it's done.`,
+      `${getGuestName(item)} — ${formatCurrency(refundAmount(item))}${getDownpaymentInfo(item).applies ? ' downpayment' : ''} via ${refundViaLabel(item)}. Only confirm after you've actually sent the refund — this just records that it's done.`,
       'Mark as Refunded',
       () => runRefundUpdate(item)
     );
@@ -597,6 +634,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
           refund_processed_at: new Date().toISOString(),
           refund_processed_by: staffUid || null,
           refund_processed_by_name: staffName || 'Staff',
+          ...(item.downpaymentStatus === 'refund_pending' ? { downpayment_status: 'refunded' } : {}),
         })
         .eq('id', item.id);
       if (error) throw error;
@@ -606,7 +644,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
           user_id: item.uid,
           type: 'refund_processed',
           title: 'Refund Processed',
-          message: `Your refund of ${formatCurrency(item.totalAmount)} for the cancelled reservation has been processed.`,
+          message: `Your refund of ${formatCurrency(refundAmount(item))} for the cancelled reservation has been processed.`,
           reservation_id: item.id,
           read: false,
         });
@@ -620,6 +658,49 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
       notifyDialog('Error', 'Could not update this refund. Please try again.');
     } finally {
       setActingId(null);
+    }
+  };
+
+  // Pay-at-hotel downpayment received at the front desk (cash, GCash, card).
+  // record_downpayment() (sql/downpayment.sql) checks staff role and status.
+  const openRecordDownpayment = (item) => {
+    setDownpaymentMethod('cash');
+    setDownpaymentTarget({ item });
+  };
+
+  const submitRecordDownpayment = async () => {
+    if (!downpaymentTarget) return;
+    const { item } = downpaymentTarget;
+    const dp = getDownpaymentInfo(item);
+    setRecordingDownpayment(true);
+    try {
+      const { error } = await supabase.rpc('record_downpayment', {
+        p_reservation_id: item.id,
+        p_method: downpaymentMethod,
+      });
+      if (error) throw error;
+
+      if (item.uid) {
+        const { error: notifError } = await supabase.from('notifications').insert({
+          user_id: item.uid,
+          type: 'downpayment_received',
+          title: 'Downpayment Received',
+          message: `We received your downpayment of ${formatCurrency(dp.amount)}. Your reservation is secured. The balance of ${formatCurrency(dp.balance)} is payable at the hotel.`,
+          reservation_id: item.id,
+          read: false,
+        });
+        if (notifError) console.error('Failed to create notification:', notifError);
+      }
+
+      setDownpaymentTarget(null);
+      showToast(`Downpayment of ${formatCurrency(dp.amount)} recorded for ${getGuestName(item)}`);
+      await loadBookings();
+    } catch (err) {
+      console.error('Failed to record downpayment:', err);
+      setDownpaymentTarget(null);
+      notifyDialog('Could not record downpayment', err?.message || 'Please try again.');
+    } finally {
+      setRecordingDownpayment(false);
     }
   };
 
@@ -667,9 +748,21 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
       // pattern as every other filter here. A "Refund History" view would
       // be a reasonable follow-up but isn't what this nav item asks for.
       case 'reservations:refunds':   return b.refundStatus === 'pending';
+      // Pay-at-hotel bookings whose downpayment hasn't been recorded yet
+      // (overdue ones first, see sort below).
+      case 'reservations:downpayment': return getDownpaymentInfo(b).awaiting;
       default: return true;
     }
   });
+
+  if (activeTab === 'reservations:downpayment') {
+    filteredBookings.sort((a, b) => {
+      const da = getDownpaymentInfo(a), db = getDownpaymentInfo(b);
+      if (da.overdue !== db.overdue) return da.overdue ? -1 : 1;
+      return new Date(da.dueAt || 0) - new Date(db.dueAt || 0);
+    });
+  }
+  const awaitingDownpaymentCount = bookings.filter((b) => getDownpaymentInfo(b).awaiting).length;
 
   const emptyMessages = {
     'reservations:all': 'No bookings yet.',
@@ -678,6 +771,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     'reservations:checkins': 'No arrivals due or overdue right now.',
     'reservations:checkouts': 'No checkouts due or overdue right now.',
     'reservations:refunds': 'No refunds pending right now.',
+    'reservations:downpayment': 'No reservations are waiting for a downpayment.',
     'reservations:extensions': 'No extension requests right now.',
   };
 
@@ -695,7 +789,9 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
               tab={
                 tab.key === 'reservations:extensions' && Object.keys(pendingExtensions).length > 0
                   ? { ...tab, label: `${tab.label} (${Object.keys(pendingExtensions).length})` }
-                  : tab
+                  : tab.key === 'reservations:downpayment' && awaitingDownpaymentCount > 0
+                    ? { ...tab, label: `${tab.label} (${awaitingDownpaymentCount})` }
+                    : tab
               }
               active={activeTab === tab.key}
               onPress={() => setActiveTab(tab.key)}
@@ -833,6 +929,69 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
                   </Text>
                 </View>
 
+                {/* Downpayment: status, amount paid, balance due */}
+                {(() => {
+                  const dp = getDownpaymentInfo(item);
+                  const badge = downpaymentBadge(dp);
+                  if (!badge) return null;
+                  return (
+                    <View style={[styles.dpPanel, dp.overdue && styles.dpPanelOverdue]}>
+                      <View style={styles.dpPanelHead}>
+                        <View style={[styles.dpBadge, { backgroundColor: badge.bg }]}>
+                          <Ionicons name={badge.icon} size={12} color={badge.text} />
+                          <Text style={[styles.dpBadgeText, { color: badge.text }]}>{badge.label.toUpperCase()}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.detailRow}>
+                        <Text style={styles.detailLabel}>Downpayment</Text>
+                        <Text style={styles.detailValue}>{formatCurrency(dp.amount)}</Text>
+                      </View>
+                      <View style={styles.detailRow}>
+                        <Text style={styles.detailLabel}>Amount paid</Text>
+                        <Text style={styles.detailValue}>
+                          {dp.paid ? `${formatCurrency(dp.amount)} · ${downpaymentMethodLabel(dp.method)}${(item.paymentMode || '') === 'online' ? ' (simulated)' : ''}` : formatCurrency(0)}
+                        </Text>
+                      </View>
+                      <View style={styles.detailRow}>
+                        <Text style={styles.detailLabel}>Balance due</Text>
+                        <Text style={[styles.detailValue, { fontFamily: fonts.bodySemiBold }]}>
+                          {formatCurrency(dp.paid && dp.status === 'paid' ? dp.balance : dp.total)}
+                        </Text>
+                      </View>
+                      {dp.status === 'pending' && !!dp.dueAt && (
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailLabel}>{dp.overdue ? 'Was due' : 'Due by'}</Text>
+                          <Text style={[styles.detailValue, dp.overdue && { color: '#B3261E', fontFamily: fonts.bodySemiBold }]}>
+                            {formatDueDate(dp.dueAt)}
+                          </Text>
+                        </View>
+                      )}
+                      {dp.status === 'paid' && !!dp.recordedByName && (item.paymentMode || '') !== 'online' && (
+                        <View style={styles.detailRow}>
+                          <Text style={styles.detailLabel}>Recorded by</Text>
+                          <Text style={styles.detailValue}>{dp.recordedByName}</Text>
+                        </View>
+                      )}
+                      {dp.overdue && (
+                        <Text style={styles.dpOverdueText}>
+                          Not paid by the deadline. You may release the room (decline or cancel this booking), or record the downpayment if the guest pays now.
+                        </Text>
+                      )}
+                      {dp.awaiting && (
+                        <TouchableOpacity
+                          style={[styles.dpRecordBtn, isActing && styles.actionButtonDisabled]}
+                          onPress={() => openRecordDownpayment(item)}
+                          disabled={isActing}
+                          activeOpacity={0.85}
+                        >
+                          <Ionicons name="wallet-outline" size={15} color={colors.white} />
+                          <Text style={styles.actionButtonText}>Record Downpayment</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  );
+                })()}
+
                 {/* NEW: actual check-in/check-out timestamps (as opposed to
                     "Dates" above, which is the BOOKED stay range, not when
                     the guest physically arrived/left). checked_in_at/
@@ -859,7 +1018,13 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
                   <>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Refund via</Text>
-                      <Text style={styles.detailValue}>{paymentProviderLabel(item)}</Text>
+                      <Text style={styles.detailValue}>{refundViaLabel(item)}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>Refund amount</Text>
+                      <Text style={styles.detailValue}>
+                        {formatCurrency(refundAmount(item))}{getDownpaymentInfo(item).applies ? ' (downpayment)' : ''}
+                      </Text>
                     </View>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Requested</Text>
@@ -1107,6 +1272,60 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
         </View>
       </Modal>
 
+      {/* Record Downpayment (pay-at-hotel) */}
+      <Modal visible={!!downpaymentTarget} transparent animationType="fade" onRequestClose={() => !recordingDownpayment && setDownpaymentTarget(null)}>
+        <View style={styles.dialogOverlay}>
+          <View style={styles.dialogCard}>
+            {!!downpaymentTarget && (() => {
+              const { item } = downpaymentTarget;
+              const dp = getDownpaymentInfo(item);
+              return (
+                <>
+                  <View style={[styles.dialogIconWrap, styles.dialogIconWrapDefault]}>
+                    <Ionicons name="wallet" size={24} color={colors.primary} />
+                  </View>
+                  <Text style={styles.dialogTitle}>Record downpayment</Text>
+                  <Text style={styles.balanceDialogSubtitle}>{getGuestName(item)} · {getReferenceNumber(item.id)}</Text>
+                  <Text style={styles.balanceDialogAmount}>{formatCurrency(dp.amount)}</Text>
+                  <Text style={styles.dialogMessage}>
+                    Balance after this: {formatCurrency(dp.balance)}, payable at check-in or check-out. It will be counted on the guest's bill at check-in.
+                  </Text>
+                  <Text style={styles.dpMethodLabel}>Paid with</Text>
+                  <View style={styles.dpMethodRow}>
+                    {[
+                      { id: 'cash', label: 'Cash', icon: 'cash-outline' },
+                      { id: 'gcash', label: 'GCash', icon: 'phone-portrait-outline' },
+                      { id: 'card', label: 'Card', icon: 'card-outline' },
+                    ].map((m) => (
+                      <TouchableOpacity
+                        key={m.id}
+                        style={[styles.dpMethodChip, downpaymentMethod === m.id && styles.dpMethodChipActive]}
+                        onPress={() => setDownpaymentMethod(m.id)}
+                        disabled={recordingDownpayment}
+                        activeOpacity={0.85}
+                      >
+                        <Ionicons name={m.icon} size={14} color={downpaymentMethod === m.id ? colors.white : colors.text} />
+                        <Text style={[styles.dpMethodChipText, downpaymentMethod === m.id && { color: colors.white }]}>{m.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <View style={[styles.dialogActions, { marginTop: spacing.md }]}>
+                    <TouchableOpacity style={styles.dialogCancelBtn} onPress={() => setDownpaymentTarget(null)} disabled={recordingDownpayment} activeOpacity={0.85}>
+                      <Text style={styles.dialogCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.dialogConfirmBtn} onPress={submitRecordDownpayment} disabled={recordingDownpayment} activeOpacity={0.85}>
+                      {recordingDownpayment
+                        ? <ActivityIndicator color={colors.white} size="small" />
+                        : <Text style={styles.dialogConfirmText}>Record {formatCurrency(dp.amount)}</Text>}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
+
       <RecordPaymentModal
         visible={!!recordPaymentFolio}
         folio={recordPaymentFolio}
@@ -1334,6 +1553,28 @@ const styles = StyleSheet.create({
     borderColor: '#C3D4EE',
   },
   extensionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // Downpayment panel on each card
+  dpPanel: {
+    marginTop: spacing.sm, padding: spacing.sm + 2, borderRadius: radius.md,
+    backgroundColor: '#FBF6EA', borderWidth: 1, borderColor: '#EBD9AE',
+  },
+  dpPanelOverdue: { backgroundColor: '#FDF0EF', borderColor: '#F3C7C4' },
+  dpPanelHead: { flexDirection: 'row', marginBottom: 4 },
+  dpBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999 },
+  dpBadgeText: { fontSize: 10.5, fontFamily: fonts.bodySemiBold, letterSpacing: 0.4 },
+  dpOverdueText: { fontSize: 12, fontFamily: fonts.body, color: '#B3261E', marginTop: 4, lineHeight: 17 },
+  dpRecordBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginTop: spacing.sm, paddingVertical: spacing.sm, borderRadius: 999, backgroundColor: colors.primary,
+  },
+  dpMethodLabel: { alignSelf: 'flex-start', fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text, marginTop: spacing.sm, marginBottom: 6 },
+  dpMethodRow: { flexDirection: 'row', gap: spacing.sm, alignSelf: 'stretch' },
+  dpMethodChip: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 9, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card,
+  },
+  dpMethodChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  dpMethodChipText: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: colors.text },
   extensionTitle: { fontSize: 13, fontFamily: fonts.bodySemiBold, color: '#2C5EA8' },
   extensionText: { fontSize: 12, fontFamily: fonts.body, color: colors.text, marginTop: 4 },
   extensionMeta: { fontSize: 11, fontFamily: fonts.body, color: colors.textMuted, marginTop: 2 },

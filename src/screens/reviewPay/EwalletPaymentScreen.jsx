@@ -66,6 +66,10 @@ const NOTICE_COLORS = {
  *  - roomTypeSummary: string
  *  - guestName: string
  *  - subtotal, tax, total: number
+ *  - downpayment, balance: number (optional) — when set, the guest pays only
+ *      the downpayment here and the balance at the hotel (utils/downpayment.js).
+ *      Left out, the full total is paid (the old behaviour).
+ *  - cancelWindowHours: number (optional, default 24)
  *  - onCancel: () => void                 return to the guest details form
  *  - onConfirmPayment: (walletId) => void  called after the simulated
  *      "processing" delay completes; parent handles the reservation write
@@ -79,9 +83,14 @@ export default function EwalletPaymentScreen({
   subtotal,
   tax,
   total,
+  downpayment,
+  balance,
+  cancelWindowHours = 24,
   onCancel,
   onConfirmPayment,
 }) {
+  const isDownpayment = downpayment != null && downpayment > 0;
+  const payNow = isDownpayment ? downpayment : total;
   const { colors, spacing, radius, fonts, isDark } = useTheme();
   const notice = isDark ? NOTICE_COLORS.dark : NOTICE_COLORS.light;
   const styles = useMemo(
@@ -141,7 +150,15 @@ export default function EwalletPaymentScreen({
         <Text style={styles.summaryHeading}>
           <Ionicons name="receipt-outline" size={13} color={colors.primary} /> Summary Of Transaction
         </Text>
-        <SummaryRow styles={styles} label="Net Charges" value={formatCurrency(total)} strong />
+        {isDownpayment ? (
+          <>
+            <SummaryRow styles={styles} label="Downpayment to pay now" value={formatCurrency(payNow)} strong />
+            <SummaryRow styles={styles} label="Balance payable at the hotel" value={formatCurrency(balance)} />
+            <SummaryRow styles={styles} label="Net Charges (whole stay)" value={formatCurrency(total)} />
+          </>
+        ) : (
+          <SummaryRow styles={styles} label="Net Charges" value={formatCurrency(total)} strong />
+        )}
         <SummaryRow styles={styles} label="Pay To" value="INNVISION HOTEL" />
         <SummaryRow styles={styles} label="Payment Of" value={`${roomTypeSummary} • ${formatDate(checkIn)} – ${formatDate(checkOut)}`} />
         <SummaryRow styles={styles} label="Guest" value={guestName} />
@@ -198,18 +215,20 @@ export default function EwalletPaymentScreen({
           <Text style={[styles.noticeTitle, { color: notice.warn.title }]}>
             Important:{' '}
             <Text style={[styles.noticeText, { color: notice.warn.text }]}>
-              E-wallet payments are non-refundable after 24 hours from the payment time. Please review the refund policy carefully before proceeding.
+              {isDownpayment
+                ? `You are paying the downpayment only (${formatCurrency(payNow)}). The balance of ${formatCurrency(balance)} is paid at the hotel. The downpayment is refundable only if you cancel within ${cancelWindowHours} hours of payment.`
+                : `E-wallet payments are non-refundable after ${cancelWindowHours} hours from the payment time. Please review the refund policy carefully before proceeding.`}
             </Text>
           </Text>
 
           <View style={styles.policyList}>
-            <PolicyLine styles={styles} color={notice.warn.text} label="When the 24 hours start:">
+            <PolicyLine styles={styles} color={notice.warn.text} label={`When the ${cancelWindowHours} hours start:`}>
               the moment you tap "Confirm Simulated Payment". That exact date and time is shown on your confirmation.
             </PolicyLine>
-            <PolicyLine styles={styles} color={notice.warn.text} label="Within 24 hours:">
-              you may cancel from My Reservations and request a refund. Each request is reviewed by the front desk — it is not approved automatically.
+            <PolicyLine styles={styles} color={notice.warn.text} label={`Within ${cancelWindowHours} hours:`}>
+              you may cancel from My Reservations and request a refund{isDownpayment ? ' of the downpayment you paid' : ''}. Each request is reviewed by the front desk — it is not approved automatically.
             </PolicyLine>
-            <PolicyLine styles={styles} color={notice.warn.text} label="After 24 hours:">
+            <PolicyLine styles={styles} color={notice.warn.text} label={`After ${cancelWindowHours} hours:`}>
               the booking can no longer be cancelled for a refund.
             </PolicyLine>
             <PolicyLine styles={styles} color={notice.warn.text} label="Demo policy:">
@@ -229,7 +248,7 @@ export default function EwalletPaymentScreen({
               {refundAcknowledged && <Ionicons name="checkmark" size={13} color={notice.warn.check} />}
             </View>
             <Text style={[styles.ackText, { color: notice.warn.title }]}>
-              I have read and understand the 24-hour refund policy for this simulated e-wallet payment.
+              I have read and understand the {cancelWindowHours}-hour refund policy for this simulated e-wallet payment.
             </Text>
           </TouchableOpacity>
         </View>
@@ -241,7 +260,7 @@ export default function EwalletPaymentScreen({
           <View style={styles.divider} />
           {selectedOption && (
             <Text style={styles.selectedWalletNote}>
-              Simulated payment with <Text style={styles.selectedWalletNoteStrong}>{selectedOption.label}</Text>
+              Simulated payment of <Text style={styles.selectedWalletNoteStrong}>{formatCurrency(payNow)}</Text> with <Text style={styles.selectedWalletNoteStrong}>{selectedOption.label}</Text>
             </Text>
           )}
           <View style={styles.actionRow}>
