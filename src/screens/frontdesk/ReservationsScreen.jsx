@@ -163,6 +163,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     downpaymentPaidAt: row.downpayment_paid_at,
     downpaymentMethod: row.downpayment_method,
     downpaymentRecordedByName: row.downpayment_recorded_by_name,
+    paymentOption: row.payment_option,
   });
 
   // Human-readable labels for known e-wallet providers — same mapping
@@ -505,6 +506,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     const dp = getDownpaymentInfo(item);
     if (!dp.applies) return '';
     if (dp.status === 'paid') {
+      if (dp.full) return `Paid in full: ${formatCurrency(dp.amount)} (${downpaymentMethodLabel(dp.method)}). Balance due: ${formatCurrency(0)}.`;
       return `Downpayment paid: ${formatCurrency(dp.amount)} (${downpaymentMethodLabel(dp.method)}). Balance due: ${formatCurrency(dp.balance)}.`;
     }
     if (dp.status === 'pending') {
@@ -618,7 +620,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
   const handleMarkRefunded = (item) => {
     confirmDialog(
       'Mark this refund as processed?',
-      `${getGuestName(item)} — ${formatCurrency(refundAmount(item))}${getDownpaymentInfo(item).applies ? ' downpayment' : ''} via ${refundViaLabel(item)}. Only confirm after you've actually sent the refund — this just records that it's done.`,
+      `${getGuestName(item)} — ${formatCurrency(refundAmount(item))}${getDownpaymentInfo(item).applies ? (getDownpaymentInfo(item).full ? ' full payment' : ' downpayment') : ''} via ${refundViaLabel(item)}. Only confirm after you've actually sent the refund — this just records that it's done.`,
       'Mark as Refunded',
       () => runRefundUpdate(item)
     );
@@ -783,7 +785,11 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.tabBarContent}
         >
-          {TABS.map((tab) => (
+          {TABS
+            // Guests pay the downpayment by e-wallet when booking, so this tab
+            // only matters for older bookings still waiting for one.
+            .filter((tab) => tab.key !== 'reservations:downpayment' || awaitingDownpaymentCount > 0 || activeTab === tab.key)
+            .map((tab) => (
             <ReservationTabButton
               key={tab.key}
               tab={
@@ -943,13 +949,13 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
                         </View>
                       </View>
                       <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Downpayment</Text>
-                        <Text style={styles.detailValue}>{formatCurrency(dp.amount)}</Text>
+                        <Text style={styles.detailLabel}>{dp.full ? 'Payment option' : 'Downpayment'}</Text>
+                        <Text style={styles.detailValue}>{dp.full ? `Pay in full · ${formatCurrency(dp.amount)}` : formatCurrency(dp.amount)}</Text>
                       </View>
                       <View style={styles.detailRow}>
                         <Text style={styles.detailLabel}>Amount paid</Text>
                         <Text style={styles.detailValue}>
-                          {dp.paid ? `${formatCurrency(dp.amount)} · ${downpaymentMethodLabel(dp.method)}${(item.paymentMode || '') === 'online' ? ' (simulated)' : ''}` : formatCurrency(0)}
+                          {dp.paid ? `${formatCurrency(dp.amount)} · ${downpaymentMethodLabel(dp.method)}${dp.paidOnline ? ' (simulated e-wallet)' : ''}` : formatCurrency(0)}
                         </Text>
                       </View>
                       <View style={styles.detailRow}>
@@ -966,7 +972,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
                           </Text>
                         </View>
                       )}
-                      {dp.status === 'paid' && !!dp.recordedByName && (item.paymentMode || '') !== 'online' && (
+                      {dp.status === 'paid' && !!dp.recordedByName && !dp.paidOnline && (
                         <View style={styles.detailRow}>
                           <Text style={styles.detailLabel}>Recorded by</Text>
                           <Text style={styles.detailValue}>{dp.recordedByName}</Text>
@@ -1023,7 +1029,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>Refund amount</Text>
                       <Text style={styles.detailValue}>
-                        {formatCurrency(refundAmount(item))}{getDownpaymentInfo(item).applies ? ' (downpayment)' : ''}
+                        {formatCurrency(refundAmount(item))}{getDownpaymentInfo(item).applies ? (getDownpaymentInfo(item).full ? ' (full payment)' : ' (downpayment)') : ''}
                       </Text>
                     </View>
                     <View style={styles.detailRow}>

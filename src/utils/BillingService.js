@@ -164,7 +164,10 @@ export async function createBillingRecord({
     // front desk collects the full amount as usual.
     const paidAmount = Math.min(Number(downpayment.downpayment_amount) || 0, totalAmountDue);
     if (downpayment.downpayment_status === 'paid' && paidAmount > 0) {
-      const online = paymentMode === 'online';
+      // Online = paid with the simulated e-wallet: at booking (Pay Online) or
+      // later from My Reservations (pay_downpayment_online, which records it
+      // as 'Online Payment (Auto)').
+      const online = paymentMode === 'online' || downpayment.downpayment_recorded_by_name === 'Online Payment (Auto)';
       try {
         await recordPayment({
           folioId,

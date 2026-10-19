@@ -70,6 +70,9 @@ const NOTICE_COLORS = {
  *      the downpayment here and the balance at the hotel (utils/downpayment.js).
  *      Left out, the full total is paid (the old behaviour).
  *  - cancelWindowHours: number (optional, default 24)
+ *  - refundNote: string (optional) — replaces the "When the 24 hours start"
+ *      line, e.g. when paying a downpayment later and the window is counted
+ *      from the booking time (components/shared/DownpaymentPanel.jsx).
  *  - onCancel: () => void                 return to the guest details form
  *  - onConfirmPayment: (walletId) => void  called after the simulated
  *      "processing" delay completes; parent handles the reservation write
@@ -86,6 +89,7 @@ export default function EwalletPaymentScreen({
   downpayment,
   balance,
   cancelWindowHours = 24,
+  refundNote,
   onCancel,
   onConfirmPayment,
 }) {
@@ -222,9 +226,15 @@ export default function EwalletPaymentScreen({
           </Text>
 
           <View style={styles.policyList}>
-            <PolicyLine styles={styles} color={notice.warn.text} label={`When the ${cancelWindowHours} hours start:`}>
-              the moment you tap "Confirm Simulated Payment". That exact date and time is shown on your confirmation.
-            </PolicyLine>
+            {refundNote ? (
+              <PolicyLine styles={styles} color={notice.warn.text} label="Refund deadline:">
+                {refundNote}
+              </PolicyLine>
+            ) : (
+              <PolicyLine styles={styles} color={notice.warn.text} label={`When the ${cancelWindowHours} hours start:`}>
+                the moment you tap "Confirm Simulated Payment". That exact date and time is shown on your confirmation.
+              </PolicyLine>
+            )}
             <PolicyLine styles={styles} color={notice.warn.text} label={`Within ${cancelWindowHours} hours:`}>
               you may cancel from My Reservations and request a refund{isDownpayment ? ' of the downpayment you paid' : ''}. Each request is reviewed by the front desk — it is not approved automatically.
             </PolicyLine>

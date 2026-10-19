@@ -112,17 +112,25 @@ export function getDownpaymentInfo(r) {
   const overdue = status === 'pending' && beforeCheckIn && !!dueAt && new Date(dueAt).getTime() < Date.now();
   const paid = ['paid', 'refund_pending', 'refunded'].includes(status);
 
+  // "Pay in full" is stored as a downpayment equal to the total.
+  const option = r.paymentOption ?? r.payment_option ?? null;
+  const full = option === 'full' || (total > 0 && amount >= total);
+
   return {
     applies: true,
     status,
     amount,
     total,
+    full,
     balance: Math.max(total - amount, 0),
     dueAt,
     paidAt: r.downpaymentPaidAt ?? r.downpayment_paid_at ?? null,
     method: r.downpaymentMethod ?? r.downpayment_method ?? null,
     recordedByName: r.downpaymentRecordedByName ?? r.downpayment_recorded_by_name ?? null,
     paid,
+    // Paid with the simulated e-wallet (at booking or later from My Reservations)
+    paidOnline: paid && ((r.paymentMode ?? r.payment_mode) === 'online'
+      || (r.downpaymentRecordedByName ?? r.downpayment_recorded_by_name) === 'Online Payment (Auto)'),
     overdue,
     awaiting: status === 'pending' && beforeCheckIn,
   };
@@ -133,10 +141,12 @@ export function downpaymentBadge(info) {
   if (!info?.applies) return null;
   if (info.overdue) return { label: 'Downpayment overdue', bg: '#FCE1E1', text: '#B3261E', icon: 'alert-circle-outline' };
   switch (info.status) {
-    case 'paid':           return { label: 'Downpayment paid',     bg: '#DFF5E1', text: '#1E7B34', icon: 'checkmark-circle-outline' };
+    case 'paid':           return info.full
+      ? { label: 'Paid in full', bg: '#DFF5E1', text: '#1E7B34', icon: 'checkmark-done-circle-outline' }
+      : { label: 'Downpayment paid', bg: '#DFF5E1', text: '#1E7B34', icon: 'checkmark-circle-outline' };
     case 'pending':        return { label: 'Downpayment required', bg: '#FFF4D6', text: '#8A6A00', icon: 'time-outline' };
     case 'refund_pending': return { label: 'Refund pending',       bg: '#E3ECF8', text: '#2C5EA8', icon: 'cash-outline' };
-    case 'refunded':       return { label: 'Downpayment refunded', bg: '#EEEEF0', text: '#55555A', icon: 'cash-outline' };
+    case 'refunded':       return { label: info.full ? 'Payment refunded' : 'Downpayment refunded', bg: '#EEEEF0', text: '#55555A', icon: 'cash-outline' };
     default:               return null;
   }
 }
@@ -156,4 +166,26 @@ export function downpaymentAgreement({ amount, balance }) {
     `I understand that a downpayment of ${formatPeso(amount)} is required to secure my reservation ` +
     `and the balance of ${formatPeso(balance)} is payable at the hotel.`
   );
+}
+
+/** Same reminder for a guest who chose to pay the whole amount now. */
+export function fullPaymentReminder({ amount, cancelWindowHours = DOWNPAYMENT_DEFAULTS.cancelWindowHours }) {
+  return (
+    `You are paying the full amount of ${formatPeso(amount)} now, so there is no balance to pay at the hotel ` +
+    `(extra charges during your stay, if any, are paid at the hotel). ` +
+    `Payments are refundable only if you cancel within ${cancelWindowHours} hours of booking.`
+  );
+}
+
+/** Required checkbox sentence for "Pay in full". */
+export function fullPaymentAgreement({ amount }) {
+  return `I understand that I am paying the full amount of ${formatPeso(amount)} now to secure my reservation.`;
+}
+
+/** The right reminder for a reservation's info (downpayment or full). */
+export function paymentReminderFor(info, cancelWindowHours) {
+  if (!info?.applies) return '';
+  return info.full
+    ? fullPaymentReminder({ amount: info.amount, cancelWindowHours })
+    : downpaymentReminder({ amount: info.amount, balance: info.balance, cancelWindowHours });
 }
