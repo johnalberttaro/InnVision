@@ -404,11 +404,18 @@ export default function App() {
     );
   }
 
+  const isDarkScreen = screen === 'login' || screen === 'register';
+
   return (
     <SafeAreaProvider>
       <ThemeProvider userId={user?.id}>
-        <SafeAreaView style={styles.safeArea}>
-          <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+        {/* Login and Register are full-screen dark on phones, so the status-bar
+            area matches them (dark with light icons) instead of white. */}
+        <SafeAreaView style={[styles.safeArea, isDarkScreen && { backgroundColor: '#17120E' }]}>
+          <StatusBar
+            barStyle={isDarkScreen ? 'light-content' : 'dark-content'}
+            backgroundColor={isDarkScreen ? '#17120E' : '#ffffff'}
+          />
 
           {/* ── Home ──────────────────────────────────────────────── */}
           {screen === 'home' && (

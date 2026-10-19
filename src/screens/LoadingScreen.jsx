@@ -19,6 +19,9 @@ const TILE_SIZE = 104;
 
 const STATUS_LINES = ['Preparing your stay…', 'Checking your account…', 'Almost ready…'];
 
+// Fills the parent. Written out by hand: React Native 0.85+ (Expo SDK 57)
+// removed StyleSheet.absoluteFillObject, so spreading it adds nothing on phones.
+const FILL = { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 };
 const web = (style) => (Platform.OS === 'web' ? style : null);
 const useNative = Platform.OS !== 'web';
 
@@ -95,7 +98,7 @@ export default function LoadingScreen({ message }) {
         <View style={styles.ringWrap}>
           <Animated.View style={[styles.glow, { opacity: glowOpacity, transform: [{ scale: glowScale }] }]} />
           <View style={styles.track} />
-          <Animated.View style={[StyleSheet.absoluteFill, { transform: [{ rotate }] }]}>
+          <Animated.View style={[FILL, { transform: [{ rotate }] }]}>
             <Svg width={RING_SIZE} height={RING_SIZE}>
               <Defs>
                 <LinearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
@@ -152,9 +155,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     overflow: 'hidden',
   },
-  photo: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', opacity: 0.22 },
+  photo: { ...FILL, width: '100%', height: '100%', opacity: 0.22 },
   shade: {
-    ...StyleSheet.absoluteFillObject,
+    ...FILL,
     backgroundColor: 'rgba(23,18,14,0.72)',
     ...web({
       backgroundColor: 'transparent',

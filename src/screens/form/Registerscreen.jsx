@@ -1,35 +1,19 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Image, Animated,
-} from 'react-native';
-// RESOLVED: SafeAreaView moved to 'react-native-safe-area-context' — see
-// the same fix's full explanation in LoginScreen.jsx.
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
-import { colors, spacing, radius, fonts } from '../../utils/theme';
+import AuthLayout, { AuthField, AuthButton, AuthError, AuthSwitch, AUTH } from '../../components/shared/AuthLayout';
+
+// Registration page — guests create an account here. Look comes from
+// components/shared/AuthLayout.jsx (shared with Login).
 
 export default function RegisterScreen({ onRegister, onLoginPress }) {
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', phone: '', password: '', confirmPassword: '' });
   const [errors, setErrors]             = useState({});
   const [touched, setTouched]           = useState({});
-  const [showPass, setShowPass]         = useState(false);
-  const [showConfirm, setShowConfirm]   = useState(false);
-  const [focusedField, setFocusedField] = useState(null);
   const [loading, setLoading]           = useState(false);
   const [globalError, setGlobalError]   = useState('');
-
-  // Smooth entrance whenever this screen mounts — e.g. coming here from
-  // Login feels like a continuation, not an abrupt cut.
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(16)).current;
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 320, useNativeDriver: true }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 320, useNativeDriver: true }),
-    ]).start();
-  }, []);
+  const { width } = useWindowDimensions();
 
   const update = (field, value) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -39,7 +23,9 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
 
   const blur = field => {
     setTouched(prev => ({ ...prev, [field]: true }));
-    setFocusedField(null);
+    // Check this one field as soon as the person leaves it.
+    const fieldError = validate()[field];
+    setErrors(prev => ({ ...prev, [field]: fieldError || null }));
   };
 
   const validate = () => {
@@ -167,249 +153,113 @@ export default function RegisterScreen({ onRegister, onLoginPress }) {
     }
   };
 
-  const isValid = field => touched[field] && !errors[field] && form[field];
-
-  const inputStyle = field => [styles.input];
-
-  const wrapStyle = field => [
-    styles.inputWrap,
-    focusedField === field && styles.inputWrapFocused,
-    touched[field] && errors[field] && styles.inputWrapError,
-    isValid(field) && styles.inputWrapValid,
-  ];
+  const isValid = field => !!(touched[field] && !errors[field] && form[field]);
+  const err = field => (touched[field] ? errors[field] : null);
+  const twoCol = width >= 520;
+  const strength = scorePassword(form.password);
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
-          <Animated.View style={[styles.card, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+    <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
+      <AuthLayout
+        title="Create your account"
+        subtitle="It takes a minute. You'll use it to book rooms and spaces and to track your reservations."
+        onBack={onLoginPress}
+        sideHeadline="Book your stay with the CCTC training hotel."
+        sideLead="Your account keeps your bookings, payments and receipts together, and gets you reminders before check-in and check-out."
+        sidePoints={[
+          { icon: 'flash-outline', text: 'Quick sign-up, no fees' },
+          { icon: 'notifications-outline', text: 'Check-in and check-out reminders' },
+          { icon: 'receipt-outline', text: 'Receipts saved in your account' },
+        ]}
+      >
+        <AuthError text={globalError} />
 
-            {/* Logo */}
-            <View style={styles.logoBadge}>
-              <Image
-                source={require('../../../assets/logo.png')}
-                style={styles.logoImage}
-                resizeMode="contain"
-              />
-            </View>
+        <View style={twoCol ? styles.row : null}>
+          <AuthField
+            style={twoCol ? styles.col : null}
+            label="First name" required icon="person-outline" placeholder="Juan"
+            value={form.firstName} onChangeText={v => update('firstName', v)} onBlur={() => blur('firstName')}
+            autoCapitalize="words" autoComplete="given-name"
+            error={err('firstName')} valid={isValid('firstName')}
+          />
+          <AuthField
+            style={twoCol ? styles.col : null}
+            label="Last name" required icon="person-outline" placeholder="Dela Cruz"
+            value={form.lastName} onChangeText={v => update('lastName', v)} onBlur={() => blur('lastName')}
+            autoCapitalize="words" autoComplete="family-name"
+            error={err('lastName')} valid={isValid('lastName')}
+          />
+        </View>
 
-            <Text style={styles.title}>Account Sign Up</Text>
-            <Text style={styles.subtitle}>Create a new InnVision account</Text>
+        <AuthField
+          label="Email" required icon="mail-outline" placeholder="you@example.com"
+          value={form.email} onChangeText={v => update('email', v)} onBlur={() => blur('email')}
+          keyboardType="email-address" autoComplete="email"
+          error={err('email')} valid={isValid('email')}
+        />
 
-            {/* Global error banner */}
-            {!!globalError && (
-              <View style={styles.errorBanner}>
-                <Ionicons name="alert-circle-outline" size={16} color={colors.danger} />
-                <Text style={styles.errorBannerText}>{globalError}</Text>
-              </View>
-            )}
+        <AuthField
+          label="Phone number" required icon="call-outline" placeholder="e.g. 0917 123 4567"
+          value={form.phone} onChangeText={v => update('phone', v)} onBlur={() => blur('phone')}
+          keyboardType="phone-pad" autoComplete="tel"
+          error={err('phone')} valid={isValid('phone')}
+        />
 
-            {/* Name row */}
-            <View style={styles.nameRow}>
-              <View style={[styles.fieldGroup, { flex: 1 }]}>
-                <Text style={styles.label}>First Name <Text style={styles.required}>*</Text></Text>
-                <View style={wrapStyle('firstName')}>
-                  <Ionicons name="person-outline" size={16} color={focusedField === 'firstName' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
-                  <TextInput
-                    style={inputStyle('firstName')}
-                    placeholder="Enter your first name"
-                    placeholderTextColor={colors.disabled}
-                    value={form.firstName}
-                    onChangeText={v => update('firstName', v)}
-                    onFocus={() => setFocusedField('firstName')}
-                    onBlur={() => blur('firstName')}
-                    autoCapitalize="words"
-                  />
-                  {isValid('firstName') && <Text style={styles.checkIcon}>✓</Text>}
-                </View>
-                {touched.firstName && errors.firstName && <Text style={styles.errorText}>{errors.firstName}</Text>}
-              </View>
+        <AuthField
+          label="Password" required icon="lock-closed-outline" placeholder="At least 8 characters"
+          value={form.password} onChangeText={v => update('password', v)} onBlur={() => blur('password')}
+          secure autoComplete="new-password"
+          error={err('password')}
+        />
+        {!!form.password && (
+          <View style={styles.strengthRow}>
+            {[1, 2, 3, 4].map(i => (
+              <View key={i} style={[styles.strengthSeg, i <= strength.score && { backgroundColor: strength.color }]} />
+            ))}
+            <Text style={[styles.strengthLabel, { color: strength.color }]}>{strength.label}</Text>
+          </View>
+        )}
 
-              <View style={[styles.fieldGroup, { flex: 1 }]}>
-                <Text style={styles.label}>Last Name <Text style={styles.required}>*</Text></Text>
-                <View style={wrapStyle('lastName')}>
-                  <Ionicons name="person-outline" size={16} color={focusedField === 'lastName' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
-                  <TextInput
-                    style={inputStyle('lastName')}
-                    placeholder="Enter your last name"
-                    placeholderTextColor={colors.disabled}
-                    value={form.lastName}
-                    onChangeText={v => update('lastName', v)}
-                    onFocus={() => setFocusedField('lastName')}
-                    onBlur={() => blur('lastName')}
-                    autoCapitalize="words"
-                  />
-                  {isValid('lastName') && <Text style={styles.checkIcon}>✓</Text>}
-                </View>
-                {touched.lastName && errors.lastName && <Text style={styles.errorText}>{errors.lastName}</Text>}
-              </View>
-            </View>
+        <AuthField
+          label="Confirm password" required icon="lock-closed-outline" placeholder="Re-enter your password"
+          value={form.confirmPassword} onChangeText={v => update('confirmPassword', v)} onBlur={() => blur('confirmPassword')}
+          secure autoComplete="new-password" returnKeyType="done" onSubmitEditing={handleSubmit}
+          error={err('confirmPassword')} valid={isValid('confirmPassword')}
+        />
 
-            {/* Email */}
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Email Address <Text style={styles.required}>*</Text></Text>
-              <View style={wrapStyle('email')}>
-                <Ionicons name="mail-outline" size={18} color={focusedField === 'email' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
-                <TextInput
-                  style={inputStyle('email')}
-                  placeholder="Enter your email address"
-                  placeholderTextColor={colors.disabled}
-                  value={form.email}
-                  onChangeText={v => update('email', v)}
-                  onFocus={() => setFocusedField('email')}
-                  onBlur={() => blur('email')}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {isValid('email') && <Text style={styles.checkIcon}>✓</Text>}
-              </View>
-              {touched.email && errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
-            </View>
+        <AuthButton label="Create account" icon="arrow-forward" onPress={handleSubmit} loading={loading} />
 
-            {/* Phone Number */}
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Phone Number <Text style={styles.required}>*</Text></Text>
-              <View style={wrapStyle('phone')}>
-                <Ionicons name="call-outline" size={18} color={focusedField === 'phone' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
-                <TextInput
-                  style={inputStyle('phone')}
-                  placeholderTextColor={colors.disabled}
-                  placeholder="e.g. +1 555 123 4567"
-                  value={form.phone}
-                  onChangeText={v => update('phone', v)}
-                  onFocus={() => setFocusedField('phone')}
-                  onBlur={() => blur('phone')}
-                  keyboardType="phone-pad"
-                />
-                {isValid('phone') && <Text style={styles.checkIcon}>✓</Text>}
-              </View>
-              {touched.phone && errors.phone && <Text style={styles.errorText}>{errors.phone}</Text>}
-            </View>
+        <Text style={styles.fine}>
+          Payments in this app are simulated for training. No real money is charged.
+        </Text>
 
-            {/* Password */}
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Password <Text style={styles.required}>*</Text></Text>
-              <View style={wrapStyle('password')}>
-                <Ionicons name="lock-closed-outline" size={18} color={focusedField === 'password' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
-                <TextInput
-                  style={inputStyle('password')}
-                  placeholder="Create a password"
-                  placeholderTextColor={colors.disabled}
-                  value={form.password}
-                  onChangeText={v => update('password', v)}
-                  onFocus={() => setFocusedField('password')}
-                  onBlur={() => blur('password')}
-                  secureTextEntry={!showPass}
-                />
-                <TouchableOpacity onPress={() => setShowPass(p => !p)} style={styles.eyeBtn}>
-                  <Ionicons name={showPass ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.textMuted} />
-                </TouchableOpacity>
-              </View>
-              {touched.password && errors.password && <Text style={styles.errorText}>{errors.password}</Text>}
-            </View>
-
-            {/* Confirm Password */}
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Confirm Password <Text style={styles.required}>*</Text></Text>
-              <View style={wrapStyle('confirmPassword')}>
-                <Ionicons name="lock-closed-outline" size={18} color={focusedField === 'confirmPassword' ? colors.primary : colors.textMuted} style={styles.inputIcon} />
-                <TextInput
-                  style={inputStyle('confirmPassword')}
-                  placeholder="Re-enter your password"
-                  placeholderTextColor={colors.disabled}
-                  value={form.confirmPassword}
-                  onChangeText={v => update('confirmPassword', v)}
-                  onFocus={() => setFocusedField('confirmPassword')}
-                  onBlur={() => blur('confirmPassword')}
-                  secureTextEntry={!showConfirm}
-                />
-                <TouchableOpacity onPress={() => setShowConfirm(p => !p)} style={styles.eyeBtn}>
-                  <Ionicons name={showConfirm ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.textMuted} />
-                </TouchableOpacity>
-              </View>
-              {touched.confirmPassword && errors.confirmPassword && <Text style={styles.errorText}>{errors.confirmPassword}</Text>}
-            </View>
-
-            {/* Sign Up Button */}
-            <TouchableOpacity
-              style={[styles.submitBtn, loading && styles.buttonDisabled]}
-              onPress={handleSubmit}
-              activeOpacity={0.85}
-              disabled={loading}
-            >
-              {loading
-                ? <ActivityIndicator color={colors.white} />
-                : <Text style={styles.submitText}>Sign Up</Text>
-              }
-            </TouchableOpacity>
-
-            <View style={styles.divider} />
-
-            <TouchableOpacity style={styles.loginButton} onPress={onLoginPress} activeOpacity={0.85}>
-              <Text style={styles.loginButtonText}>Back to Log In</Text>
-            </TouchableOpacity>
-
-          </Animated.View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        <AuthSwitch prompt="Already have an account?" action="Log in" onPress={onLoginPress} />
+      </AuthLayout>
     </SafeAreaView>
   );
 }
 
+// Quick visual signal only (length + character variety).
+function scorePassword(pw) {
+  if (!pw) return { score: 0, label: '', color: AUTH.line };
+  let s = 0;
+  if (pw.length >= 8) s++;
+  if (pw.length >= 12) s++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++;
+  if (/\d/.test(pw)) s++;
+  if (/[^A-Za-z0-9]/.test(pw)) s++;
+  if (s <= 1) return { score: 1, label: 'Weak', color: AUTH.danger };
+  if (s <= 2) return { score: 2, label: 'Fair', color: '#C99400' };
+  if (s <= 3) return { score: 3, label: 'Good', color: '#8A6A22' };
+  return { score: 4, label: 'Strong', color: AUTH.success };
+}
+
 const styles = StyleSheet.create({
-  safe:   { flex: 1, backgroundColor: colors.cardAlt },
-  flex:   { flex: 1 },
-  scroll: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
-
-  card: {
-    backgroundColor: colors.card,
-    borderRadius: radius.lg,
-    padding: spacing.xxl,
-    width: '100%',
-    maxWidth: 420,
-    alignItems: 'center',
-    ...Platform.select({
-      web: { boxShadow: '0 20px 50px rgba(0,0,0,0.16)' },
-      default: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.14,
-        shadowRadius: 24,
-        elevation: 8,
-      },
-    }),
-  },
-
-  logoBadge: { width: 80, height: 80, borderRadius: radius.lg, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.lg, overflow: 'hidden' },
-  logoImage: { width: 56, height: 56 },
-  title:     { fontFamily: fonts.headingExtraBold, fontSize: 24, color: colors.primary, marginBottom: spacing.xs, textAlign: 'center' },
-  subtitle:  { fontFamily: fonts.body, fontSize: 14, color: colors.textMuted, marginBottom: spacing.xl, textAlign: 'center' },
-
-  errorBanner:     { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: colors.dangerBg, borderRadius: radius.sm, padding: spacing.sm, marginBottom: spacing.md, width: '100%', gap: spacing.xs },
-  errorBannerText: { fontFamily: fonts.body, fontSize: 13, color: colors.danger, flex: 1 },
-
-  nameRow:    { flexDirection: 'row', gap: spacing.sm, width: '100%' },
-  fieldGroup: { width: '100%', marginBottom: spacing.md },
-  label:      { fontFamily: fonts.bodyMedium, fontSize: 13, color: colors.text, marginBottom: spacing.xs },
-  required:   { color: colors.danger },
-
-  inputWrap:        { flexDirection: 'row', alignItems: 'center', borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardAlt, paddingHorizontal: spacing.sm, gap: spacing.xs },
-  inputWrapFocused: { borderColor: colors.primary, backgroundColor: colors.card },
-  inputWrapError:   { borderColor: colors.danger,  backgroundColor: colors.dangerBg },
-  inputWrapValid:   { borderColor: colors.primary, backgroundColor: colors.primaryTint },
-  inputIcon:    { flexShrink: 0 },
-  input:            { flex: 1, height: 46, fontFamily: fonts.body, fontSize: 14, color: colors.text, outlineStyle: 'none' },
-  checkIcon:    { fontSize: 13, color: colors.primary, fontFamily: fonts.bodySemiBold, marginLeft: spacing.xs },
-  eyeBtn:       { paddingLeft: spacing.xs, paddingVertical: spacing.xs },
-  errorText:    { fontSize: 11, fontFamily: fonts.body, color: colors.danger, marginTop: 3 },
-
-  submitBtn:      { width: '100%', height: 48, borderRadius: 999, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginTop: spacing.sm },
-  submitText:     { fontFamily: fonts.headingSemiBold, fontSize: 15, color: colors.white, letterSpacing: 0.2 },
-  buttonDisabled: { opacity: 0.7 },
-
-  divider: { width: '100%', height: 0.5, backgroundColor: colors.border, marginVertical: spacing.lg },
-
-  loginButton:     { width: '100%', height: 48, borderRadius: 999, borderWidth: 1.5, borderColor: colors.accent, backgroundColor: colors.accentTint, alignItems: 'center', justifyContent: 'center' },
-  loginButtonText: { fontFamily: fonts.headingSemiBold, fontSize: 15, color: colors.accent, letterSpacing: 0.2 },
+  safe: { flex: 1, backgroundColor: AUTH.page },
+  row: { flexDirection: 'row', gap: 12 },
+  col: { flex: 1, minWidth: 0 },
+  strengthRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: -6, marginBottom: 14 },
+  strengthSeg: { flex: 1, height: 4, borderRadius: 2, backgroundColor: AUTH.line },
+  strengthLabel: { fontFamily: 'Inter_600SemiBold', fontSize: 12, minWidth: 48, textAlign: 'right' },
+  fine: { fontFamily: 'Inter_400Regular', fontSize: 12.5, lineHeight: 18, color: AUTH.inkMuted, textAlign: 'center', marginTop: 14 },
 });
