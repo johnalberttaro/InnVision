@@ -238,6 +238,7 @@ export default function RoomManagementScreen({ onLogout, section = 'types', canM
               rooms={rooms}
               addTypeOpen={addTypeOpen}
               onCloseAddType={() => setAddTypeOpen(false)}
+              canManageRooms={canManageRooms}
             />
           )}
           {activeTab === 'list' && (
@@ -293,7 +294,7 @@ const TYPE_SORT_OPTIONS = [
   { value: 'nameAsc', label: 'Name (A–Z)' },
 ];
 
-function RoomTypesSection({ roomTypes, rooms, addTypeOpen, onCloseAddType }) {
+function RoomTypesSection({ roomTypes, rooms, addTypeOpen, onCloseAddType, canManageRooms }) {
   const [search, setSearch] = useState('');
   const [bedFilter, setBedFilter] = useState('all');
   const [priceFilter, setPriceFilter] = useState('all');
@@ -395,6 +396,7 @@ function RoomTypesSection({ roomTypes, rooms, addTypeOpen, onCloseAddType }) {
                 roomCount={roomCountByType[rt.id] || 0}
                 width="100%"
                 isDeleting={deletingId === rt.id}
+                canManage={canManageRooms}
                 onEdit={() => setEditingType(rt)}
                 onDelete={() => handleDeleteType(rt)}
               />
@@ -412,7 +414,8 @@ function RoomTypesSection({ roomTypes, rooms, addTypeOpen, onCloseAddType }) {
   );
 }
 
-function RoomTypeCard({ roomType: rt, roomCount, width, isDeleting, onEdit, onDelete }) {
+// canManage: Admin only — Front Desk sees the card without Edit / Delete.
+function RoomTypeCard({ roomType: rt, roomCount, width, isDeleting, canManage, onEdit, onDelete }) {
   const firstImage = rt.images && rt.images.length > 0 ? rt.images[0] : null;
 
   return (
@@ -464,6 +467,7 @@ function RoomTypeCard({ roomType: rt, roomCount, width, isDeleting, onEdit, onDe
             <Ionicons name="business-outline" size={12} color={TYPE_BLUE} />
             <Text style={styles.typeCardCountText}>{roomCount} room{roomCount !== 1 ? 's' : ''}</Text>
           </View>
+          {canManage && (
           <View style={styles.typeCardActions}>
             <TouchableOpacity style={styles.typeEditBtn} onPress={onEdit} activeOpacity={0.8}>
               <Ionicons name="create-outline" size={14} color={TYPE_BLUE} />
@@ -480,6 +484,7 @@ function RoomTypeCard({ roomType: rt, roomCount, width, isDeleting, onEdit, onDe
               )}
             </TouchableOpacity>
           </View>
+          )}
         </View>
       </View>
     </View>

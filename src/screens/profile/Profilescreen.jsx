@@ -458,7 +458,7 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress, 
   // declined), instead of the old 'completed' value that never matched
   // anything real.
   const CURRENT_STATUSES = ['pending', 'upcoming', 'checked-in'];
-  const HISTORY_STATUSES = ['checked-out', 'declined', 'cancelled'];
+  const HISTORY_STATUSES = ['checked-out', 'declined', 'cancelled', 'no-show'];
 
   const totalRes  = reservations.length;
   const upcoming  = reservations.filter(r => r.status === 'pending' || r.status === 'upcoming').length;
@@ -483,6 +483,7 @@ export default function ProfileScreen({ user, onBookNow, onLogout, onBackPress, 
       'checked-out': { color: '#2e7d32',       bg: '#e8f5e9'          },
       'declined':    { color: colors.danger,   bg: colors.dangerBg    },
       'cancelled':   { color: colors.danger,   bg: colors.dangerBg    },
+      'no-show':     { color: colors.danger,   bg: colors.dangerBg    },
     };
     return map[status] || { color: colors.textMuted, bg: colors.cardAlt };
   };

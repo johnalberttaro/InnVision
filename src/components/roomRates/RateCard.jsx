@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -270,22 +270,6 @@ function RatesTab({ rate, onReserve }) {
           <Text style={tabStyles.bookBtnText}>BOOK</Text>
         </TouchableOpacity>
       </View>
-
-      {rate.bbPrice && (
-        <View style={tabStyles.rateRow}>
-          <View style={tabStyles.rateInfo}>
-            <Text style={tabStyles.rateType}>Bed and breakfast</Text>
-            <Text style={tabStyles.ratePoints}>▶ CCTC</Text>
-          </View>
-          <View style={tabStyles.ratePrices}>
-            <Text style={tabStyles.ratePriceMain}>{formatCurrency(rate.bbPrice)}</Text>
-            <Text style={tabStyles.ratePriceStrike}>{formatCurrency(rate.bbOriginalPrice)}</Text>
-          </View>
-          <TouchableOpacity style={tabStyles.bookBtn} onPress={onReserve} activeOpacity={0.8}>
-            <Text style={tabStyles.bookBtnText}>BOOK</Text>
-          </TouchableOpacity>
-        </View>
-      )}
 
       <Text style={tabStyles.footNote}>*excl. of taxes and charges</Text>
       <Text style={[tabStyles.footNote, { fontFamily: fonts.bodySemiBold, marginTop: 4 }]}>

@@ -47,6 +47,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { getBillingRecord } from '../../utils/BillingService';
+import { getRoomNames } from '../../utils/roomNames';
 
 const LOGO_SOURCE = require('../../../assets/logo.png');
 
@@ -146,7 +147,7 @@ function buildReceiptHtml(receipt, folio, logoUri) {
     ['Guest Name', receipt.guestName || '—'],
   ];
   if (folio?.folioNumber) rows.push(['Folio No.', folio.folioNumber]);
-  if (folio?.roomNumbers?.length) rows.push(['Room(s)', folio.roomNumbers.join(', ')]);
+  if (folio?.roomNames?.length) rows.push(['Room(s)', folio.roomNames.join(', ')]);
   if (folio?.checkInDate || folio?.checkOutDate) {
     rows.push(['Stay Dates', `${formatDate(folio.checkInDate)} – ${formatDate(folio.checkOutDate)}`]);
   }
@@ -322,7 +323,7 @@ function buildReceiptText(receipt, folio) {
     `Guest Name: ${receipt.guestName || '—'}`,
   ];
   if (folio?.folioNumber) lines.push(`Folio No.: ${folio.folioNumber}`);
-  if (folio?.roomNumbers?.length) lines.push(`Room(s): ${folio.roomNumbers.join(', ')}`);
+  if (folio?.roomNames?.length) lines.push(`Room(s): ${folio.roomNames.join(', ')}`);
   if (folio?.checkInDate || folio?.checkOutDate) {
     lines.push(`Stay Dates: ${formatDate(folio.checkInDate)} – ${formatDate(folio.checkOutDate)}`);
   }
@@ -363,9 +364,11 @@ export default function ReceiptDetailModal({ visible, receipt, onClose }) {
     let cancelled = false;
     setFolioLoading(true);
     getBillingRecord(receipt.folioId)
-      .then((data) => {
+      .then(async (data) => {
+        // Rooms are shown by name ("Room 2"), not number.
+        const roomNames = data?.roomNumbers?.length ? await getRoomNames(data.roomNumbers) : [];
         if (cancelled) return;
-        setFolio(data);
+        setFolio(data ? { ...data, roomNames } : data);
       })
       .catch((err) => console.error('Failed to load folio for receipt:', err))
       .finally(() => { if (!cancelled) setFolioLoading(false); });
@@ -441,8 +444,8 @@ export default function ReceiptDetailModal({ visible, receipt, onClose }) {
           <ScrollView style={styles.detailsScroll} showsVerticalScrollIndicator={false}>
             <DetailRow label="Guest Name" value={receipt.guestName || '—'} styles={styles} />
             {!!folio?.folioNumber && <DetailRow label="Folio No." value={folio.folioNumber} styles={styles} />}
-            {!!folio?.roomNumbers?.length && (
-              <DetailRow label="Room(s)" value={folio.roomNumbers.join(', ')} styles={styles} />
+            {!!folio?.roomNames?.length && (
+              <DetailRow label="Room(s)" value={folio.roomNames.join(', ')} styles={styles} />
             )}
             {(!!folio?.checkInDate || !!folio?.checkOutDate) && (
               <DetailRow

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
+import { RoomName, useRoomNameOf, sortByRoomName } from '../../utils/roomNames';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { subscribeToRooms, updateRoomStatus, statusMeta, ROOM_STATUS } from '../../utils/Roomsservice';
 
@@ -157,7 +158,7 @@ export default function HousekeepingMyTasksScreen({ staffUid, staffName }) {
         <View style={styles.taskCardTop}>
           <View style={styles.roomBadge}>
             <Ionicons name="key-outline" size={12} color={colors.white} />
-            <Text style={styles.roomBadgeText}>Room {task.roomNumber}</Text>
+            <Text style={styles.roomBadgeText}><RoomName number={task.roomNumber} /></Text>
           </View>
           {isUrgent && (
             <View style={styles.urgentBadge}>
@@ -258,7 +259,7 @@ export default function HousekeepingMyTasksScreen({ staffUid, staffName }) {
       <Modal visible={!!completingTask} transparent animationType="fade" onRequestClose={() => setCompletingTask(null)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Mark Room {completingTask?.roomNumber} Complete</Text>
+            <Text style={styles.modalTitle}>Mark <RoomName number={completingTask?.roomNumber} /> Complete</Text>
             <Text style={styles.modalSubtitle}>Add a note for Front Desk/Admin (optional).</Text>
             <TextInput
               style={styles.modalInput}

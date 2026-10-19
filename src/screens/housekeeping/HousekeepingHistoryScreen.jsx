@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
+import { RoomName, useRoomNameOf, sortByRoomName } from '../../utils/roomNames';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
 const HISTORY_FILTERS = [
@@ -138,7 +139,7 @@ export default function HousekeepingHistoryScreen({ staffUid }) {
             <View style={styles.taskCardTop}>
               <View style={styles.roomBadge}>
                 <Ionicons name="key-outline" size={12} color={colors.white} />
-                <Text style={styles.roomBadgeText}>Room {task.roomNumber}</Text>
+                <Text style={styles.roomBadgeText}><RoomName number={task.roomNumber} /></Text>
               </View>
               <View style={styles.completedRow}>
                 <Ionicons name="checkmark-circle" size={14} color="#1E7B34" />

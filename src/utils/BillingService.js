@@ -19,6 +19,7 @@
 // INSERT already returns the assigned number.
 
 import { supabase } from '../services/supabase';
+import { getRoomNames } from './roomNames';
 
 // ---------------------------------------------------------------------------
 // snake_case (DB) <-> camelCase (app) mapping
@@ -259,12 +260,18 @@ export async function getBillingRecordsByStatus(status) {
 export async function searchBillingRecords(searchTerm) {
   const all = await getAllBillingRecords();
   const lower = searchTerm.toLowerCase();
-  return all.filter(
-    (r) =>
+  // Rooms are shown by name ("Room 2"), so search by name too.
+  const withNames = await Promise.all(
+    all.map(async (r) => ({ r, names: r.roomNumbers?.length ? await getRoomNames(r.roomNumbers) : [] }))
+  );
+  return withNames
+    .filter(({ r, names }) =>
       r.folioNumber?.toLowerCase().includes(lower) ||
       r.guestName?.toLowerCase().includes(lower) ||
+      names.some((n) => n.toLowerCase().includes(lower)) ||
       r.roomNumbers?.some((rn) => String(rn).toLowerCase().includes(lower))
-  );
+    )
+    .map(({ r }) => r);
 }
 
 // ---------------------------------------------------------------------------

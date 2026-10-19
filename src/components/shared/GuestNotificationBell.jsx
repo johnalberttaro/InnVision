@@ -321,6 +321,7 @@ function statusLabel(status) {
     case 'checked-out': return 'Checked out';
     case 'cancelled': return 'Cancelled';
     case 'declined': return 'Declined';
+    case 'no-show': return 'No show';
     default: return status || '—';
   }
 }

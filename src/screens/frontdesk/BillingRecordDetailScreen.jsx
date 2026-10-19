@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
+import { useRoomNames } from '../../utils/roomNames';
 import { getBillingRecord, getReceiptsForFolio } from '../../utils/BillingService';
 
 function formatDate(value) {
@@ -55,6 +56,7 @@ const STATUS_STYLE = {
  *      screen still works stand-alone before that piece is built.
  */
 export default function BillingRecordDetailScreen({ folioId, onBack, onRecordPayment }) {
+  const roomNamesOf = useRoomNames();
   const [folio, setFolio] = useState(null);
   const [receipts, setReceipts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -103,7 +105,7 @@ export default function BillingRecordDetailScreen({ folioId, onBack, onRecordPay
   }
 
   const statusStyle = STATUS_STYLE[folio.billingStatus] || STATUS_STYLE.unpaid;
-  const roomNumbers = Array.isArray(folio.roomNumbers) ? folio.roomNumbers : [folio.roomNumbers].filter(Boolean);
+  const roomNames = roomNamesOf(folio.roomNumbers); // shown by name, not number
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -116,10 +118,10 @@ export default function BillingRecordDetailScreen({ folioId, onBack, onRecordPay
           <Text style={styles.folioNumber}>{folio.folioNumber}</Text>
           <Text style={styles.guestName}>{folio.guestName}</Text>
           <View style={styles.roomBadgeRow}>
-            {roomNumbers.map((rn) => (
-              <View key={rn} style={styles.roomBadge}>
-                <Ionicons name="key-outline" size={11} color={colors.white} />
-                <Text style={styles.roomBadgeText}>Room {rn}</Text>
+            {roomNames.map((name) => (
+              <View key={name} style={styles.roomBadge}>
+                <Ionicons name="bed-outline" size={11} color={colors.white} />
+                <Text style={styles.roomBadgeText}>{name}</Text>
               </View>
             ))}
           </View>

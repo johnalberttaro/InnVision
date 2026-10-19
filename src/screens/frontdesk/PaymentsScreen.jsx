@@ -23,6 +23,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
+import { useRoomNames } from '../../utils/roomNames';
 import { getOutstandingBalances } from '../../utils/BillingService';
 import RecordPaymentModal from './RecordPaymentModal';
 import KpiCard from '../../components/dashboard/KpiCard';
@@ -42,6 +43,7 @@ const STATUS_STYLE = {
  *  - staffName: string    passed straight through to RecordPaymentModal
  */
 export default function PaymentsScreen({ staffUid, staffName }) {
+  const roomNamesOf = useRoomNames();
   const [folios, setFolios] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -95,15 +97,13 @@ export default function PaymentsScreen({ staffUid, staffName }) {
     return (
       f.folioNumber?.toLowerCase().includes(lower) ||
       f.guestName?.toLowerCase().includes(lower) ||
-      (Array.isArray(f.roomNumbers) ? f.roomNumbers.join(',') : String(f.roomNumbers))
-        .toLowerCase()
-        .includes(lower)
+      roomNamesOf(f.roomNumbers).join(',').toLowerCase().includes(lower)
     );
   });
 
   const renderItem = ({ item }) => {
     const statusStyle = STATUS_STYLE[item.billingStatus] || STATUS_STYLE.unpaid;
-    const roomNumbers = Array.isArray(item.roomNumbers) ? item.roomNumbers : [item.roomNumbers].filter(Boolean);
+    const roomNames = roomNamesOf(item.roomNumbers); // shown by name, not number
 
     return (
       <TouchableOpacity
@@ -115,10 +115,10 @@ export default function PaymentsScreen({ staffUid, staffName }) {
           <Text style={styles.folioNumber}>{item.folioNumber}</Text>
           <Text style={styles.guestName}>{item.guestName}</Text>
           <View style={styles.roomBadgeRow}>
-            {roomNumbers.map((rn) => (
-              <View key={rn} style={styles.roomBadge}>
-                <Ionicons name="key-outline" size={11} color={colors.white} />
-                <Text style={styles.roomBadgeText}>Room {rn}</Text>
+            {roomNames.map((name) => (
+              <View key={name} style={styles.roomBadge}>
+                <Ionicons name="bed-outline" size={11} color={colors.white} />
+                <Text style={styles.roomBadgeText}>{name}</Text>
               </View>
             ))}
           </View>
@@ -165,7 +165,7 @@ export default function PaymentsScreen({ staffUid, staffName }) {
 
       <TextInput
         style={styles.searchInput}
-        placeholder="Search by folio #, guest name, or room number"
+        placeholder="Search by folio #, guest name, or room"
         placeholderTextColor={colors.textMuted}
         value={searchTerm}
         onChangeText={setSearchTerm}

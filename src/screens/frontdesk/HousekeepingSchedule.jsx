@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
+import { RoomName, useRoomNameOf, sortByRoomName } from '../../utils/roomNames';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import KpiCard from '../../components/dashboard/KpiCard';
 import Pagination from '../../components/shared/Pagination';
@@ -67,6 +68,8 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
 
   const [tasks, setTasks] = useState([]);
   const [rooms, setRooms] = useState([]);
+  // Rooms are shown by name, in Room List order (Room 1, Room 2, …).
+  const nameOf = useRoomNameOf();
   const [staffList, setStaffList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState(null);
@@ -159,8 +162,8 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
   // eligibility logic, so this never offers a room that screen wouldn't
   // also treat as needing attention).
   const eligibleRooms = useMemo(
-    () => rooms.filter((r) => CLEANING_WORKFLOW_STATUSES.includes(r.status)),
-    [rooms]
+    () => sortByRoomName(rooms.filter((r) => CLEANING_WORKFLOW_STATUSES.includes(r.status)), nameOf),
+    [rooms, nameOf]
   );
 
   const columns = useMemo(() => ({
@@ -300,7 +303,7 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
         <View style={styles.taskCardTop}>
           <View style={styles.roomBadge}>
             <Ionicons name="key-outline" size={12} color={colors.white} />
-            <Text style={styles.roomBadgeText}>Room {task.roomNumber}</Text>
+            <Text style={styles.roomBadgeText}><RoomName number={task.roomNumber} /></Text>
           </View>
           {isUrgent && (
             <View style={styles.urgentBadge}>
@@ -570,7 +573,7 @@ export default function HousekeepingScheduleScreen({ staffUid, staffName }) {
                     onPress={() => setAssignRoom(r.roomNumber)}
                   >
                     <Text style={[styles.pickerChipText, assignRoom === r.roomNumber && styles.pickerChipTextActive]}>
-                      Room {r.roomNumber}
+                      <RoomName number={r.roomNumber} />
                     </Text>
                   </TouchableOpacity>
                 ))

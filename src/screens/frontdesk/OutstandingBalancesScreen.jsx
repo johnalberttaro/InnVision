@@ -46,6 +46,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, fonts } from '../../utils/portalTheme';
+import { useRoomNames } from '../../utils/roomNames';
 import { getOutstandingBalances } from '../../utils/BillingService';
 import Pagination from '../../components/shared/Pagination';
 import KpiCard from '../../components/dashboard/KpiCard';
@@ -100,6 +101,7 @@ function daysSinceUpdate(record) {
 }
 
 export default function OutstandingBalancesScreen({ onSelectRecord }) {
+  const roomNamesOf = useRoomNames();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -159,7 +161,7 @@ export default function OutstandingBalancesScreen({ onSelectRecord }) {
         (r) =>
           r.folioNumber?.toLowerCase().includes(lower) ||
           r.guestName?.toLowerCase().includes(lower) ||
-          r.roomNumbers?.some((rn) => String(rn).toLowerCase().includes(lower))
+          roomNamesOf(r.roomNumbers).some((name) => name.toLowerCase().includes(lower))
       );
     }
     const sorted = [...list];
@@ -196,7 +198,7 @@ export default function OutstandingBalancesScreen({ onSelectRecord }) {
 
   const renderItem = ({ item }) => {
     const statusStyle = STATUS_STYLE[item.billingStatus] || STATUS_STYLE.unpaid;
-    const roomNumbers = Array.isArray(item.roomNumbers) ? item.roomNumbers : [item.roomNumbers].filter(Boolean);
+    const roomNames = roomNamesOf(item.roomNumbers); // shown by name, not number
 
     return (
       <TouchableOpacity
@@ -209,10 +211,10 @@ export default function OutstandingBalancesScreen({ onSelectRecord }) {
           <Text style={styles.guestName}>{item.guestName}</Text>
 
           <View style={styles.roomBadgeRow}>
-            {roomNumbers.map((rn) => (
-              <View key={rn} style={styles.roomBadge}>
-                <Ionicons name="key-outline" size={11} color={colors.white} />
-                <Text style={styles.roomBadgeText}>Room {rn}</Text>
+            {roomNames.map((name) => (
+              <View key={name} style={styles.roomBadge}>
+                <Ionicons name="bed-outline" size={11} color={colors.white} />
+                <Text style={styles.roomBadgeText}>{name}</Text>
               </View>
             ))}
           </View>
@@ -243,7 +245,7 @@ export default function OutstandingBalancesScreen({ onSelectRecord }) {
         </View>
         <TextInput
           style={styles.searchInput}
-          placeholder="Search by folio #, guest name, or room number"
+          placeholder="Search by folio #, guest name, or room"
           placeholderTextColor={colors.textMuted}
           value={searchTerm}
           onChangeText={setSearchTerm}
@@ -279,7 +281,7 @@ export default function OutstandingBalancesScreen({ onSelectRecord }) {
           accent={colors.primary}
           note={
             oldest
-              ? `${oldest.guestName} · Room ${Array.isArray(oldest.roomNumbers) ? oldest.roomNumbers.join(', ') : oldest.roomNumbers}`
+              ? `${oldest.guestName} · ${roomNamesOf(oldest.roomNumbers).join(', ')}`
               : 'No outstanding folios'
           }
         />

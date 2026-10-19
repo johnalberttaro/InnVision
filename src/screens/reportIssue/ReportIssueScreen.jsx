@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
+import { RoomName } from '../../utils/roomNames';
 import { useTheme } from '../../context/ThemeContext';
 
 const CATEGORIES = [
@@ -43,10 +44,9 @@ const CATEGORIES = [
  * the least context on hotel operations. Staff can still escalate it
  * from their own board after reviewing it.
  *
- * ELIGIBILITY: same rule as OrderFoodScreen.jsx — only a guest with a
- * status = 'checked-in' reservation can use this (that's the room the
- * issue is attributed to). A friendly message shows otherwise, same
- * pattern as that screen.
+ * ELIGIBILITY: only a guest with a status = 'checked-in' reservation
+ * can use this (that's the room the issue is attributed to). A friendly
+ * message shows otherwise.
  */
 export default function ReportIssueScreen({ user, onBackPress }) {
   const { colors, spacing, radius, fonts } = useTheme();
@@ -172,7 +172,7 @@ export default function ReportIssueScreen({ user, onBackPress }) {
             </View>
             <Text style={styles.stateTitle}>Issue reported</Text>
             <Text style={styles.stateMessage}>
-              Thanks — our maintenance team has been notified about Room {roomNumber}. Front Desk will follow up if needed.
+              Thanks — our maintenance team has been notified about <RoomName number={roomNumber} />. Front Desk will follow up if needed.
             </Text>
             {!!onBackPress && (
               <TouchableOpacity style={styles.statePrimaryBtn} onPress={onBackPress} activeOpacity={0.85}>
@@ -197,7 +197,7 @@ export default function ReportIssueScreen({ user, onBackPress }) {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.roomLabel}>Room {roomNumber}</Text>
+        <Text style={styles.roomLabel}><RoomName number={roomNumber} /></Text>
         <Text style={styles.subtitle}>Let us know what's wrong and our team will take care of it.</Text>
 
         <Text style={styles.fieldLabel}>What kind of issue is it?</Text>

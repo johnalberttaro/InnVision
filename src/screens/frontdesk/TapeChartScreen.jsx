@@ -40,7 +40,7 @@ const RES_STATUS_META = {
   'checked-in':  { label: 'Checked In',   color: '#16a34a' },
   'checked-out': { label: 'Checked Out',  color: '#6b7280' },
 };
-const EXCLUDED_STATUSES = ['cancelled', 'declined'];
+const EXCLUDED_STATUSES = ['cancelled', 'declined', 'no-show'];
 
 // A compact icon per current room status, for the new dedicated Status
 // column — separate from the reservation bars, since (as this file's

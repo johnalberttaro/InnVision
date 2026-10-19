@@ -29,6 +29,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { RoomName, useRoomNameOf, sortByRoomName } from '../../utils/roomNames';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import KpiCard from '../../components/dashboard/KpiCard';
 import {
@@ -64,6 +65,8 @@ const STATUS_ICON = {
 
 export default function RoomCleaningStatusScreen() {
   const [rooms, setRooms] = useState([]);
+  // Rooms are shown by name, in Room List order (Room 1, Room 2, …).
+  const nameOf = useRoomNameOf();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [updatingRoom, setUpdatingRoom] = useState(null);
@@ -132,16 +135,17 @@ export default function RoomCleaningStatusScreen() {
 
   const visibleRooms = useMemo(() => {
     let list;
-    if (filter === 'attention') list = attentionRooms;
-    else if (filter === 'ready') list = readyRooms;
-    else if (filter === 'other') list = otherRooms;
+    const ordered = (l) => sortByRoomName(l, nameOf);
+    if (filter === 'attention') list = ordered(attentionRooms);
+    else if (filter === 'ready') list = ordered(readyRooms);
+    else if (filter === 'other') list = ordered(otherRooms);
     else {
       // "All" — attention-needing rooms first, so the most actionable
       // ones aren't buried among rooms that don't need anything right now.
-      list = [...attentionRooms, ...readyRooms, ...otherRooms];
+      list = [...ordered(attentionRooms), ...ordered(readyRooms), ...ordered(otherRooms)];
     }
     return list;
-  }, [filter, attentionRooms, readyRooms, otherRooms]);
+  }, [filter, attentionRooms, readyRooms, otherRooms, nameOf]);
 
   if (loading) {
     return (
@@ -220,7 +224,7 @@ export default function RoomCleaningStatusScreen() {
               <View key={room.roomNumber} style={[styles.card, { borderLeftColor: meta.color }]}>
                 <View style={styles.roomBadge}>
                   <Ionicons name="key-outline" size={12} color={colors.white} />
-                  <Text style={styles.roomBadgeText}>Room {room.roomNumber}</Text>
+                  <Text style={styles.roomBadgeText}><RoomName number={room.roomNumber} /></Text>
                 </View>
 
                 <View style={[styles.statusBadge, { backgroundColor: meta.bg }]}>

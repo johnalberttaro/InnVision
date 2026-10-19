@@ -120,7 +120,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
       message,
       confirmLabel,
       onConfirm: onConfirmPressed,
-      destructive: confirmLabel === 'Decline',
+      destructive: confirmLabel === 'Decline' || confirmLabel === 'Mark No Show',
     });
   };
 
@@ -318,6 +318,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
       // Same red pairing MyReservationsScreen.jsx's guest-facing statusMeta()
       // already uses for 'cancelled' — kept consistent app-wide.
       case 'cancelled':    return { bg: '#FCE1E1', text: '#B3261E', accent: '#B3261E', icon: 'close-circle-outline' };
+      case 'no-show':      return { bg: '#F3E8E8', text: '#8C2F2F', accent: '#8C2F2F', icon: 'person-remove-outline' };
       default:             return { bg: colors.cardAlt, text: colors.textMuted, accent: colors.border, icon: 'help-circle-outline' };
     }
   };
@@ -328,6 +329,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
       case 'checked-out': return 'CHECKED OUT';
       case 'declined':    return 'DECLINED';
       case 'cancelled':   return 'CANCELLED';
+      case 'no-show':     return 'NO SHOW';
       default: return (status || 'unknown').toUpperCase();
     }
   };
@@ -538,6 +540,30 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     );
   };
 
+  // Guest never arrived: marks the booking "No Show". The room is released
+  // for those dates (only pending/upcoming/checked-in bookings hold a room)
+  // and a paid downpayment is kept, not refunded.
+  const handleNoShow = (item) => {
+    const dp = getDownpaymentInfo(item);
+    const dpLine = dp.applies && dp.paid
+      ? `\n\nThe ${dp.full ? 'payment' : 'downpayment'} of ${formatCurrency(dp.amount)} is kept and will not be refunded.`
+      : '';
+    confirmDialog(
+      'Mark as No Show?',
+      `${getGuestName(item)} — ${item.roomType}, ${formatDateRange(item.checkIn, item.checkOut)}.\n\nThe room will be free again for these dates. This cannot be undone.${dpLine}`,
+      'Mark No Show',
+      () =>
+        runStatusUpdate({
+          item,
+          newStatus: 'no-show',
+          extraFields: { no_show_at: new Date().toISOString() },
+          notifTitle: 'Reservation marked as No Show',
+          notifMessage: `You did not check in for your ${item.roomType} reservation (${formatDateRange(item.checkIn, item.checkOut)}), so it was marked as a no-show.`,
+          toastMessage: `${getGuestName(item)} marked as no show`,
+        })
+    );
+  };
+
   // Checks out a guest — but first checks whether they still owe
   // anything on their folio, so a balance can't ride along silently
   // past checkout.
@@ -564,7 +590,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     // confirmation checkout has always used.
     confirmDialog(
       'Check out this guest?',
-      `${getGuestName(item)} — ${item.roomType}`,
+      `${getGuestName(item)} — ${item.roomType}${isDueTodayOrEarlier(item.checkOut) ? '' : `\n\nEarly checkout: this guest was booked until ${formatCheckoutDay(item.checkOut)}.`}`,
       'Check Out',
       () =>
         runStatusUpdate({
@@ -722,6 +748,25 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
   // time-of-day in the stored value doesn't matter) and now matches "due
   // today OR earlier" instead of "due today only" — a future-dated
   // booking still correctly stays hidden until its actual day.
+  const formatCheckoutDay = (dateValue) => {
+    try {
+      return new Date(dateValue).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch {
+      return '';
+    }
+  };
+
+  // "Due today" / "Overdue" / "Checks out Oct 24" line on Check-outs cards.
+  const checkoutDueInfo = (dateValue) => {
+    const d = new Date(dateValue);
+    const day = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    if (day < today) return { label: `Overdue — was due ${formatCheckoutDay(dateValue)}`, color: '#B3261E', icon: 'alert-circle-outline' };
+    if (day === today) return { label: 'Due to check out today', color: '#9A7B00', icon: 'time-outline' };
+    return { label: `Checks out ${formatCheckoutDay(dateValue)} · early checkout available`, color: colors.textMuted, icon: 'calendar-outline' };
+  };
+
   const isDueTodayOrEarlier = (dateValue) => {
     try {
       const d = new Date(dateValue);
@@ -734,14 +779,16 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     }
   };
 
-  const filteredBookings = bookings.filter((b) => {
-    switch (activeTab) {
+  const inTab = (b, tabKey) => {
+    switch (tabKey) {
       case 'reservations:pending':   return b.status === 'pending';
       case 'reservations:confirmed': return b.status === 'upcoming';
       case 'reservations:checkins':
         return b.status === 'upcoming' && isDueTodayOrEarlier(b.checkIn);
+      // Every checked-in guest, so staff can also do an early checkout.
+      // Due today / overdue come first (see sort below).
       case 'reservations:checkouts':
-        return b.status === 'checked-in' && isDueTodayOrEarlier(b.checkOut);
+        return b.status === 'checked-in';
       case 'reservations:extensions':
         return b.status === 'checked-in' && !!pendingExtensions[b.id];
       // Deliberately scoped to PENDING refunds only, matching the sidebar
@@ -755,7 +802,26 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
       case 'reservations:downpayment': return getDownpaymentInfo(b).awaiting;
       default: return true;
     }
-  });
+  };
+  const filteredBookings = bookings.filter((b) => inTab(b, activeTab));
+
+  // Red number badges: how many bookings are waiting in each of these tabs.
+  // Updates live, since bookings and extensions already refresh in realtime.
+  const BADGE_TABS = [
+    'reservations:pending', 'reservations:checkins', 'reservations:checkouts',
+    'reservations:extensions', 'reservations:refunds',
+  ];
+  const tabCounts = {};
+  BADGE_TABS.forEach((key) => { tabCounts[key] = bookings.filter((b) => inTab(b, key)).length; });
+  // Check-outs lists every checked-in guest, but the badge only counts the
+  // ones due to leave today or overdue.
+  tabCounts['reservations:checkouts'] = bookings.filter(
+    (b) => b.status === 'checked-in' && isDueTodayOrEarlier(b.checkOut)
+  ).length;
+
+  if (activeTab === 'reservations:checkouts') {
+    filteredBookings.sort((a, b) => new Date(a.checkOut) - new Date(b.checkOut));
+  }
 
   if (activeTab === 'reservations:downpayment') {
     filteredBookings.sort((a, b) => {
@@ -771,7 +837,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
     'reservations:pending': 'No pending reservations.',
     'reservations:confirmed': 'No confirmed reservations.',
     'reservations:checkins': 'No arrivals due or overdue right now.',
-    'reservations:checkouts': 'No checkouts due or overdue right now.',
+    'reservations:checkouts': 'No guests are checked in right now.',
     'reservations:refunds': 'No refunds pending right now.',
     'reservations:downpayment': 'No reservations are waiting for a downpayment.',
     'reservations:extensions': 'No extension requests right now.',
@@ -792,10 +858,9 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
             .map((tab) => (
             <ReservationTabButton
               key={tab.key}
+              count={tabCounts[tab.key] || 0}
               tab={
-                tab.key === 'reservations:extensions' && Object.keys(pendingExtensions).length > 0
-                  ? { ...tab, label: `${tab.label} (${Object.keys(pendingExtensions).length})` }
-                  : tab.key === 'reservations:downpayment' && awaitingDownpaymentCount > 0
+                tab.key === 'reservations:downpayment' && awaitingDownpaymentCount > 0
                     ? { ...tab, label: `${tab.label} (${awaitingDownpaymentCount})` }
                     : tab
               }
@@ -1066,23 +1131,46 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
                 )}
 
                 {showCheckIn && (
-                  <TouchableOpacity
-                    style={[styles.actionButton, styles.checkInButton, isActing && styles.actionButtonDisabled]}
-                    onPress={() => handleCheckIn(item)}
-                    activeOpacity={0.85}
-                    disabled={isActing}
-                  >
-                    {isActing
-                      ? <ActivityIndicator color={colors.white} size="small" />
-                      : (
-                        <View style={styles.actionButtonContent}>
-                          <Ionicons name="log-in-outline" size={16} color={colors.white} />
-                          <Text style={styles.actionButtonText}>Check In Guest</Text>
-                        </View>
-                      )
-                    }
-                  </TouchableOpacity>
+                  <View style={styles.checkInRow}>
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.noShowButton, isActing && styles.actionButtonDisabled]}
+                      onPress={() => handleNoShow(item)}
+                      activeOpacity={0.85}
+                      disabled={isActing}
+                    >
+                      <View style={styles.actionButtonContent}>
+                        <Ionicons name="person-remove-outline" size={16} color="#B3261E" />
+                        <Text style={[styles.actionButtonText, styles.noShowButtonText]}>No Show</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.checkInButton, styles.checkInRowMain, isActing && styles.actionButtonDisabled]}
+                      onPress={() => handleCheckIn(item)}
+                      activeOpacity={0.85}
+                      disabled={isActing}
+                    >
+                      {isActing
+                        ? <ActivityIndicator color={colors.white} size="small" />
+                        : (
+                          <View style={styles.actionButtonContent}>
+                            <Ionicons name="log-in-outline" size={16} color={colors.white} />
+                            <Text style={styles.actionButtonText}>Check In Guest</Text>
+                          </View>
+                        )
+                      }
+                    </TouchableOpacity>
+                  </View>
                 )}
+
+                {showCheckOut && (() => {
+                  const due = checkoutDueInfo(item.checkOut);
+                  return (
+                    <View style={styles.checkoutDueRow}>
+                      <Ionicons name={due.icon} size={14} color={due.color} />
+                      <Text style={[styles.checkoutDueText, { color: due.color }]}>{due.label}</Text>
+                    </View>
+                  );
+                })()}
 
                 {showCheckOut && (
                   <TouchableOpacity
@@ -1330,7 +1418,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
 // works — react-native-web fires onHoverIn/onHoverOut on Pressable for a
 // mouse pointer; there's no touch equivalent, so this is simply inert
 // (never fires) on a phone/tablet, no platform check needed.
-function ReservationTabButton({ tab, active, onPress }) {
+function ReservationTabButton({ tab, active, count = 0, onPress }) {
   const [hovered, setHovered] = useState(false);
   const showHover = hovered && !active;
 
@@ -1352,6 +1440,11 @@ function ReservationTabButton({ tab, active, onPress }) {
       >
         {tab.label}
       </Text>
+      {count > 0 && (
+        <View style={styles.tabBadge}>
+          <Text style={styles.tabBadgeText}>{count > 99 ? '99+' : count}</Text>
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -1419,6 +1512,22 @@ const styles = StyleSheet.create({
   },
   tabBtnTextActive: {
     color: colors.onPrimary,
+  },
+  tabBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    marginLeft: 2,
+    backgroundColor: '#E5383B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    lineHeight: 12,
+    fontFamily: fonts.bodySemiBold,
   },
   tabBtnTextHovered: {
     color: colors.primary,
@@ -1524,6 +1633,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   checkInButton: { backgroundColor: '#1E7B34' },
+  checkInRow: { flexDirection: 'row', gap: spacing.sm },
+  checkoutDueRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: spacing.md },
+  checkoutDueText: { fontSize: 12, fontFamily: fonts.bodySemiBold },
+  checkInRowMain: { flex: 1 },
+  noShowButton: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#B3261E',
+    paddingHorizontal: spacing.lg,
+  },
+  noShowButtonText: { color: '#B3261E' },
   checkOutButton: { backgroundColor: colors.textMuted },
   // Same green as checkInButton/confirmBtn — "mark as refunded" is the
   // same kind of resolving, forward-moving action, so it gets the same

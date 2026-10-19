@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
+import { RoomName, useRoomNameOf, sortByRoomName } from '../../utils/roomNames';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { subscribeToRooms, updateRoomStatus, statusMeta, ROOM_STATUS } from '../../utils/Roomsservice';
 import KpiCard from '../../components/dashboard/KpiCard';
@@ -69,6 +70,8 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
 
   const [requests, setRequests] = useState([]);
   const [rooms, setRooms] = useState([]);
+  // Rooms are shown by name, in Room List order (Room 1, Room 2, …).
+  const nameOf = useRoomNameOf();
   const [staffList, setStaffList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState(null);
@@ -365,7 +368,7 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
         <View style={styles.reqCardTop}>
           <View style={styles.roomBadge}>
             <Ionicons name="key-outline" size={12} color={colors.white} />
-            <Text style={styles.roomBadgeText}>Room {request.roomNumber}</Text>
+            <Text style={styles.roomBadgeText}><RoomName number={request.roomNumber} /></Text>
           </View>
           {isUrgent && (
             <View style={styles.urgentBadge}>
@@ -615,14 +618,14 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
 
             <Text style={styles.fieldLabel}>Room</Text>
             <View style={styles.pickerWrapRow}>
-              {rooms.map((r) => (
+              {sortByRoomName(rooms, nameOf).map((r) => (
                 <TouchableOpacity
                   key={r.roomNumber}
                   style={[styles.pickerChip, newRoom === r.roomNumber && styles.pickerChipActive]}
                   onPress={() => setNewRoom(r.roomNumber)}
                 >
                   <Text style={[styles.pickerChipText, newRoom === r.roomNumber && styles.pickerChipTextActive]}>
-                    Room {r.roomNumber}
+                    <RoomName number={r.roomNumber} />
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -739,7 +742,7 @@ export default function MaintenanceRequestScreen({ staffUid, staffName }) {
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>
-              Assign Room {assignModalRequest?.roomNumber} Request
+              Assign <RoomName number={assignModalRequest?.roomNumber} /> Request
             </Text>
             <Text style={styles.fieldLabel}>Assign to</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pickerRow}>
