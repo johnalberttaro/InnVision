@@ -24,8 +24,8 @@
       "name": "InnVision Hotel Management System",
       "shortName": "InnVision",
       "lang": "en",
-      "themeColor": "#332B22",
-      "backgroundColor": "#F5EFE6",
+      "themeColor": "#000000",
+      "backgroundColor": "#000000",
       "display": "standalone"
     },
     "plugins": [
