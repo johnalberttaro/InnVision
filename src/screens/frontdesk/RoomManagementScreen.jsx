@@ -361,7 +361,6 @@ function RoomTypesSection({ roomTypes, rooms, addTypeOpen, onCloseAddType }) {
 
   const columns = gridWidth >= 860 ? 3 : gridWidth >= 560 ? 2 : 1;
   const cardGap = spacing.lg;
-  const cardWidth = gridWidth > 0 ? (gridWidth - cardGap * (columns - 1)) / columns : undefined;
 
   return (
     <View>
@@ -384,18 +383,23 @@ function RoomTypesSection({ roomTypes, rooms, addTypeOpen, onCloseAddType }) {
       {filteredTypes.length === 0 ? (
         <Text style={styles.emptyText}>No room types match your search or filters.</Text>
       ) : (
-        <View style={styles.typesGrid} onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
-          {filteredTypes.map((rt) => (
-            <RoomTypeCard
-              key={rt.id}
-              roomType={rt}
-              roomCount={roomCountByType[rt.id] || 0}
-              width={cardWidth}
-              isDeleting={deletingId === rt.id}
-              onEdit={() => setEditingType(rt)}
-              onDelete={() => handleDeleteType(rt)}
-            />
-          ))}
+        <View onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
+          <GridRows
+            items={filteredTypes}
+            columns={columns}
+            gap={cardGap}
+            keyOf={(rt) => rt.id}
+            renderItem={(rt) => (
+              <RoomTypeCard
+                roomType={rt}
+                roomCount={roomCountByType[rt.id] || 0}
+                width="100%"
+                isDeleting={deletingId === rt.id}
+                onEdit={() => setEditingType(rt)}
+                onDelete={() => handleDeleteType(rt)}
+              />
+            )}
+          />
         </View>
       )}
 
@@ -1149,7 +1153,6 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
 
   const columns = gridWidth >= 760 ? 2 : 1;
   const cardGap = spacing.md;
-  const cardWidth = gridWidth > 0 ? (gridWidth - cardGap * (columns - 1)) / columns : undefined;
 
   return (
     <View>
@@ -1189,16 +1192,21 @@ function StatusSection({ rooms, updatingRoomNumber, onStatusChange }) {
       {filteredRooms.length === 0 ? (
         <Text style={styles.emptyText}>No rooms match your search or filters.</Text>
       ) : (
-        <View style={styles.statusGrid} onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
-          {filteredRooms.map((room) => (
-            <RoomStatusCard
-              key={room.roomNumber}
-              room={room}
-              width={cardWidth}
-              isUpdating={updatingRoomNumber === room.roomNumber}
-              onStatusChange={(status) => onStatusChange(room, status)}
-            />
-          ))}
+        <View onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
+          <GridRows
+            items={filteredRooms}
+            columns={columns}
+            gap={cardGap}
+            keyOf={(room) => room.roomNumber}
+            renderItem={(room) => (
+              <RoomStatusCard
+                room={room}
+                width="100%"
+                isUpdating={updatingRoomNumber === room.roomNumber}
+                onStatusChange={(status) => onStatusChange(room, status)}
+              />
+            )}
+          />
         </View>
       )}
     </View>
@@ -1337,7 +1345,6 @@ function MaintenanceSection({ rooms, updatingRoomNumber, onStatusChange }) {
 
   const columns = gridWidth >= 860 ? 3 : gridWidth >= 560 ? 2 : 1;
   const cardGap = spacing.md;
-  const cardWidth = gridWidth > 0 ? (gridWidth - cardGap * (columns - 1)) / columns : undefined;
 
   return (
     <View>
@@ -1374,15 +1381,20 @@ function MaintenanceSection({ rooms, updatingRoomNumber, onStatusChange }) {
       {filteredOtherRooms.length === 0 ? (
         <Text style={styles.emptyText}>No rooms match your search or filters.</Text>
       ) : (
-        <View style={styles.maintenanceGrid} onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
-          {filteredOtherRooms.map((room) => (
-            <MaintenanceRoomCard
-              key={room.roomNumber}
-              room={room}
-              width={cardWidth}
-              onFlag={() => setFlaggingRoom(room)}
-            />
-          ))}
+        <View onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
+          <GridRows
+            items={filteredOtherRooms}
+            columns={columns}
+            gap={cardGap}
+            keyOf={(room) => room.roomNumber}
+            renderItem={(room) => (
+              <MaintenanceRoomCard
+                room={room}
+                width="100%"
+                onFlag={() => setFlaggingRoom(room)}
+              />
+            )}
+          />
         </View>
       )}
 
@@ -1562,6 +1574,33 @@ function FlagMaintenanceModal({ visible, room, onClose, onConfirm }) {
         </View>
       </View>
     </Modal>
+  );
+}
+
+// Card grid laid out as rows of `columns` equal-width cells. The measured
+// width only decides HOW MANY columns; the cells share each row with flex,
+// so a vertical scrollbar appearing/disappearing (a few px narrower) can no
+// longer make the cards wrap, re-measure and flicker. Short last rows get
+// empty spacer cells so their cards keep the same width as the rows above.
+function GridRows({ items, columns, gap, keyOf, renderItem }) {
+  const cols = Math.max(1, columns || 1);
+  const rows = [];
+  for (let i = 0; i < items.length; i += cols) rows.push(items.slice(i, i + cols));
+  return (
+    <View style={{ gap }}>
+      {rows.map((row, ri) => (
+        <View key={ri} style={{ flexDirection: 'row', gap, alignItems: 'stretch' }}>
+          {row.map((item) => (
+            <View key={keyOf(item)} style={{ flex: 1, minWidth: 0 }}>
+              {renderItem(item)}
+            </View>
+          ))}
+          {Array.from({ length: cols - row.length }).map((_, k) => (
+            <View key={`spacer-${k}`} style={{ flex: 1 }} />
+          ))}
+        </View>
+      ))}
+    </View>
   );
 }
 

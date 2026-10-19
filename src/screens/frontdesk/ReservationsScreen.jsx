@@ -835,28 +835,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
                     <Text style={styles.referenceNumber}>{getReferenceNumber(item.id)}</Text>
                     <Text style={styles.guestName}>{getGuestName(item)}</Text>
 
-                    {/* Room number(s) — the most important thing for staff
-                        to spot at a glance, so it sits right under the
-                        guest name rather than buried in the detail rows
-                        below. */}
-                    {(() => {
-                      const roomNumbers = getRoomNumbersDisplay(item);
-                      return roomNumbers ? (
-                        <View style={styles.roomNumberRow}>
-                          {roomNumbers.map((rn) => (
-                            <View key={rn} style={styles.roomNumberBadge}>
-                              <Ionicons name="key-outline" size={12} color={colors.white} />
-                              <Text style={styles.roomNumberText}>Room {rn}</Text>
-                            </View>
-                          ))}
-                        </View>
-                      ) : (
-                        <View style={[styles.roomNumberBadge, styles.roomNumberBadgeMuted]}>
-                          <Ionicons name="alert-circle-outline" size={12} color={colors.textMuted} />
-                          <Text style={[styles.roomNumberText, styles.roomNumberTextMuted]}>Room not assigned</Text>
-                        </View>
-                      );
-                    })()}
+                    {/* Rooms are shown by name only (Room Type row below), no room numbers. */}
                   </View>
 
                   {isPending ? (
@@ -1229,7 +1208,7 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
 
                   <Text style={styles.dialogTitle}>Outstanding Balance</Text>
                   <Text style={styles.balanceDialogSubtitle}>
-                    Room {roomLabel} · {getGuestName(item)}
+                    {item.roomType || 'Reservation'} · {getGuestName(item)}
                   </Text>
 
                   <Text style={styles.balanceDialogAmount}>{formatCurrency(folio.remainingBalance)}</Text>

@@ -23,6 +23,7 @@ import {
   ROOM_STATUS,
   fetchBookedRoomNumbers,
   isDoubleBookingError,
+  compareRoomsForList,
 } from '../../utils/Roomsservice';
 import { createBillingRecord } from '../../utils/BillingService';
 
@@ -170,9 +171,10 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
 
   const vacantRooms = useMemo(() => {
     const joined = joinRoomsWithTypes(rooms, roomTypes);
-    return joined.filter(
-      (r) => r.status === ROOM_STATUS.VACANT && !bookedForStay.has(String(r.roomNumber))
-    );
+    // Shown by name, in the same order as the Room List.
+    return joined
+      .filter((r) => r.status === ROOM_STATUS.VACANT && !bookedForStay.has(String(r.roomNumber)))
+      .sort(compareRoomsForList);
   }, [rooms, roomTypes, bookedForStay]);
 
   const selectedRooms = useMemo(
@@ -338,7 +340,7 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
 
       setSuccessInfo({
         guestName,
-        roomNumbers: selectedRooms.map((r) => r.roomNumber),
+        roomNames: selectedRooms.map((r) => r.roomTypeName || 'Room'),
         total,
       });
       resetForm();
@@ -391,8 +393,7 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
               <Ionicons name="checkmark" size={16} color="#FFFFFF" />
             </View>
             <Text style={styles.successText}>
-              {successInfo.guestName} checked in to Room{successInfo.roomNumbers.length > 1 ? 's' : ''}{' '}
-              {successInfo.roomNumbers.join(', ')} — {formatCurrency(successInfo.total)} total.
+              {successInfo.guestName} checked in to {successInfo.roomNames.join(', ')} — {formatCurrency(successInfo.total)} total.
             </Text>
           </View>
         )}
@@ -517,7 +518,7 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
           <PreviewRow
             icon="bed-outline"
             label={selectedRooms.length > 1 ? 'Rooms' : 'Room'}
-            value={selectedRooms.length > 0 ? selectedRooms.map((r) => r.roomNumber).join(', ') : 'Not selected yet'}
+            value={selectedRooms.length > 0 ? selectedRooms.map((r) => r.roomTypeName || 'Room').join(', ') : 'Not selected yet'}
           />
 
           {!!specialRequests.trim() && (
@@ -568,8 +569,8 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
                     )}
 
                     <View style={styles.roomCardBody}>
-                      <Text style={styles.roomCardNumber}>Room {room.roomNumber}</Text>
-                      <Text style={styles.roomCardType} numberOfLines={1}>{room.roomTypeName}</Text>
+                      <Text style={styles.roomCardNumber} numberOfLines={1}>{room.roomTypeName || 'Room'}</Text>
+                      {!!room.floor && <Text style={styles.roomCardType} numberOfLines={1}>{room.floor}</Text>}
                       {room.price != null && (
                         <Text style={styles.roomCardPrice}>{formatCurrency(room.price)}<Text style={styles.roomCardPriceUnit}> / night</Text></Text>
                       )}
@@ -591,7 +592,7 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
 
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Rooms</Text>
-              <Text style={styles.summaryValue}>{selectedRooms.map((r) => r.roomNumber).join(', ')}</Text>
+              <Text style={styles.summaryValue}>{selectedRooms.map((r) => r.roomTypeName || 'Room').join(', ')}</Text>
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Nights</Text>
@@ -653,7 +654,7 @@ export default function WalkInScreen({ staffUid, staffName, onCheckedIn }) {
       <WalkInConfirmModal
         visible={confirmVisible}
         guestName={`${firstName.trim()} ${lastName.trim()}`}
-        roomNumbers={selectedRooms.map((r) => r.roomNumber)}
+        roomNumbers={selectedRooms.map((r) => r.roomTypeName || 'Room')}
         nights={Math.max(nights, 1)}
         total={total}
         saving={saving}
