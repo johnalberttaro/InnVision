@@ -352,19 +352,23 @@ function PicturesTab({ rate, winWidth }) {
 }
 
 /* ── Tab: Terms & Conditions ────────────────────────────────────────────── */
+// InnVision's own booking rules — kept in line with what the app actually
+// does (30% downpayment, 24-hour refund window, No Show, extensions).
 const TNC_ITEMS = [
-  'Check-in time is at 2:00pm and check-out time is on or before 12:00 noon. Early check-in and late check-out may be arranged subject to room availability and appropriate charges.',
-  'Request for extension of stay must be made at the Front Desk at least 24 hours prior to your check-out date, subject to room availability and payment of applicable charges.',
-  'All changes in booking, such as but not limited to, change in name, date, no. of nights, type and number of rooms, and add-ons shall be allowed only until 2:00 pm of check-in date, free of charge.',
-  'Cancellation of booking made more than 24 hours prior to the check-in date shall be free of charge. If cancellation is made within 24 hours prior to check-in date or guest is a no-show, the first night shall be charged.',
-  'Room reservations for bookings made online which have not been prepaid before check-in shall be held only until 4:00 pm of the check-in date.',
-  "To avail of Senior Citizen's or PWD discount, the qualified guest shall be personally present during check-in and shall present their ID.",
-  'Smoking or using any type of e-cigarette is strictly prohibited inside the hotel premises. Violators will be penalized accordingly.',
-  'Guests are not allowed to bring pets, appliances, dangerous chemicals, explosives, or firearms into the hotel.',
-  'The Hotel shall not be responsible or liable for any loss or damage to your property during your stay.',
-  'The Hotel reserves the right to refuse accommodation to individuals suspected of suffering from communicable illnesses.',
-  'The Hotel reserves the right to terminate your booking if you violate any hotel policies or compromise the safety of staff and guests.',
-  'Go Hotels is committed to protecting your privacy in accordance with the Data Privacy Act of 2012.',
+  'Check-in time is at 2:00 PM and check-out is on or before 12:00 noon. Early check-in or late check-out may be arranged with the Front Desk, subject to room availability and additional charges.',
+  'A downpayment of 30% of the total amount is required to secure your reservation. You may pay the downpayment or the full amount by e-wallet (GCash, Maya, GoTyme or MariBank) when you book. Any remaining balance is paid at the Front Desk.',
+  'Every online reservation is reviewed by the Front Desk. Your booking is only final once it shows as Confirmed in My Reservations.',
+  'You may cancel your reservation from My Reservations. Your downpayment or payment is refundable only if you cancel within 24 hours of making the booking. Cancellations made after that are not refunded.',
+  'If you do not arrive on your check-in date, the Front Desk may mark your reservation as a No Show. The room is released and any amount you paid is not refunded.',
+  'Requests to extend your stay can be made from My Reservations or at the Front Desk, subject to room availability and payment of the additional nights.',
+  'Please present a valid ID at check-in. The name on the reservation must match the guest checking in.',
+  'Smoking or using any type of e-cigarette is strictly prohibited inside the hotel premises.',
+  'Pets, appliances, dangerous chemicals, explosives and firearms are not allowed inside the hotel.',
+  'Guests are responsible for any damage to the room or hotel property during their stay. Please report any problem in your room through Report an Issue or at the Front Desk.',
+  'The hotel is not responsible for the loss of valuables or personal belongings left unattended.',
+  'The hotel may refuse or end a booking if a guest breaks hotel policies or puts the safety of other guests and staff at risk.',
+  'InnVision is the training hotel of the Hospitality Management Department of Consolatrix College of Toledo City, Inc. Some services may be provided by Hospitality Management students under staff supervision.',
+  'InnVision protects your personal information in accordance with the Data Privacy Act of 2012 (Republic Act No. 10173). Your details are used only to manage your reservation and stay.',
 ];
 
 function TncTab({ onBack }) {
@@ -374,7 +378,7 @@ function TncTab({ onBack }) {
         <Text style={tabStyles.backBtnText}>{'< Back to Rates'}</Text>
       </TouchableOpacity>
       <Text style={tabStyles.tncHeader}>
-        The following are the highlighted Terms & Conditions of the Hotel.
+        Please read InnVision's Terms & Conditions before you book.
       </Text>
       {TNC_ITEMS.map((item, i) => (
         <View key={i} style={tabStyles.tncRow}>

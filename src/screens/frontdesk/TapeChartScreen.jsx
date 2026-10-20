@@ -31,16 +31,28 @@ const MIN_ROW_HEIGHT = 38;
 
 // Reservation-level statuses (not the same as rooms.status — see this
 // file's own header comment for why those are two different things).
-// cancelled/declined are deliberately absent here: they're excluded
+// cancelled/declined/no-show are deliberately absent here: they're excluded
 // from the chart entirely rather than drawn in some "cancelled" color,
-// since they never actually occupied the room.
+// since they never actually occupied the room. Checked-out stays are left
+// off too: once a guest has gone, the room is free, so the chart only
+// shows bookings that still hold a room (pending, confirmed, in-house).
 const RES_STATUS_META = {
   pending:       { label: 'Pending',      color: '#d97706' },
   upcoming:      { label: 'Confirmed',    color: '#2563eb' },
   'checked-in':  { label: 'Checked In',   color: '#16a34a' },
-  'checked-out': { label: 'Checked Out',  color: '#6b7280' },
 };
-const EXCLUDED_STATUSES = ['cancelled', 'declined', 'no-show'];
+const EXCLUDED_STATUSES = ['cancelled', 'declined', 'no-show', 'checked-out'];
+
+// " (left early Oct 20)" when a guest checked out before their booked date.
+function earlyCheckoutLabel(res) {
+  if (res.status !== 'checked-out' || !res.checkedOutAt) return '';
+  const out = new Date(res.checkedOutAt);
+  const booked = new Date(res.checkOut);
+  const outDay = new Date(out.getFullYear(), out.getMonth(), out.getDate());
+  const bookedDay = new Date(booked.getFullYear(), booked.getMonth(), booked.getDate());
+  if (outDay >= bookedDay) return '';
+  return ` (left early ${out.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`;
+}
 
 // A compact icon per current room status, for the new dedicated Status
 // column — separate from the reservation bars, since (as this file's
@@ -265,6 +277,7 @@ export default function TapeChartScreen() {
           roomType: row.room_type,
           status: row.status,
           totalAmount: row.total_amount,
+          checkedOutAt: row.checked_out_at,
         }))
         .filter((r) => !EXCLUDED_STATUSES.includes(r.status));
       setReservations(mapped);
@@ -403,12 +416,20 @@ export default function TapeChartScreen() {
     for (const room of filteredRooms) map[room.roomNumber] = [];
     for (const res of reservations) {
       const checkIn = startOfDay(new Date(res.checkIn));
-      const checkOut = startOfDay(new Date(res.checkOut));
+      // A guest who checked out EARLY freed the room on the day they left,
+      // so the bar ends there instead of at the booked check-out date
+      // (otherwise it overlaps whoever booked the room next).
+      const bookedOut = startOfDay(new Date(res.checkOut));
+      const actualOut = res.status === 'checked-out' && res.checkedOutAt ? startOfDay(new Date(res.checkedOutAt)) : null;
+      const leftEarly = !!actualOut && actualOut < bookedOut;
+      const checkOut = leftEarly ? (actualOut > checkIn ? actualOut : checkIn) : bookedOut;
       const clippedStart = checkIn < windowStart ? windowStart : checkIn;
       const clippedEnd = checkOut > windowEnd ? windowEnd : checkOut;
       const startOffset = daysBetween(windowStart, clippedStart);
       const endOffset = daysBetween(windowStart, clippedEnd);
-      if (endOffset <= startOffset) continue;
+      // Same-day early checkout: still show a half-day bar on that day.
+      const sameDayOut = leftEarly && endOffset <= startOffset && checkIn >= windowStart;
+      if (endOffset <= startOffset && !sameDayOut) continue;
       const continuesRight = checkOut > windowEnd;
 
       // endOffset lands exactly on the checkout day's own column line —
@@ -425,7 +446,7 @@ export default function TapeChartScreen() {
       // column. Skipped when the stay is already cut off at the window
       // edge (continuesRight) — nothing to nudge into there — and capped
       // at WINDOW_DAYS so it never draws past the grid itself.
-      const endOffsetVisual = continuesRight ? endOffset : Math.min(endOffset + 0.5, WINDOW_DAYS);
+      const endOffsetVisual = continuesRight ? endOffset : Math.min(Math.max(endOffset, startOffset) + 0.5, WINDOW_DAYS);
 
       for (const roomNumber of getRoomNumbers(res)) {
         if (!(roomNumber in map)) continue; // reservation references a room not currently in the room list
@@ -438,6 +459,20 @@ export default function TapeChartScreen() {
           continuesRight,
         });
       }
+    }
+    // Bars that overlap in the same room (e.g. a guest who left today and
+    // the next guest arriving today) are stacked in separate lanes so
+    // neither one hides the other.
+    for (const roomNumber of Object.keys(map)) {
+      const bars = map[roomNumber].sort((a, b) => a.left - b.left);
+      const laneEnds = [];
+      for (const bar of bars) {
+        let lane = laneEnds.findIndex((end) => end <= bar.left + 1);
+        if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
+        laneEnds[lane] = bar.left + bar.width;
+        bar.lane = lane;
+      }
+      for (const bar of bars) bar.laneCount = Math.max(laneEnds.length, 1);
     }
     return map;
   }, [filteredRooms, reservations, windowStart, windowEnd, dayWidth]);
@@ -690,6 +725,10 @@ export default function TapeChartScreen() {
                             style={[
                               styles.reservationBar,
                               { left: bar.left + 3, width: Math.max(bar.width - 6, 24), backgroundColor: meta.color },
+                              bar.laneCount > 1 && (() => {
+                                const each = (rowHeight - 8) / bar.laneCount;
+                                return { top: 4 + bar.lane * each, bottom: undefined, height: each - 3 };
+                              })(),
                               isHovered && styles.reservationBarHovered,
                             ]}
                             onPress={() => setSelectedBar(bar)}
@@ -715,6 +754,7 @@ export default function TapeChartScreen() {
                                   {new Date(bar.reservation.checkIn).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                                   {' – '}
                                   {new Date(bar.reservation.checkOut).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  {earlyCheckoutLabel(bar.reservation)}
                                   {bar.reservation.nights ? ` · ${bar.reservation.nights} night${bar.reservation.nights === 1 ? '' : 's'}` : ''}
                                 </Text>
                                 {nightlyRate != null && <Text style={styles.tooltipDetail}>{formatCurrency(nightlyRate)}/night</Text>}
@@ -761,6 +801,7 @@ export default function TapeChartScreen() {
                   <Text style={styles.modalRowLabel}>Dates</Text>
                   <Text style={styles.modalRowValue}>
                     {new Date(selectedBar.reservation.checkIn).toLocaleDateString()} – {new Date(selectedBar.reservation.checkOut).toLocaleDateString()}
+                    {earlyCheckoutLabel(selectedBar.reservation)}
                   </Text>
                 </View>
                 {!!selectedBar.reservation.nights && (

@@ -26,6 +26,7 @@ const WIDE_BREAKPOINT = 1024;
 // AdminShell.jsx).
 const NOTIFICATION_ROUTES = {
   reservation: 'reservations:all',
+  inquiry: 'guests:inquiries',
 };
 
 export default function FrontDeskShell({ onLoggedOut, staffName, staffRole, staffUid }) {

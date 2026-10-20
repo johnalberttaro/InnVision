@@ -8,10 +8,22 @@ import {
   Image,
   Modal,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { Ionicons } from '@expo/vector-icons';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
+
+// Same palette as the guest Home page's dark header: warm near-black,
+// cream text and gold for the active item.
+const SB = {
+  bg: '#17120E',
+  cream: '#F7F2EA',
+  gold: '#C9A14A',
+  goldLight: '#F0D58E',
+  activeBg: 'rgba(201,161,74,0.14)',
+};
+const sbWeb = (style) => (Platform.OS === 'web' ? style : null);
 
 const WIDE_BREAKPOINT = 1024; // sidebar is fixed/always-visible above this
 const SIDEBAR_WIDTH = 264;
@@ -219,7 +231,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName, adminPhoto
                 <Ionicons
                   name={section.icon}
                   size={18}
-                  color={isParentActive ? colors.white : 'rgba(255,255,255,0.85)'}
+                  color={isParentActive ? SB.goldLight : 'rgba(247,242,234,0.85)'}
                   style={styles.menuIcon}
                 />
                 <Text style={[styles.menuLabel, isParentActive && styles.menuLabelActive]}>
@@ -229,7 +241,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName, adminPhoto
                   <Ionicons
                     name={isExpanded ? 'chevron-down' : 'chevron-forward'}
                     size={13}
-                    color="rgba(255,255,255,0.5)"
+                    color="rgba(247,242,234,0.5)"
                   />
                 )}
               </TouchableOpacity>
@@ -310,7 +322,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName, adminPhoto
               <Ionicons
                 name={item.icon}
                 size={18}
-                color={isActive ? colors.white : 'rgba(255,255,255,0.85)'}
+                color={isActive ? SB.goldLight : 'rgba(247,242,234,0.85)'}
                 style={styles.menuIcon}
               />
               <Text style={[styles.menuLabel, isActive && styles.menuLabelActive]}>{item.label}</Text>
@@ -340,7 +352,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, adminName, adminPhoto
           </View>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setConfirmingLogout(true)} style={styles.quickLogout} accessibilityLabel="Log out">
-          <Ionicons name="power-outline" size={16} color={colors.white} />
+          <Ionicons name="power-outline" size={16} color={SB.cream} />
         </TouchableOpacity>
       </View>
 
@@ -393,16 +405,17 @@ const styles = StyleSheet.create({
   sidebar: {
     width: SIDEBAR_WIDTH,
     height: '100%',
-    backgroundColor: colors.primary,
+    backgroundColor: SB.bg,
+    ...sbWeb({ backgroundImage: 'linear-gradient(180deg, #1B1511 0%, #17120E 55%, #120E0B 100%)' }),
     borderRightWidth: 1,
-    borderRightColor: 'rgba(255,255,255,0.08)',
+    borderRightColor: 'rgba(247,242,234,0.08)',
   },
 
   header: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.xl,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    borderBottomColor: 'rgba(247,242,234,0.1)',
     alignItems: 'center',
   },
   logoImage: {
@@ -415,7 +428,7 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: 22,
     borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.3)',
+    borderColor: 'rgba(247,242,234,0.3)',
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
@@ -424,12 +437,12 @@ const styles = StyleSheet.create({
   logoBadgeText: {
     fontSize: 8,
     fontFamily: fonts.bodySemiBold,
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(247,242,234,0.6)',
   },
   brandName: {
     fontSize: 17,
     fontFamily: fonts.headingExtraBold,
-    color: colors.white,
+    color: SB.cream,
     letterSpacing: 0.3,
   },
   brandNameAccent: {
@@ -438,7 +451,7 @@ const styles = StyleSheet.create({
   brandSubtitle: {
     fontSize: 10,
     fontFamily: fonts.body,
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(247,242,234,0.6)',
     textAlign: 'center',
     marginTop: 2,
   },
@@ -455,9 +468,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   menuItemActive: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: SB.activeBg,
     borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
+    borderLeftColor: SB.gold,
   },
   menuIcon: {
     width: 24,
@@ -466,14 +479,14 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontFamily: fonts.bodySemiBold,
-    color: 'rgba(255,255,255,0.85)',
+    color: 'rgba(247,242,234,0.85)',
   },
   menuLabelActive: {
-    color: colors.white,
+    color: SB.goldLight,
   },
   chevron: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.5)',
+    color: 'rgba(247,242,234,0.5)',
   },
 
   subMenu: {
@@ -488,34 +501,34 @@ const styles = StyleSheet.create({
     paddingRight: spacing.lg,
   },
   subMenuItemActive: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(201,161,74,0.08)',
   },
   subDot: {
     width: 5,
     height: 5,
     borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'rgba(247,242,234,0.35)',
     marginRight: spacing.sm,
   },
   subDotActive: {
-    backgroundColor: colors.accent,
+    backgroundColor: SB.gold,
   },
   subMenuLabel: {
     fontSize: 14,
     fontFamily: fonts.body,
-    color: 'rgba(255,255,255,0.65)',
+    color: 'rgba(247,242,234,0.65)',
     flex: 1,
     flexShrink: 1,
   },
   subMenuLabelActive: {
-    color: colors.white,
+    color: SB.goldLight,
     fontFamily: fonts.bodySemiBold,
   },
   subMenuLabelDisabled: {
-    color: 'rgba(255,255,255,0.35)',
+    color: 'rgba(247,242,234,0.35)',
   },
   comingSoonBadge: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(247,242,234,0.1)',
     borderRadius: 999,
     paddingVertical: 2,
     paddingHorizontal: spacing.xs,
@@ -524,14 +537,14 @@ const styles = StyleSheet.create({
   comingSoonBadgeText: {
     fontSize: 9,
     fontFamily: fonts.bodySemiBold,
-    color: 'rgba(255,255,255,0.55)',
+    color: 'rgba(247,242,234,0.55)',
     letterSpacing: 0.3,
   },
 
   utilityWrap: {
     paddingVertical: spacing.xs,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.1)',
+    borderTopColor: 'rgba(247,242,234,0.1)',
   },
   profileFooter: {
     flexDirection: 'row',
@@ -539,7 +552,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.1)',
+    borderTopColor: 'rgba(247,242,234,0.1)',
   },
   profileFooterMain: {
     flex: 1,
@@ -555,13 +568,13 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.accent,
+    backgroundColor: SB.gold,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.sm,
   },
   avatarText: {
-    color: colors.white,
+    color: '#231B12',
     fontFamily: fonts.headingBold,
     fontSize: 14,
   },
@@ -571,24 +584,24 @@ const styles = StyleSheet.create({
   profileName: {
     fontSize: 12,
     fontFamily: fonts.bodySemiBold,
-    color: colors.white,
+    color: SB.cream,
   },
   profileRole: {
     fontSize: 10,
     fontFamily: fonts.body,
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(247,242,234,0.6)',
     marginTop: 1,
   },
   quickLogout: {
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(247,242,234,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   quickLogoutIcon: {
     fontSize: 14,
-    color: colors.white,
+    color: SB.cream,
   },
 });

@@ -8,10 +8,22 @@ import {
   Image,
   Modal,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { Ionicons } from '@expo/vector-icons';
 import ConfirmDialog from '../../components/shared/ConfirmDialog';
+
+// Same palette as the guest Home page's dark header: warm near-black,
+// cream text and gold for the active item.
+const SB = {
+  bg: '#17120E',
+  cream: '#F7F2EA',
+  gold: '#C9A14A',
+  goldLight: '#F0D58E',
+  activeBg: 'rgba(201,161,74,0.14)',
+};
+const sbWeb = (style) => (Platform.OS === 'web' ? style : null);
 
 const WIDE_BREAKPOINT = 1024;
 const SIDEBAR_WIDTH = 264;
@@ -26,7 +38,7 @@ const MENU_SECTIONS = [
 
 /**
  * MaintenanceSidebar — left navigation for the new Maintenance staff
- * portal. Same shape/behavior as HousekeepingSidebar.jsx/FnbSidebar.jsx.
+ * portal. Same shape/behavior as HousekeepingSidebar.jsx.
  */
 export default function MaintenanceSidebar({
   activeKey,
@@ -77,7 +89,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, onClose, staffName, s
       <View style={styles.header}>
         {!!onClose && (
           <TouchableOpacity style={styles.closeBtn} onPress={onClose} accessibilityLabel="Close menu">
-            <Ionicons name="close" size={16} color={colors.white} />
+            <Ionicons name="close" size={16} color={SB.cream} />
           </TouchableOpacity>
         )}
         <Image source={LOGO_SOURCE} style={styles.logoImage} resizeMode="contain" />
@@ -101,7 +113,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, onClose, staffName, s
               <Ionicons
                 name={section.icon}
                 size={18}
-                color={isActive ? colors.white : 'rgba(255,255,255,0.85)'}
+                color={isActive ? SB.goldLight : 'rgba(247,242,234,0.85)'}
                 style={styles.menuIcon}
               />
               <Text style={[styles.menuLabel, isActive && styles.menuLabelActive]}>{section.label}</Text>
@@ -121,7 +133,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, onClose, staffName, s
           onMouseLeave={() => setHoveredKey(null)}
           activeOpacity={0.75}
         >
-          <Ionicons name="log-out-outline" size={18} color="rgba(255,255,255,0.85)" style={styles.menuIcon} />
+          <Ionicons name="log-out-outline" size={18} color="rgba(247,242,234,0.85)" style={styles.menuIcon} />
           <Text style={styles.menuLabel}>Logout</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -146,7 +158,7 @@ function SidebarContent({ activeKey, onNavigate, onLogout, onClose, staffName, s
           </View>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setConfirmingLogout(true)} style={styles.quickLogout} accessibilityLabel="Log out">
-          <Ionicons name="power-outline" size={16} color={colors.white} />
+          <Ionicons name="power-outline" size={16} color={SB.cream} />
         </TouchableOpacity>
       </View>
 
@@ -174,9 +186,10 @@ const styles = StyleSheet.create({
   sidebar: {
     width: SIDEBAR_WIDTH,
     height: '100%',
-    backgroundColor: colors.primary,
+    backgroundColor: SB.bg,
+    ...sbWeb({ backgroundImage: 'linear-gradient(180deg, #1B1511 0%, #17120E 55%, #120E0B 100%)' }),
     borderRightWidth: 1,
-    borderRightColor: 'rgba(255,255,255,0.08)',
+    borderRightColor: 'rgba(247,242,234,0.08)',
   },
   sidebarFullScreen: { width: '100%', borderRightWidth: 0 },
 
@@ -187,31 +200,31 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(247,242,234,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  closeBtnIcon: { fontSize: 15, color: colors.white },
+  closeBtnIcon: { fontSize: 15, color: SB.cream },
 
   header: {
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.xl,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    borderBottomColor: 'rgba(247,242,234,0.1)',
     alignItems: 'center',
   },
   logoImage: { width: 44, height: 44, marginBottom: spacing.sm },
-  brandName: { fontSize: 17, fontFamily: fonts.headingExtraBold, color: colors.white, letterSpacing: 0.3 },
+  brandName: { fontSize: 17, fontFamily: fonts.headingExtraBold, color: SB.cream, letterSpacing: 0.3 },
   brandNameAccent: { color: '#E1A005' },
-  brandSubtitle: { fontSize: 10, fontFamily: fonts.body, color: 'rgba(255,255,255,0.6)', textAlign: 'center', marginTop: 2 },
+  brandSubtitle: { fontSize: 10, fontFamily: fonts.body, color: 'rgba(247,242,234,0.6)', textAlign: 'center', marginTop: 2 },
 
   menuScroll: { flex: 1, paddingVertical: spacing.sm },
   menuItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm + 2, paddingHorizontal: spacing.lg },
-  menuItemActive: { backgroundColor: 'rgba(255,255,255,0.1)', borderLeftWidth: 3, borderLeftColor: colors.accent },
-  menuItemHovered: { backgroundColor: 'rgba(255,255,255,0.06)' },
+  menuItemActive: { backgroundColor: SB.activeBg, borderLeftWidth: 3, borderLeftColor: SB.gold },
+  menuItemHovered: { backgroundColor: 'rgba(247,242,234,0.06)' },
   menuIcon: { width: 24 },
-  menuLabel: { flex: 1, fontSize: 15, fontFamily: fonts.bodySemiBold, color: 'rgba(255,255,255,0.85)' },
-  menuLabelActive: { color: colors.white },
+  menuLabel: { flex: 1, fontSize: 15, fontFamily: fonts.bodySemiBold, color: 'rgba(247,242,234,0.85)' },
+  menuLabelActive: { color: SB.goldLight },
   menuBadge: {
     minWidth: 18, height: 18, borderRadius: 9,
     backgroundColor: '#B3261E', alignItems: 'center', justifyContent: 'center',
@@ -222,18 +235,18 @@ const styles = StyleSheet.create({
   profileFooter: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: spacing.md, paddingVertical: spacing.md,
-    borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)',
+    borderTopWidth: 1, borderTopColor: 'rgba(247,242,234,0.1)',
   },
   profileFooterMain: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   avatar: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: colors.accent,
+    width: 44, height: 44, borderRadius: 22, backgroundColor: SB.gold,
     alignItems: 'center', justifyContent: 'center', marginRight: spacing.sm, overflow: 'hidden',
   },
   avatarImage: { width: 44, height: 44 },
-  avatarText: { color: colors.white, fontFamily: fonts.headingBold, fontSize: 16 },
+  avatarText: { color: '#231B12', fontFamily: fonts.headingBold, fontSize: 16 },
   profileTextWrap: { flex: 1 },
-  profileName: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: colors.white },
-  profileRole: { fontSize: 11, fontFamily: fonts.body, color: 'rgba(255,255,255,0.6)', marginTop: 1 },
-  quickLogout: { width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
-  quickLogoutIcon: { fontSize: 14, color: colors.white },
+  profileName: { fontSize: 14, fontFamily: fonts.bodySemiBold, color: SB.cream },
+  profileRole: { fontSize: 11, fontFamily: fonts.body, color: 'rgba(247,242,234,0.6)', marginTop: 1 },
+  quickLogout: { width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(247,242,234,0.1)', alignItems: 'center', justifyContent: 'center' },
+  quickLogoutIcon: { fontSize: 14, color: SB.cream },
 });

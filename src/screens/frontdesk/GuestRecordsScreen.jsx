@@ -19,6 +19,7 @@ import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { formatDate } from '../../utils/dateHelpers';
 import { formatCurrency } from '../../utils/roomRates';
 import Pagination from '../../components/shared/Pagination';
+import StayTimeline from '../../components/shared/StayTimeline';
 
 /**
  * GuestRecordsScreen — the master guest directory (Guest Management → Guest
@@ -225,6 +226,11 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
     checkOut: row.check_out,
     totalAmount: row.total_amount,
     createdAt: row.created_at,
+    checkedInAt: row.checked_in_at,
+    checkedOutAt: row.checked_out_at,
+    cancelledAt: row.cancelled_at,
+    noShowAt: row.no_show_at,
+    nights: row.nights,
   });
 
   useEffect(() => {
@@ -296,9 +302,12 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
       const totalStays = completedStays.length;
       const totalReservations = guestReservations.length;
       const lifetimeSpend = completedStays.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
+      // Uses the day they actually checked out (early checkouts included),
+      // falling back to the booked check-out date for older records.
       const lastStayDate = completedStays.reduce((latest, r) => {
-        if (!r.checkOut) return latest;
-        if (!latest || new Date(r.checkOut) > new Date(latest)) return r.checkOut;
+        const left = r.checkedOutAt || r.checkOut;
+        if (!left) return latest;
+        if (!latest || new Date(left) > new Date(latest)) return left;
         return latest;
       }, null);
 
@@ -311,17 +320,25 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
     });
   }, [guests, reservations]);
 
+  // Guest Records is about stays: walk-ins plus registered guests who have
+  // at least one reservation. Accounts that never booked are listed in
+  // Guest Profiles instead.
+  const recordGuests = useMemo(
+    () => joinedGuests.filter((g) => !g.linkedUid || g._stats.totalReservations > 0),
+    [joinedGuests]
+  );
+
   const filteredGuests = useMemo(() => {
     const term = searchText.trim().toLowerCase();
-    if (!term) return joinedGuests;
-    return joinedGuests.filter((g) => {
+    if (!term) return recordGuests;
+    return recordGuests.filter((g) => {
       const haystack = [g.firstName, g.lastName, g.email, g.phone]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
       return haystack.includes(term);
     });
-  }, [joinedGuests, searchText]);
+  }, [recordGuests, searchText]);
 
   // Jump back to page 1 whenever the search narrows/changes the result
   // set — otherwise a stale page number could point past the end of a
@@ -424,15 +441,16 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
     // registered guest (see renderGuestCard), but this keeps the rule
     // enforced even if something else ever calls this directly: a
     // registered guest's record is deleted from Guest Profiles instead.
-    if (guest.linkedUid) return;
-
     const fullName = `${guest.firstName || ''} ${guest.lastName || ''}`.trim() || 'this guest';
     const hasActiveStay =
       guest._currentReservation && ACTIVE_RESERVATION_STATUSES.includes(guest._currentReservation.status);
 
+    const accountNote = guest.linkedUid
+      ? ' Their app account stays in Guest Profiles, and they can still log in and book.'
+      : '';
     const message = hasActiveStay
-      ? `${fullName} has an active reservation on file. Deleting the guest record will not cancel that reservation, but it will remove them from Guest Records. Continue?`
-      : `This will permanently remove ${fullName} from Guest Records. This does not delete any reservation history. Continue?`;
+      ? `${fullName} has an active reservation on file. Deleting the guest record will not cancel that reservation, but it will remove them from Guest Records.${accountNote} Continue?`
+      : `This will remove ${fullName} from Guest Records.${accountNote} Their past reservations stay in Reservations and Billing. Continue?`;
 
     confirmAction('Delete Guest', message, () => performDeleteGuest(guest.id));
   };
@@ -499,7 +517,9 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
               own button instead of blending into the trailing chevron
               next to it. Stops propagation so it doesn't also trigger
               the card's onSelectGuest press. */}
-          {!item.linkedUid && (
+          {/* Delete — any guest record (walk-in or registered). Guest
+              Profiles lists accounts separately, so it's not affected. */}
+          {(
             <TouchableOpacity
               style={styles.deleteBtn}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -545,9 +565,11 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
                   </Text>
                 </View>
               )}
-              <InfoChip label="Check-in"  value={formatDateTime(reservation.checkIn)} />
-              <InfoChip label="Check-out" value={formatDateTime(reservation.checkOut)} />
             </View>
+          ) : null}
+          {reservation ? (
+            // Booked on → stay dates → actual check-in / check-out times.
+            <StayTimeline reservation={reservation} compact />
           ) : (
             <Text style={styles.noReservationText}>No reservation on file</Text>
           )}
@@ -631,17 +653,17 @@ export default function GuestRecordsScreen({ onSelectGuest }) {
         <View style={styles.centerWrap}>
           <View style={styles.emptyIconWrap}>
             <Ionicons
-              name={guests.length === 0 ? 'people-outline' : 'search-outline'}
+              name={recordGuests.length === 0 ? 'people-outline' : 'search-outline'}
               size={26}
               color={colors.textMuted}
             />
           </View>
           <Text style={styles.emptyText}>
-            {guests.length === 0
+            {recordGuests.length === 0
               ? 'No guests yet. Add your first guest to get started.'
               : 'No guests match your search.'}
           </Text>
-          {guests.length === 0 ? (
+          {recordGuests.length === 0 ? (
             <TouchableOpacity
               style={styles.emptyCta}
               onPress={() => setShowAddModal(true)}

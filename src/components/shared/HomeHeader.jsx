@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -83,6 +83,7 @@ export default function HomeHeader({
   // Report an Issue and Profile only when signed in.
   const navItems = [
     { label: 'About',            onPress: () => onAboutPress && onAboutPress() },
+    { label: 'Promos',           onPress: () => {} },
     { label: 'Contact Us',       onPress: () => onContactPress && onContactPress() },
     { label: 'My Reservations',  onPress: () => onFindBooking && onFindBooking() },
     ...(isAuthenticated

@@ -106,7 +106,7 @@ export default function ContactUsScreen({ onBack }) {
       next.email = 'Enter a valid email address.';
     }
     if (!subject.trim()) next.subject = 'Enter a subject.';
-    if (!message.trim()) next.message = 'Enter your message.';
+    if (!message.trim()) next.message = 'Enter your inquiry.';
     setErrors(next);
     return Object.keys(next).length === 0;
   };
@@ -201,20 +201,20 @@ export default function ContactUsScreen({ onBack }) {
           <View style={[styles.inner, styles.twoCol]}>
             {/* Form */}
             <View style={[styles.card, styles.formCard]}>
-              <Text style={styles.cardTitle} accessibilityRole="header">Send us a message</Text>
-              <Text style={styles.cardLead}>Sign in first so we can link your message to your account.</Text>
+              <Text style={styles.cardTitle} accessibilityRole="header">Send an inquiry</Text>
+              <Text style={styles.cardLead}>Ask about your stay, a booking or an event. Sign in first so we can link your inquiry to your account and room.</Text>
 
               {submitStatus === 'success' && (
                 <Banner styles={styles} tone="success" icon="checkmark-circle"
-                  text="Message sent. We'll get back to you by email." />
+                  text="Inquiry sent. The Front Desk will get back to you soon." />
               )}
               {submitStatus === 'signed-out' && (
                 <Banner styles={styles} tone="error" icon="log-in-outline"
-                  text="Sign in to your account, then send your message." />
+                  text="Sign in to your account, then send your inquiry." />
               )}
               {submitStatus === 'error' && (
                 <Banner styles={styles} tone="error" icon="alert-circle"
-                  text="Your message wasn't sent. Check your connection and try again." />
+                  text="Your inquiry wasn't sent. Check your connection and try again." />
               )}
 
               <View style={styles.formRow}>
@@ -234,8 +234,8 @@ export default function ContactUsScreen({ onBack }) {
                   placeholder="What's this about?" error={errors.subject} />
               </View>
               <FormField styles={styles} colors={colors}
-                icon="document-text-outline" label="Message" value={message} onChangeText={setMessage}
-                placeholder="Type your message here" error={errors.message} multiline />
+                icon="document-text-outline" label="Your inquiry" value={message} onChangeText={setMessage}
+                placeholder="Type your inquiry here, e.g. Can I get an extra blanket in my room?" error={errors.message} multiline />
 
               <TouchableOpacity
                 style={[styles.sendButton, submitting && styles.sendButtonDisabled]}
@@ -249,7 +249,7 @@ export default function ContactUsScreen({ onBack }) {
                   : (
                     <>
                       <Ionicons name="send" size={15} color="#231B12" />
-                      <Text style={styles.sendButtonText}>Send message</Text>
+                      <Text style={styles.sendButtonText}>Send inquiry</Text>
                     </>
                   )}
               </TouchableOpacity>

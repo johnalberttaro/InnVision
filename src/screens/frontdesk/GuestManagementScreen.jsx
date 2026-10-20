@@ -7,6 +7,7 @@ import GuestRatingsScreen from '../admin/GuestRatingsScreen';
 import InquiriesScreen from './InquiriesScreen';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { useTabState } from '../../utils/sessionState';
+import { supabase } from '../../services/supabase';
 
 // Every possible Guest Management sub-screen. Which of these actually show
 // up as tabs is controlled by the `tabKeys` prop — Front Desk's own
@@ -49,6 +50,24 @@ export default function GuestManagementScreen({ section = 'profiles', tabKeys, o
   // built this session).
   const [activeTab, setActiveTab] = useTabState('GuestManagementScreen:tab', section); // kept on page reload
 
+  // Red number on Inquiries: open (not yet resolved) inquiries.
+  const showInquiries = tabs.some((t) => t.key === 'inquiries');
+  const [inquiryCount, setInquiryCount] = useState(0);
+  useEffect(() => {
+    if (!showInquiries) return undefined;
+    const loadCount = async () => {
+      const { data, error } = await supabase.from('contact_messages').select('status');
+      if (error) return;
+      setInquiryCount((data || []).filter((m) => m.status !== 'resolved').length);
+    };
+    loadCount();
+    const channel = supabase
+      .channel('guest-mgmt-inquiry-count')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_messages' }, loadCount)
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [showInquiries]);
+
   return (
     <View style={styles.screen}>
       <View style={styles.tabBarWrap}>
@@ -62,6 +81,7 @@ export default function GuestManagementScreen({ section = 'profiles', tabKeys, o
               key={tab.key}
               tab={tab}
               active={activeTab === tab.key}
+              count={tab.key === 'inquiries' ? inquiryCount : 0}
               onPress={() => setActiveTab(tab.key)}
             />
           ))}
@@ -95,7 +115,7 @@ function ComingSoonPanel({ label }) {
 // works — react-native-web fires onHoverIn/onHoverOut on Pressable for a
 // mouse pointer; there's no touch equivalent, so this is simply inert
 // (never fires) on a phone/tablet, no platform check needed.
-function GuestTabButton({ tab, active, onPress }) {
+function GuestTabButton({ tab, active, count = 0, onPress }) {
   const [hovered, setHovered] = useState(false);
   const showHover = hovered && !active;
 
@@ -117,6 +137,11 @@ function GuestTabButton({ tab, active, onPress }) {
       >
         {tab.label}
       </Text>
+      {count > 0 && (
+        <View style={styles.tabBadge}>
+          <Text style={styles.tabBadgeText}>{count > 99 ? '99+' : count}</Text>
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -159,6 +184,11 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodySemiBold,
     color: colors.textMuted,
   },
+  tabBadge: {
+    minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, marginLeft: 2,
+    backgroundColor: '#E5383B', alignItems: 'center', justifyContent: 'center',
+  },
+  tabBadgeText: { color: '#FFFFFF', fontSize: 10, lineHeight: 12, fontFamily: fonts.bodySemiBold },
   tabBtnTextActive: {
     color: colors.onPrimary,
   },

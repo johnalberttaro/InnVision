@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 import { formatDate } from '../../utils/dateHelpers';
+import StayTimeline from '../../components/shared/StayTimeline';
 import { formatCurrency } from '../../utils/roomRates';
 
 /**
@@ -93,6 +94,11 @@ export default function GuestDetailScreen({ guestId, onBack }) {
     totalAmount: row.total_amount,
     guestDetails: row.guest_details,
     createdAt: row.created_at,
+    checkedInAt: row.checked_in_at,
+    checkedOutAt: row.checked_out_at,
+    cancelledAt: row.cancelled_at,
+    noShowAt: row.no_show_at,
+    nights: row.nights,
   });
 
   // ── Load guest identity ─────────────────────────────────────────────
@@ -244,9 +250,11 @@ export default function GuestDetailScreen({ guestId, onBack }) {
                   )}
                 </View>
 
+                {/* Booked on → stay dates → actual check-in / check-out times */}
+                <StayTimeline reservation={r} />
+                <View style={{ height: spacing.sm }} />
+
                 <View style={styles.reservationInfoRow}>
-                  <InfoChip label="Check-in" value={formatDateTime(r.checkIn)} />
-                  <InfoChip label="Check-out" value={formatDateTime(r.checkOut)} />
                   <InfoChip label="Amount" value={formatCurrency(r.totalAmount || 0)} />
                 </View>
 

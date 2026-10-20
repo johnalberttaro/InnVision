@@ -9,6 +9,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Modal,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
@@ -27,6 +28,49 @@ import {
   subscribeToStayExtensions,
 } from '../../utils/StayExtensionService';
 import { useTabState } from '../../utils/sessionState';
+import Pagination from '../../components/shared/Pagination';
+
+// ── Search / filters / pages for the reservation lists ─────────────────
+const PAGE_SIZE = 10;
+const LIST_STATUS_FILTERS = [
+  { key: 'all',         label: 'All' },
+  { key: 'pending',     label: 'Pending' },
+  { key: 'upcoming',    label: 'Confirmed' },
+  { key: 'checked-in',  label: 'Checked in' },
+  { key: 'checked-out', label: 'Checked out' },
+  { key: 'cancelled',   label: 'Cancelled' },
+  { key: 'declined',    label: 'Declined' },
+  { key: 'no-show',     label: 'No show' },
+];
+const DATE_FILTERS = [
+  { key: 'any',    label: 'Any date' },
+  { key: 'today',  label: 'Staying today' },
+  { key: 'next7',  label: 'Arriving in 7 days' },
+  { key: 'month',  label: 'Check-in this month' },
+  { key: 'past30', label: 'Left in last 30 days' },
+];
+const SORTS = [
+  { key: 'newest',  label: 'Newest booked' },
+  { key: 'oldest',  label: 'Oldest booked' },
+  { key: 'checkin', label: 'Check-in date' },
+];
+const dayOf = (v) => { const d = new Date(v); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
+function matchesDate(b, key) {
+  if (key === 'any') return true;
+  const today = dayOf(Date.now());
+  const inDay = dayOf(b.checkIn);
+  const outDay = dayOf(b.checkOut);
+  switch (key) {
+    case 'today':  return inDay <= today && today < Math.max(outDay, inDay + 1) && !['cancelled', 'declined', 'no-show'].includes(b.status);
+    case 'next7':  return inDay >= today && inDay <= today + 7 * 864e5;
+    case 'month': {
+      const d = new Date(b.checkIn); const n = new Date();
+      return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth();
+    }
+    case 'past30': return b.status === 'checked-out' && dayOf(b.checkedOutAt || b.checkOut) >= today - 30 * 864e5;
+    default: return true;
+  }
+}
 
 // All 8 Reservation Management sidebar items, now tabs at the top of this
 // one screen instead of separate sidebar sub-items/routes. The first 6 are
@@ -82,7 +126,14 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
   // that has to keep landing on the right tab. Everything reachable only
   // through the sidebar now flows through the tab bar below instead, which
   // is why the Shells' routing didn't need the same per-item wiring anymore.
+  const [searchText, setSearchText] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [dateFilter, setDateFilter] = useState('any');
+  const [sortBy, setSortBy] = useState('newest');
+  const [page, setPage] = useState(1);
   const [activeTab, setActiveTab] = useTabState('ReservationsScreen:tab', filterKey); // kept on page reload
+  // Back to page 1 whenever the list changes shape.
+  useEffect(() => { setPage(1); }, [activeTab, searchText, statusFilter, dateFilter, sortBy]);
 
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -826,6 +877,39 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
   }
   const awaitingDownpaymentCount = bookings.filter((b) => getDownpaymentInfo(b).awaiting).length;
 
+  // Search (every list tab) + status/date/sort (All tab) + pages.
+  const isAllTab = activeTab === 'reservations:all';
+  const searchTerm = searchText.trim().toLowerCase();
+  const searchedBookings = filteredBookings.filter((b) => {
+    if (searchTerm) {
+      const hay = [
+        getReferenceNumber(b.id), b.id, getGuestName(b), b.guestEmail,
+        b.guestDetails?.phone, b.guestDetails?.email, b.roomType,
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(searchTerm)) return false;
+    }
+    return !isAllTab || matchesDate(b, dateFilter);
+  });
+  const statusCounts = {};
+  LIST_STATUS_FILTERS.forEach((f) => {
+    statusCounts[f.key] = f.key === 'all' ? searchedBookings.length : searchedBookings.filter((b) => b.status === f.key).length;
+  });
+  const listBookings = isAllTab && statusFilter !== 'all'
+    ? searchedBookings.filter((b) => b.status === statusFilter)
+    : searchedBookings;
+  if (isAllTab) {
+    listBookings.sort((a, b) => (sortBy === 'checkin'
+      ? new Date(a.checkIn) - new Date(b.checkIn)
+      : sortBy === 'oldest'
+        ? new Date(a.createdAt) - new Date(b.createdAt)
+        : new Date(b.createdAt) - new Date(a.createdAt)));
+  }
+  const totalPages = Math.max(1, Math.ceil(listBookings.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedBookings = listBookings.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const filtersActive = !!searchTerm || (isAllTab && (statusFilter !== 'all' || dateFilter !== 'any'));
+  const clearFilters = () => { setSearchText(''); setStatusFilter('all'); setDateFilter('any'); };
+
   const emptyMessages = {
     'reservations:all': 'No bookings yet.',
     'reservations:pending': 'No pending reservations.',
@@ -865,6 +949,82 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
         </ScrollView>
       </View>
 
+      {/* Search + filters (list tabs only) */}
+      {activeTab !== 'reservations:walkin' && activeTab !== 'reservations:tapechart' && (
+        <View style={styles.toolbar}>
+          <View style={styles.searchRow}>
+            <View style={styles.searchBox}>
+              <Ionicons name="search-outline" size={16} color={colors.textMuted} />
+              <TextInput
+                style={styles.searchInput}
+                value={searchText}
+                onChangeText={setSearchText}
+                placeholder="Search guest name, RES- reference, phone, email or room"
+                placeholderTextColor={colors.disabled}
+              />
+              {searchText.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchText('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close-circle" size={16} color={colors.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+            {isAllTab && (
+              <View style={styles.sortGroup}>
+                {SORTS.map((o) => (
+                  <TouchableOpacity key={o.key} style={[styles.sortBtn, sortBy === o.key && styles.sortBtnActive]} onPress={() => setSortBy(o.key)} activeOpacity={0.8}>
+                    <Text style={[styles.sortBtnText, sortBy === o.key && styles.sortBtnTextActive]}>{o.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </View>
+
+          {isAllTab && (
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+                {LIST_STATUS_FILTERS.map((f) => {
+                  const on = statusFilter === f.key;
+                  return (
+                    <TouchableOpacity key={f.key} style={[styles.fChip, on && styles.fChipActive]} onPress={() => setStatusFilter(f.key)} activeOpacity={0.8}>
+                      <Text style={[styles.fChipText, on && styles.fChipTextActive]}>{f.label}</Text>
+                      <View style={[styles.fChipCount, on && styles.fChipCountActive]}>
+                        <Text style={[styles.fChipCountText, on && styles.fChipCountTextActive]}>{statusCounts[f.key] || 0}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+                <Ionicons name="calendar-outline" size={14} color={colors.textMuted} style={{ alignSelf: 'center' }} />
+                {DATE_FILTERS.map((f) => {
+                  const on = dateFilter === f.key;
+                  return (
+                    <TouchableOpacity key={f.key} style={[styles.dChip, on && styles.dChipActive]} onPress={() => setDateFilter(f.key)} activeOpacity={0.8}>
+                      <Text style={[styles.dChipText, on && styles.dChipTextActive]}>{f.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </>
+          )}
+
+          {!loading && (filtersActive || listBookings.length > PAGE_SIZE) && (
+            <View style={styles.resultRow}>
+              <Text style={styles.resultText}>
+                {listBookings.length === 0
+                  ? 'No matches'
+                  : `Showing ${(safePage - 1) * PAGE_SIZE + 1}–${Math.min(safePage * PAGE_SIZE, listBookings.length)} of ${listBookings.length}`}
+              </Text>
+              {filtersActive && (
+                <TouchableOpacity onPress={clearFilters} activeOpacity={0.7}>
+                  <Text style={styles.clearLink}>Clear filters</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+        </View>
+      )}
+
       {activeTab === 'reservations:walkin' ? (
         <WalkInScreen staffUid={staffUid} staffName={staffName} />
       ) : activeTab === 'reservations:tapechart' ? (
@@ -873,9 +1033,20 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
         <View style={styles.centerWrap}><ActivityIndicator color={colors.primary} size="large" /></View>
       ) : filteredBookings.length === 0 ? (
         <View style={styles.centerWrap}><Text style={styles.emptyText}>{emptyMessages[activeTab] || 'No bookings yet.'}</Text></View>
+      ) : listBookings.length === 0 ? (
+        <View style={styles.centerWrap}>
+          <Ionicons name="search-outline" size={26} color={colors.textMuted} />
+          <Text style={[styles.emptyText, { marginTop: spacing.sm }]}>No reservations match your search or filters.</Text>
+          <TouchableOpacity onPress={clearFilters} activeOpacity={0.7} style={{ marginTop: spacing.sm }}>
+            <Text style={styles.clearLink}>Clear filters</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
         <FlatList
-          data={filteredBookings}
+          data={pagedBookings}
+          ListFooterComponent={listBookings.length > PAGE_SIZE ? (
+            <Pagination currentPage={safePage} totalItems={listBookings.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+          ) : null}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           renderItem={({ item }) => {
@@ -960,6 +1131,10 @@ export default function ReservationsScreen({ filterKey = 'reservations:all', sta
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Dates</Text>
                   <Text style={styles.detailValue}>{formatDateRange(item.checkIn, item.checkOut)}</Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Booked On</Text>
+                  <Text style={styles.detailValue}>{formatDateTime(item.createdAt)}</Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Nights</Text>
@@ -1530,6 +1705,44 @@ const styles = StyleSheet.create({
   centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { fontSize: 14, fontFamily: fonts.body, color: colors.textMuted },
   listContent: { padding: spacing.lg },
+
+  toolbar: {
+    backgroundColor: colors.white, borderBottomWidth: 1, borderBottomColor: colors.border,
+    paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.sm, gap: spacing.sm,
+  },
+  searchRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm },
+  searchBox: {
+    flexGrow: 1, flexBasis: 280,
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    height: 40, paddingHorizontal: spacing.md,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.background,
+  },
+  searchInput: { flex: 1, fontSize: 13, fontFamily: fonts.body, color: colors.text, outlineStyle: 'none' },
+  sortGroup: { flexDirection: 'row', borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, overflow: 'hidden' },
+  sortBtn: { paddingVertical: 9, paddingHorizontal: 12, backgroundColor: colors.white },
+  sortBtnActive: { backgroundColor: colors.primary },
+  sortBtnText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+  sortBtnTextActive: { color: colors.onPrimary },
+  chipRow: { flexDirection: 'row', gap: spacing.xs, alignItems: 'center' },
+  fChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 5, paddingLeft: 11, paddingRight: 5,
+    borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.white,
+  },
+  fChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  fChipText: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.text },
+  fChipTextActive: { color: colors.onPrimary },
+  fChipCount: { minWidth: 20, height: 18, borderRadius: 9, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.cardAlt },
+  fChipCountActive: { backgroundColor: 'rgba(255,255,255,0.2)' },
+  fChipCountText: { fontSize: 10.5, fontFamily: fonts.bodySemiBold, color: colors.textMuted },
+  fChipCountTextActive: { color: colors.onPrimary },
+  dChip: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: 999, backgroundColor: colors.cardAlt },
+  dChipActive: { backgroundColor: '#E3ECF8' },
+  dChipText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
+  dChipTextActive: { color: '#2C5EA8', fontFamily: fonts.bodySemiBold },
+  resultRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  resultText: { fontSize: 12, fontFamily: fonts.body, color: colors.textMuted },
+  clearLink: { fontSize: 12, fontFamily: fonts.bodySemiBold, color: colors.primary, textDecorationLine: 'underline' },
   card: {
     backgroundColor: colors.white,
     borderRadius: radius.md,

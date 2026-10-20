@@ -22,9 +22,11 @@ const EXCLUDED_RESERVATION_STATUSES = ['cancelled', 'declined'];
 const NOTIF_META = {
   reservation: { icon: 'calendar-outline', color: '#2C5EA8', bg: '#E3ECF8', title: 'New reservation' },
   cancellation: { icon: 'close-circle-outline', color: '#B3261E', bg: '#FCE1E1', title: 'Reservation cancelled' },
+  inquiry: { icon: 'mail-unread-outline', color: '#8A6A00', bg: '#FFF4D6', title: 'New inquiry' },
 };
 // Default set when a shell doesn't pass notificationTypes (Front Desk).
-const ALL_TYPES = ['reservation'];
+// 'inquiry' = new Contact Us messages.
+const ALL_TYPES = ['reservation', 'inquiry'];
 
 function timeAgo(dateString) {
   if (!dateString) return '';
@@ -105,6 +107,9 @@ export default function DashboardNavbar({
 }) {
   const types = notificationTypes || ALL_TYPES;
   const wantReservations = types.includes('reservation');
+  const wantInquiries = types.includes('inquiry');
+  const [inquiryRows, setInquiryRows] = useState([]);
+
 
   const [reservationRows, setReservationRows] = useState([]);
   // Bookings guests cancelled, newest first (needs cancelled_at from
@@ -169,7 +174,36 @@ export default function DashboardNavbar({
     return () => supabase.removeChannel(channel);
   }, [wantReservations]);
 
+  // New Contact Us inquiries.
+  useEffect(() => {
+    if (!wantInquiries) return undefined;
+    const loadInquiries = async () => {
+      const { data, error } = await supabase
+        .from('contact_messages')
+        .select('id, name, subject, created_at')
+        .order('created_at', { ascending: false })
+        .limit(MAX_PER_SOURCE);
+      if (error) {
+        console.error('Failed to load inquiry notifications:', error);
+        return;
+      }
+      setInquiryRows(data || []);
+    };
+    loadInquiries();
+    const channel = supabase
+      .channel('navbar-notifications-inquiries')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'contact_messages' }, loadInquiries)
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [wantInquiries]);
+
   const items = useMemo(() => {
+    const inquiries = inquiryRows.map((m) => ({
+      key: `inquiry-${m.id}`,
+      type: 'inquiry',
+      occurredAt: m.created_at,
+      subtitle: `${m.name || 'Guest'}${m.subject ? ` · ${m.subject}` : ''}`,
+    }));
     const created = reservationRows.map((r) => ({
       key: `reservation-${r.id}`,
       type: 'reservation',
@@ -186,10 +220,10 @@ export default function DashboardNavbar({
         occurredAt: r.cancelled_at || r.updated_at,
         subtitle: `${reservationGuestName(r)}${r.room_type ? ` · ${r.room_type}` : ''}${r.refund_status === 'pending' ? ' · Refund requested' : ''}`,
       }));
-    return [...created, ...cancelled]
+    return [...created, ...cancelled, ...inquiries]
       .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
       .slice(0, MAX_TOTAL);
-  }, [reservationRows, cancelRows]);
+  }, [reservationRows, cancelRows, inquiryRows]);
 
   const unseenCount = useMemo(() => {
     if (!lastSeenAt) return items.length; // never opened the panel on this device — everything's new

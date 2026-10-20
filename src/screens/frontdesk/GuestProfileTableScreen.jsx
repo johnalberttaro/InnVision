@@ -8,235 +8,146 @@ import {
   StyleSheet,
   ActivityIndicator,
   Image,
-  Platform,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../services/supabase';
 import { colors, spacing, radius, fonts } from '../../utils/portalTheme';
 
-// ── Web-safe confirm helper ─────────────────────────────────────────────
-// Alert.alert is a no-op on react-native-web. Same helper GuestRecordsScreen
-// uses for its own delete confirm (worth extracting into a shared
-// utils/webDialogs.js at some point rather than a third copy).
-function confirmAction(title, message, onConfirm) {
-  if (Platform.OS === 'web') {
-    if (window.confirm(`${title}\n\n${message}`)) {
-      onConfirm();
-    }
-    return;
-  }
-  Alert.alert(title, message, [
-    { text: 'Cancel', style: 'cancel' },
-    { text: 'Delete', style: 'destructive', onPress: onConfirm },
-  ]);
-}
-
-function notifyDialog(title, message) {
-  if (Platform.OS === 'web') {
-    window.alert(`${title}\n\n${message}`);
-    return;
-  }
-  Alert.alert(title, message);
-}
-
 /**
  * GuestProfilesTableScreen — "Guest Profiles" sidebar section.
  *
- * Unlike GuestRecordsScreen (which lists EVERY guest — walk-ins added
- * manually by staff as well as guests who registered through the app),
- * this screen only shows guests who actually have an InnVision account:
- * i.e. `guest.linkedUid` is set. Walk-in guests (linkedUid: null, added
- * via GuestRecordsScreen's "Add Guest" form) never appear here — that's
- * intentional, since a walk-in has no account to have a "profile" for.
+ * A plain directory of every guest who has REGISTERED an InnVision
+ * account, A–Z by name — whether or not they've ever booked. It reads the
+ * accounts themselves (profiles + auth.users, through the
+ * list_registered_guests() database function in
+ * sql/registered_guests.sql), NOT the Guest Records list, so deleting
+ * someone's record in Guest Records never removes them from here.
  *
- * MIGRATED TO SUPABASE. FIXED BUG: the Active/Inactive status badge used
- * to read guest.accountStatus, a field that was NEVER written anywhere
- * in the app — meaning it always fell back to 'active', so the
- * "Inactive" state could never actually appear no matter what. Since
- * every guest here has a linked profiles row (that's the whole
- * criteria for showing up on this screen), and profiles.active is a
- * real, meaningful field already used elsewhere (e.g. the
- * prevent_role_self_escalation trigger), the status now reads the
- * actual profiles.active value via a joined query instead.
+ * Display only: no delete and no drill-down. Status shows whether the
+ * account is Active or was deactivated by the admin.
  *
- * Table columns: Name, Email, Contact Number, Status (Active/Inactive).
- *
- * Tapping a row calls onSelectGuest(guest) — same prop/pattern as
- * GuestRecordsScreen — so it can navigate into the existing
- * GuestProfileScreen detail view for that guest.
- *
- * DELETE: this is now the ONLY screen that can delete a registered
- * guest's record (GuestRecordsScreen's delete is scoped to walk-ins —
- * guests with no linkedUid — for exactly this reason). Deleting here
- * removes the same single `guests` row Guest Records would have, and
- * for the same reason: it's the guest DIRECTORY entry, not the
- * account. The guest's actual login (`profiles` / `auth.users`) is a
- * separate table this never touches, so they keep the ability to sign
- * in — they'd just no longer show up in Guest Profiles or Guest
- * Records unless someone re-adds them.
- *
- * Props:
- *  - onSelectGuest: (guest) => void
+ * If that database function hasn't been added yet, it falls back to the
+ * old source (guest records that belong to an account), so the screen
+ * still works in the meantime.
  */
-export default function GuestProfilesTableScreen({ onSelectGuest }) {
+export default function GuestProfilesTableScreen() {
   const [guests, setGuests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
-  // Track which guest id is currently being deleted so we can show a
-  // per-row spinner and disable that row's delete button without
-  // blocking the rest of the table — same pattern as GuestRecordsScreen.
-  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
+    const nameOf = (g) => `${g.firstName || ''} ${g.lastName || ''}`.trim() || g.displayName || g.email || '';
+    const sortAZ = (list) => [...list].sort((x, y) =>
+      nameOf(x).localeCompare(nameOf(y), undefined, { sensitivity: 'base' }));
+
     const loadGuests = async () => {
-      // Embeds the linked profiles row via the guests.user_id -> profiles.id
-      // foreign key, so profiles.active AND profiles.photo_url come back
-      // on each row — no separate lookup needed.
-      //
-      // FIXED BUG: photoURL used to read row.photo_url (the guests
-      // table's own column), but ProfileScreen.jsx's avatar upload
-      // writes to profiles.photo_url instead — a different column on a
-      // different table. Nothing ever wrote to guests.photo_url, so no
-      // uploaded photo could ever show here. Now prefers the real
-      // profiles.photo_url, falling back to guests.photo_url only if
-      // that's ever populated some other way.
-      // Sorted by first_name (then last_name as a tiebreaker for two
-      // guests sharing a first name) — the Name column displays
-      // "FirstName LastName", so this is the order that actually reads
-      // as alphabetical when scanning down the table. Sorting by
-      // last_name alone (the old order) put rows in a sequence that was
-      // technically alphabetical but not by the name each row leads with.
-      const { data, error } = await supabase
-        .from('guests')
-        .select('*, profiles(active, photo_url)')
-        .not('user_id', 'is', null)
-        .order('first_name', { ascending: true })
-        .order('last_name', { ascending: true });
-      if (error) {
-        console.error('Failed to load guests:', error);
-        setLoading(false);
-        return;
-      }
-      setGuests(
-        (data || []).map((row) => ({
+      // Every registered guest account.
+      const { data, error } = await supabase.rpc('list_registered_guests');
+      if (!error && Array.isArray(data)) {
+        setGuests(sortAZ(data.map((row) => ({
           id: row.id,
           firstName: row.first_name,
           lastName: row.last_name,
+          displayName: row.display_name,
           email: row.email,
           phone: row.phone,
-          linkedUid: row.user_id,
-          photoURL: row.profiles?.photo_url || row.photo_url,
-          active: row.profiles?.active ?? true,
-        }))
-      );
+          photoURL: row.photo_url,
+          active: row.active !== false,
+          registeredAt: row.registered_at,
+        }))));
+        setLoading(false);
+        return;
+      }
+
+      // Fallback until sql/registered_guests.sql is run.
+      console.warn('list_registered_guests not available, using guest records instead:', error?.message);
+      const { data: rows, error: e2 } = await supabase
+        .from('guests')
+        .select('*, profiles(active, photo_url)')
+        .not('user_id', 'is', null);
+      if (e2) {
+        console.error('Failed to load guest accounts:', e2);
+        setLoading(false);
+        return;
+      }
+      setGuests(sortAZ((rows || []).map((row) => ({
+        id: row.user_id,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        email: row.email,
+        phone: row.phone,
+        photoURL: row.profiles?.photo_url || row.photo_url,
+        active: row.profiles?.active ?? true,
+        registeredAt: row.created_at,
+      }))));
       setLoading(false);
     };
     loadGuests();
 
+    // New sign-ups and admin deactivations show up live.
     const channel = supabase
       .channel('guest-profiles-table')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'guests' }, loadGuests)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, loadGuests)
       .subscribe();
 
     return () => supabase.removeChannel(channel);
   }, []);
 
-  // Only guests who registered an account — i.e. have a linkedUid.
-  // Walk-ins created via GuestRecordsScreen's Add Guest form always have
-  // linkedUid: null, so they're excluded here by design.
-  const registeredGuests = useMemo(
-    () => guests.filter((g) => !!g.linkedUid),
-    [guests]
-  );
-
   const filteredGuests = useMemo(() => {
     const term = searchText.trim().toLowerCase();
-    if (!term) return registeredGuests;
-    return registeredGuests.filter((g) => {
-      const haystack = [g.firstName, g.lastName, g.email, g.phone]
+    if (!term) return guests;
+    return guests.filter((g) => {
+      const haystack = [g.firstName, g.lastName, g.displayName, g.email, g.phone]
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
       return haystack.includes(term);
     });
-  }, [registeredGuests, searchText]);
+  }, [guests, searchText]);
 
-  const getInitials = (firstName, lastName) => {
-    const a = (firstName || '').trim()[0] || '';
-    const b = (lastName || '').trim()[0] || '';
-    return (a + b).toUpperCase() || '?';
+  const getInitials = (g) => {
+    const a = (g.firstName || '').trim()[0] || '';
+    const b = (g.lastName || '').trim()[0] || '';
+    return (a + b).toUpperCase() || (g.displayName || g.email || '?').trim()[0].toUpperCase();
   };
-
-  const isActive = (g) => g.active !== false;
-
-  // ── Delete guest ────────────────────────────────────────────────────
-  // Removes only the `guests` row — same single-table delete
-  // GuestRecordsScreen uses for walk-ins, just reached from here now for
-  // registered guests specifically. Does not touch `profiles` or
-  // `auth.users`, so the guest's login is untouched; they simply stop
-  // appearing in Guest Profiles / Guest Records until someone re-adds
-  // them (self-registration only creates this row on sign-up, not login,
-  // so it doesn't come back on its own).
-  const performDeleteGuest = async (guestId) => {
-    setDeletingId(guestId);
+  const displayName = (g) => `${g.firstName || ''} ${g.lastName || ''}`.trim() || g.displayName || '—';
+  const formatRegistered = (v) => {
+    if (!v) return '—';
     try {
-      const { error } = await supabase.from('guests').delete().eq('id', guestId);
-      if (error) throw error;
-      // Drop it from local state immediately rather than waiting on the
-      // postgres_changes round-trip — see GuestRecordsScreen.jsx for the
-      // same fix and why it's needed regardless of realtime config.
-      setGuests((prev) => prev.filter((g) => g.id !== guestId));
-    } catch (err) {
-      console.error('Failed to delete guest:', err);
-      notifyDialog('Error', 'Could not delete this guest. Please try again.');
-    } finally {
-      setDeletingId(null);
+      return new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch {
+      return '—';
     }
   };
 
-  const handleDeleteGuest = (guest) => {
-    const fullName = `${guest.firstName || ''} ${guest.lastName || ''}`.trim() || 'this guest';
-    const message = `This removes ${fullName} from Guest Profiles and Guest Records. It does not delete their login or reservation history.`;
-    confirmAction('Delete Guest', message, () => performDeleteGuest(guest.id));
-  };
-
   const renderRow = ({ item, index }) => {
-    const active = isActive(item);
-    const isDeleting = deletingId === item.id;
+    const active = item.active !== false;
     return (
-      <TouchableOpacity
-        style={[styles.row, index % 2 === 1 && styles.rowAlt]}
-        activeOpacity={0.7}
-        onPress={() => onSelectGuest && onSelectGuest(item)}
-        disabled={isDeleting}
-      >
+      <View style={[styles.row, index % 2 === 1 && styles.rowAlt]}>
         {/* Name (with avatar) */}
         <View style={[styles.cell, styles.nameCell]}>
           <View style={styles.avatarWrap}>
             {item.photoURL ? (
               <Image source={{ uri: item.photoURL }} style={styles.avatarImage} resizeMode="cover" />
             ) : (
-              <Text style={styles.avatarInitials}>{getInitials(item.firstName, item.lastName)}</Text>
+              <Text style={styles.avatarInitials}>{getInitials(item)}</Text>
             )}
           </View>
-          <Text style={styles.nameText} numberOfLines={1}>
-            {item.firstName} {item.lastName}
-          </Text>
+          <Text style={styles.nameText} numberOfLines={1}>{displayName(item)}</Text>
         </View>
 
-        {/* Email */}
         <View style={[styles.cell, styles.emailCell]}>
           <Text style={styles.cellText} numberOfLines={1}>{item.email || '—'}</Text>
         </View>
 
-        {/* Contact number */}
         <View style={[styles.cell, styles.phoneCell]}>
           <Text style={styles.cellText} numberOfLines={1}>{item.phone || '—'}</Text>
         </View>
 
-        {/* Status */}
+        <View style={[styles.cell, styles.registeredCell]}>
+          <Text style={styles.cellText} numberOfLines={1}>{formatRegistered(item.registeredAt)}</Text>
+        </View>
+
         <View style={[styles.cell, styles.statusCell]}>
           <View style={[styles.statusBadge, active ? styles.statusActive : styles.statusInactive]}>
             <View style={[styles.statusDot, { backgroundColor: active ? '#1E7B34' : '#B3261E' }]} />
@@ -245,30 +156,7 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
             </Text>
           </View>
         </View>
-
-        {/* Delete — stops propagation so it doesn't also trigger the
-            row's onSelectGuest press. */}
-        <View style={[styles.cell, styles.actionCell]}>
-          <TouchableOpacity
-            style={styles.deleteBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            activeOpacity={0.6}
-            disabled={isDeleting}
-            onPress={(e) => {
-              e.stopPropagation?.();
-              handleDeleteGuest(item);
-            }}
-          >
-            {isDeleting ? (
-              <ActivityIndicator size="small" color={colors.danger} />
-            ) : (
-              <Ionicons name="trash-outline" size={15} color={colors.danger} />
-            )}
-          </TouchableOpacity>
-        </View>
-
-        <Ionicons name="chevron-forward" size={16} color={colors.textMuted} style={styles.chevron} />
-      </TouchableOpacity>
+      </View>
     );
   };
 
@@ -279,7 +167,7 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
         <View>
           <Text style={styles.title}>Guest Profiles</Text>
           <Text style={styles.subtitle}>
-            {filteredGuests.length} registered guest{filteredGuests.length !== 1 ? 's' : ''}
+            {filteredGuests.length} registered guest{filteredGuests.length !== 1 ? 's' : ''} · A–Z
           </Text>
         </View>
       </View>
@@ -309,26 +197,24 @@ export default function GuestProfilesTableScreen({ onSelectGuest }) {
       ) : filteredGuests.length === 0 ? (
         <View style={styles.centerWrap}>
           <Text style={styles.emptyText}>
-            {registeredGuests.length === 0
+            {guests.length === 0
               ? 'No registered guest accounts yet.'
               : 'No guests match your search.'}
           </Text>
         </View>
       ) : (
         <View style={styles.tableWrap}>
-          {/* Column headers */}
           <View style={styles.tableHeaderRow}>
             <Text style={[styles.tableHeaderText, styles.nameCell]}>Name</Text>
             <Text style={[styles.tableHeaderText, styles.emailCell]}>Email</Text>
             <Text style={[styles.tableHeaderText, styles.phoneCell]}>Contact Number</Text>
+            <Text style={[styles.tableHeaderText, styles.registeredCell]}>Registered</Text>
             <Text style={[styles.tableHeaderText, styles.statusCell]}>Status</Text>
-            <View style={styles.actionCell} />
-            <View style={styles.chevron} />
           </View>
 
           <FlatList
             data={filteredGuests}
-            keyExtractor={(item) => item.id}
+            keyExtractor={(item) => String(item.id)}
             renderItem={renderRow}
             contentContainerStyle={styles.listContent}
           />
@@ -415,6 +301,7 @@ const styles = StyleSheet.create({
   nameCell: { flex: 2, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minWidth: 0 },
   emailCell: { flex: 2, minWidth: 0 },
   phoneCell: { flex: 1.4, minWidth: 0 },
+  registeredCell: { flex: 1.1, minWidth: 0 },
   statusCell: { flex: 1, minWidth: 0 },
   // Fixed-width, same idea as `chevron` below it — a delete icon doesn't
   // need to grow with the row, just enough room to sit clear of Status.
